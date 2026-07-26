@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="GeoFinance System — gestion complète de vos finances personnelles, 100% locale et hors-ligne.">
+<meta name="theme-color" content="#0B1220" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F7F8FA" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GeoFinance">
+<title>GeoFinance System</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body data-theme="auto" data-privacy="visible">
+
+<!-- ============================================================ -->
+<!-- LOCK SCREEN : setup PIN (1er lancement) / déverrouillage      -->
+<!-- ============================================================ -->
+<div id="lock-screen" class="lock-screen" data-mode="setup">
+  <div class="lock-card">
+    <div class="lock-logo" aria-hidden="true">
+      <svg viewBox="0 0 48 48" width="40" height="40"><path fill="currentColor" d="M24 2c8 6 16 8 16 8v14c0 12-8 19-16 22C16 43 8 36 8 24V10s8-2 16-8Z" opacity=".15"/><path fill="currentColor" d="M24 6c6.4 4.8 12.8 6.4 12.8 6.4V24c0 9.6-6.4 15.2-12.8 17.6C17.6 39.2 11.2 33.6 11.2 24V12.4S17.6 10.8 24 6Z"/><path fill="#fff" d="M22 26.5l-4.5-4.5-2.1 2.1L22 30.7l12.6-12.6-2.1-2.1z"/></svg>
+    </div>
+    <h1 id="lock-title" class="lock-title">Créer votre code PIN</h1>
+    <p id="lock-subtitle" class="lock-subtitle">Choisissez un code à 4-6 chiffres pour protéger vos données locales.</p>
+
+    <div id="pin-dots" class="pin-dots" role="status" aria-live="polite">
+      <span class="pin-dot" data-i="0"></span>
+      <span class="pin-dot" data-i="1"></span>
+      <span class="pin-dot" data-i="2"></span>
+      <span class="pin-dot" data-i="3"></span>
+      <span class="pin-dot" data-i="4"></span>
+      <span class="pin-dot" data-i="5"></span>
+    </div>
+
+    <p id="lock-error" class="lock-error" aria-live="assertive" hidden></p>
+
+    <div id="pin-keypad" class="pin-keypad">
+      <button type="button" class="pin-key" data-key="1">1</button>
+      <button type="button" class="pin-key" data-key="2">2</button>
+      <button type="button" class="pin-key" data-key="3">3</button>
+      <button type="button" class="pin-key" data-key="4">4</button>
+      <button type="button" class="pin-key" data-key="5">5</button>
+      <button type="button" class="pin-key" data-key="6">6</button>
+      <button type="button" class="pin-key" data-key="7">7</button>
+      <button type="button" class="pin-key" data-key="8">8</button>
+      <button type="button" class="pin-key" data-key="9">9</button>
+      <button type="button" id="pin-biometric" class="pin-key pin-key-ghost" aria-label="Déverrouillage biométrique" hidden>
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 2a7 7 0 0 0-7 7v2c0 3.5 1.5 6.5 4 8.5l1.3-1.5C8.3 16.3 7 13.9 7 11V9a5 5 0 0 1 10 0v2c0 1-.1 2-.4 2.9l1.9.6c.3-1.1.5-2.3.5-3.5V9a7 7 0 0 0-7-7Zm0 4a3 3 0 0 0-3 3v2c0 3 1.3 5.6 3.5 7.4l1.3-1.5C12 15.5 11 13.4 11 11V9a1 1 0 1 1 2 0v2c0 3 1.2 5.7 3.4 7.6l1.3-1.5C16 15.6 15 13.4 15 11V9a3 3 0 0 0-3-3Z"/></svg>
+      </button>
+      <button type="button" class="pin-key" data-key="0">0</button>
+      <button type="button" id="pin-backspace" class="pin-key pin-key-ghost" aria-label="Effacer">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M9 3a2 2 0 0 0-1.6.8L2.5 11a2 2 0 0 0 0 2.4l4.9 6.6A2 2 0 0 0 9 21h11a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H9Zm3.7 5.3L15 10.6l2.3-2.3 1.4 1.4L16.4 12l2.3 2.3-1.4 1.4L15 13.4l-2.3 2.3-1.4-1.4L13.6 12l-2.3-2.3 1.4-1.4Z"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- APPLICATION SHELL                                             -->
+<!-- ============================================================ -->
+<div id="app" class="app" hidden>
+
+  <!-- Sidebar (desktop) -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <svg viewBox="0 0 48 48" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M24 6c6.4 4.8 12.8 6.4 12.8 6.4V24c0 9.6-6.4 15.2-12.8 17.6C17.6 39.2 11.2 33.6 11.2 24V12.4S17.6 10.8 24 6Z"/><path fill="#fff" d="M22 26.5l-4.5-4.5-2.1 2.1L22 30.7l12.6-12.6-2.1-2.1z"/></svg>
+      <span>GeoFinance</span>
+    </div>
+
+    <nav class="sidebar-nav" aria-label="Navigation principale">
+      <button class="nav-item is-active" data-view-target="dashboard">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 13h8V3H3v10Zm0 8h8v-6H3v6Zm10 0h8V11h-8v10Zm0-18v6h8V3h-8Z"/></svg>
+        <span>Tableau de bord</span>
+      </button>
+      <button class="nav-item" data-view-target="wallets">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M20 6H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2Zm-1 8h-3a2 2 0 1 1 0-4h3v4Z"/></svg>
+        <span>Portefeuilles</span>
+      </button>
+      <button class="nav-item" data-view-target="transactions">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 7h11l-2.5-2.5 1.4-1.4L21.8 7l-4.9 3.9-1.4-1.4L18 7H7V7Zm10 10H6l2.5 2.5-1.4 1.4L2.2 17l4.9-3.9 1.4 1.4L6 17h11Z"/></svg>
+        <span>Transactions</span>
+      </button>
+      <button class="nav-item" data-view-target="budgets">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 3h18v4H3V3Zm0 6h12v4H3V9Zm0 6h18v6H3v-6Z"/></svg>
+        <span>Budgets</span>
+      </button>
+      <button class="nav-item" data-view-target="savings">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2c-4 3-9 3.5-9 3.5V12c0 6 4 9.5 9 10.5 5-1 9-4.5 9-10.5V5.5S16 5 12 2Z"/></svg>
+        <span>Épargne</span>
+      </button>
+      <button class="nav-item" data-view-target="investments">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 17l6-6 4 4 8-8 1.4 1.4L14 17.8l-4-4-5 5z"/></svg>
+        <span>Investissements</span>
+      </button>
+      <button class="nav-item" data-view-target="debts">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 1 3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5l-9-4Zm0 10.9h6C17.5 16.1 15.2 19 12 20V12H6V6.3l6-2.7v8.3Z"/></svg>
+        <span>Dettes &amp; créances</span>
+      </button>
+      <button class="nav-item" data-view-target="tools">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M22.7 19 13.6 9.9c1-2.4.5-5.3-1.5-7.3-2.1-2.1-5.2-2.5-7.7-1.3L9 6 6 9 1.3 4.4C0 6.9.5 10 2.6 12.1c2 2 4.9 2.5 7.3 1.5L19 22.7c.4.4 1 .4 1.4 0l2.3-2.3c.4-.4.4-1.1 0-1.4Z"/></svg>
+        <span>Outils</span>
+      </button>
+      <button class="nav-item" data-view-target="reports">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 2h9l5 5v15H6V2Zm8 1.5V8h4.5L14 3.5ZM8 13h8v2H8v-2Zm0 4h8v2H8v-2Zm0-8h5v2H8V9Z"/></svg>
+        <span>Rapports</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="nav-item" data-view-target="settings">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.7 7.7 0 0 0-1.7-1L15 3h-4l-.3 2.9a7.7 7.7 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.8 1.7 1L11 21h4l.3-2.9c.6-.2 1.2-.6 1.7-1l2.5 1 2-3.5-2.1-1.6ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>
+        <span>Paramètres</span>
+      </button>
+      <button id="lock-now-btn" class="nav-item">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V11a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5Zm0 2a3 3 0 0 1 3 3v3H9V6a3 3 0 0 1 3-3Z"/></svg>
+        <span>Verrouiller</span>
+      </button>
+    </div>
+  </aside>
+
+  <div class="app-main">
+    <!-- Top bar -->
+    <header class="topbar">
+      <h1 id="page-title" class="page-title">Tableau de bord</h1>
+      <div class="topbar-actions">
+        <button id="privacy-toggle" class="icon-btn" aria-label="Masquer les montants" aria-pressed="false" title="Masquer/afficher les montants">
+          <svg class="icon-eye-open" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7Zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9Zm0-7A2.5 2.5 0 1 0 12 14a2.5 2.5 0 0 0 0-4.5Z"/></svg>
+          <svg class="icon-eye-closed" viewBox="0 0 24 24" width="20" height="20" hidden><path fill="currentColor" d="M2.8 2.8 1.4 4.2l3.2 3.2C2.7 9 1.4 10.8 1 12c0 0 4 7 11 7 2 0 3.8-.5 5.3-1.3l3 3 1.4-1.4L2.8 2.8ZM12 16.5c-.6 0-1.2-.1-1.7-.3l-6-6C5.8 8.1 8.5 7.5 12 7.5c1 0 1.9.1 2.7.4l1.7 1.7c.4.6.6 1.3.6 2.1 0 .4-.1.8-.2 1.2l1.5 1.5c.9-.8 1.6-1.7 2.1-2.4 0 0-.9-1.6-2.7-3.1l1.4-1.4C21.3 9.4 23 12 23 12s-4 7-11 7c-1.1 0-2.1-.2-3-.5l1.3-1.3c.5.2 1.1.3 1.7.3 2.5 0 4.5-2 4.5-4.5 0-.5-.1-1-.3-1.4l-2-2c-.7.5-1.2 1.4-1.2 2.4a2.5 2.5 0 0 0 2.5 2.5Z"/></svg>
+        </button>
+        <button id="theme-toggle" class="icon-btn" aria-label="Changer de thème" title="Mode sombre/clair">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.5 0-1-.1-1.5A7 7 0 0 1 12 3Z"/></svg>
+        </button>
+        <button id="quick-add-btn" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>
+          <span>Saisie express</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Views -->
+    <main id="view-root" class="view-root">
+
+      <!-- DASHBOARD -->
+      <section id="view-dashboard" class="view is-active" data-view="dashboard">
+        <div id="dashboard-alerts" class="alert-stack"></div>
+
+        <div class="hero-card">
+          <div class="hero-card-label">Patrimoine net global</div>
+          <div class="hero-card-value">
+            <span class="amount" data-value="0">0&nbsp;€</span>
+          </div>
+          <div id="net-worth-trend" class="hero-card-trend">—</div>
+        </div>
+
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="summary-card-label">Entrées (mois)</div>
+            <div class="summary-card-value amount pos" data-value="0">0&nbsp;€</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-card-label">Sorties (mois)</div>
+            <div class="summary-card-value amount neg" data-value="0">0&nbsp;€</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-card-label">Épargne nette</div>
+            <div class="summary-card-value amount" data-value="0">0&nbsp;€</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-card-label">Cash-flow</div>
+            <div class="summary-card-value amount" data-value="0">0&nbsp;€</div>
+          </div>
+        </div>
+
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>Dépenses par catégorie</h3>
+            <div class="chart-canvas-wrap"><canvas id="chart-expenses-category"></canvas></div>
+          </div>
+          <div class="chart-card chart-card-wide">
+            <h3>Évolution de la valeur nette</h3>
+            <div class="chart-canvas-wrap"><canvas id="chart-net-worth-trend"></canvas></div>
+          </div>
+          <div class="chart-card chart-card-wide">
+            <h3>Budget vs réel</h3>
+            <div class="chart-canvas-wrap"><canvas id="chart-budget-vs-actual"></canvas></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Transactions récentes</h3>
+            <button class="link-btn" data-view-target="transactions">Voir tout</button>
+          </div>
+          <div id="dashboard-recent-transactions" class="tx-list"></div>
+        </div>
+      </section>
+
+      <!-- WALLETS -->
+      <section id="view-wallets" class="view" data-view="wallets" hidden>
+        <div class="view-header">
+          <h2>Portefeuilles</h2>
+          <button id="wallet-add-btn" class="btn btn-primary">+ Nouveau portefeuille</button>
+        </div>
+        <div id="wallets-grid" class="grid-cards"></div>
+      </section>
+
+      <!-- TRANSACTIONS -->
+      <section id="view-transactions" class="view" data-view="transactions" hidden>
+        <div class="view-header">
+          <h2>Transactions</h2>
+          <button id="transaction-add-btn" class="btn btn-primary">+ Nouvelle transaction</button>
+        </div>
+        <div id="transactions-filters" class="filters-bar"></div>
+        <div id="transactions-list" class="tx-list"></div>
+      </section>
+
+      <!-- BUDGETS -->
+      <section id="view-budgets" class="view" data-view="budgets" hidden>
+        <div class="view-header">
+          <h2>Budgets</h2>
+          <button id="budget-add-btn" class="btn btn-primary">+ Catégorie de budget</button>
+        </div>
+        <div id="budgets-content"></div>
+      </section>
+
+      <!-- SAVINGS -->
+      <section id="view-savings" class="view" data-view="savings" hidden>
+        <div class="view-header">
+          <h2>Épargne</h2>
+          <button id="savings-add-btn" class="btn btn-primary">+ Objectif d'épargne</button>
+        </div>
+        <div id="savings-content" class="grid-cards"></div>
+      </section>
+
+      <!-- INVESTMENTS -->
+      <section id="view-investments" class="view" data-view="investments" hidden>
+        <div class="view-header">
+          <h2>Investissements</h2>
+          <button id="investment-add-btn" class="btn btn-primary">+ Investissement</button>
+        </div>
+        <div id="investments-content"></div>
+      </section>
+
+      <!-- DEBTS -->
+      <section id="view-debts" class="view" data-view="debts" hidden>
+        <div class="view-header">
+          <h2>Dettes &amp; créances</h2>
+          <button id="debt-add-btn" class="btn btn-primary">+ Dette / créance</button>
+        </div>
+        <div id="debts-content"></div>
+      </section>
+
+      <!-- TOOLS -->
+      <section id="view-tools" class="view" data-view="tools" hidden>
+        <div class="view-header">
+          <h2>Outils stratégiques</h2>
+        </div>
+        <div id="tools-content" class="grid-cards"></div>
+      </section>
+
+      <!-- REPORTS -->
+      <section id="view-reports" class="view" data-view="reports" hidden>
+        <div class="view-header">
+          <h2>Rapports</h2>
+        </div>
+        <div id="reports-content"></div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="view-settings" class="view" data-view="settings" hidden>
+        <div class="view-header">
+          <h2>Paramètres</h2>
+        </div>
+        <div id="settings-content"></div>
+      </section>
+
+    </main>
+
+    <!-- Bottom nav (mobile) -->
+    <nav class="bottom-nav" aria-label="Navigation mobile">
+      <button class="bottom-nav-item is-active" data-view-target="dashboard">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 13h8V3H3v10Zm0 8h8v-6H3v6Zm10 0h8V11h-8v10Zm0-18v6h8V3h-8Z"/></svg>
+        <span>Accueil</span>
+      </button>
+      <button class="bottom-nav-item" data-view-target="transactions">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M7 7h11l-2.5-2.5 1.4-1.4L21.8 7l-4.9 3.9-1.4-1.4L18 7H7V7Zm10 10H6l2.5 2.5-1.4 1.4L2.2 17l4.9-3.9 1.4 1.4L6 17h11Z"/></svg>
+        <span>Transactions</span>
+      </button>
+      <button id="bottom-nav-add" class="bottom-nav-fab" aria-label="Saisie express">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>
+      </button>
+      <button class="bottom-nav-item" data-view-target="budgets">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 3h18v4H3V3Zm0 6h12v4H3V9Zm0 6h18v6H3v-6Z"/></svg>
+        <span>Budgets</span>
+      </button>
+      <button id="bottom-nav-more" class="bottom-nav-item">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M5 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/></svg>
+        <span>Plus</span>
+      </button>
+    </nav>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- MODAL / TOAST ROOTS (peuplés dynamiquement par les modules)   -->
+<!-- ============================================================ -->
+<div id="modal-root" aria-live="polite"></div>
+<div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+<!-- ============================================================ -->
+<!-- TEMPLATES réutilisés par js/modules/*.js                      -->
+<!-- ============================================================ -->
+<template id="tpl-modal-quick-add">
+  <div class="modal-backdrop" data-modal="quick-add">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="qa-title">
+      <div class="modal-header">
+        <h3 id="qa-title">Saisie express</h3>
+        <button class="icon-btn modal-close" aria-label="Fermer">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6Z"/></svg>
+        </button>
+      </div>
+      <form id="quick-add-form" class="modal-body">
+        <div class="segmented" data-field="type">
+          <button type="button" class="segmented-btn is-active" data-value="expense">Dépense</button>
+          <button type="button" class="segmented-btn" data-value="income">Recette</button>
+          <button type="button" class="segmented-btn" data-value="transfer">Transfert</button>
+        </div>
+        <div class="form-row">
+          <label>Montant</label>
+          <input type="number" step="0.01" min="0" name="amount" required inputmode="decimal" placeholder="0.00">
+        </div>
+        <div class="form-row">
+          <label>Portefeuille</label>
+          <select name="walletId" required></select>
+        </div>
+        <div class="form-row" data-field="targetWalletRow" hidden>
+          <label>Vers le portefeuille</label>
+          <select name="targetWalletId"></select>
+        </div>
+        <div class="form-row" data-field="categoryRow">
+          <label>Catégorie</label>
+          <select name="categoryId" required></select>
+        </div>
+        <div class="form-row">
+          <label>Date</label>
+          <input type="date" name="date" required>
+        </div>
+        <div class="form-row">
+          <label>Note (optionnel)</label>
+          <input type="text" name="note" maxlength="140" placeholder="Ex: Courses supermarché">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Enregistrer</button>
+      </form>
+    </div>
+  </div>
+</template>
+
+<template id="tpl-modal-backup-reminder">
+  <div class="modal-backdrop" data-modal="backup-reminder">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="backup-title">
+      <div class="modal-header">
+        <h3 id="backup-title">Sauvegarde hebdomadaire</h3>
+        <button class="icon-btn modal-close" aria-label="Fermer">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6Z"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p>Cela fait une semaine depuis votre dernière sauvegarde. Voulez-vous exporter une copie chiffrée de vos données maintenant ?</p>
+        <div class="modal-actions">
+          <button id="backup-later-btn" class="btn btn-ghost">Plus tard</button>
+          <button id="backup-export-btn" class="btn btn-primary">Exporter maintenant</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- ============================================================ -->
+<!-- SCRIPTS                                                       -->
+<!-- ============================================================ -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(err => {
+        console.error('Échec d\'enregistrement du Service Worker :', err);
+      });
+    });
+  }
+</script>
+<script src="vendor/chart.min.js" defer></script>
+<script src="vendor/jspdf.umd.min.js" defer></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,264 @@
+/* ==========================================================================
+   GeoFinance System — Moteur de calcul financier partagé
+   Centralise tous les calculs (soldes, agrégats mensuels, historique du
+   patrimoine) pour que dashboard/wallets/budgets/investissements/dettes/
+   outils/rapports affichent des chiffres strictement cohérents entre eux.
+
+   Convention patrimoine net = soldes portefeuilles + valeur investissements
+   + créances - dettes. Les objectifs d'épargne ne sont PAS additionnés en
+   plus : ce sont des enveloppes visuelles sur de l'argent déjà présent dans
+   un portefeuille (pas un actif séparé), donc les compter à part créerait
+   un double comptage.
+   ========================================================================== */
+
+import { STORES, dbGetAll, getSetting } from './db.js';
+import { convertAmount, currentMonthKey, localISODate } from './utils.js';
+
+async function ctx() {
+  const [wallets, transactions, categories, budgets, investments, investmentEntries, debts, debtPayments, rates, baseCurrency] = await Promise.all([
+    dbGetAll(STORES.WALLETS),
+    dbGetAll(STORES.TRANSACTIONS),
+    dbGetAll(STORES.CATEGORIES),
+    dbGetAll(STORES.BUDGETS),
+    dbGetAll(STORES.INVESTMENTS),
+    dbGetAll(STORES.INVESTMENT_ENTRIES),
+    dbGetAll(STORES.DEBTS),
+    dbGetAll(STORES.DEBT_PAYMENTS),
+    dbGetAll(STORES.EXCHANGE_RATES),
+    getSetting('baseCurrency', 'EUR'),
+  ]);
+  return { wallets, transactions, categories, budgets, investments, investmentEntries, debts, debtPayments, rates, baseCurrency };
+}
+
+function toBase(amount, currency, rates, baseCurrency) {
+  return convertAmount(amount, currency, baseCurrency, rates, baseCurrency);
+}
+
+/** Solde de chaque portefeuille (dans SA propre devise), jusqu'à une date optionnelle incluse. */
+export function walletBalancesAsOf(wallets, transactions, cutoffDate = null) {
+  const balances = new Map(wallets.map((w) => [w.id, w.initialBalance || 0]));
+  for (const t of transactions) {
+    if (cutoffDate && t.date > cutoffDate) continue;
+    const amt = Number(t.amount) || 0;
+    if (t.type === 'income') {
+      balances.set(t.walletId, (balances.get(t.walletId) || 0) + amt);
+    } else if (t.type === 'expense') {
+      balances.set(t.walletId, (balances.get(t.walletId) || 0) - amt);
+    } else if (t.type === 'transfer') {
+      balances.set(t.walletId, (balances.get(t.walletId) || 0) - amt);
+      balances.set(t.targetWalletId, (balances.get(t.targetWalletId) || 0) + amt);
+    }
+  }
+  return balances;
+}
+
+export async function getAllWalletBalances() {
+  const { wallets, transactions } = await ctx();
+  const balances = walletBalancesAsOf(wallets, transactions);
+  return wallets.map((w) => ({ ...w, balance: balances.get(w.id) || 0 }));
+}
+
+export async function getWalletBalance(walletId) {
+  const { wallets, transactions } = await ctx();
+  return walletBalancesAsOf(wallets, transactions).get(walletId) || 0;
+}
+
+/** Valeur d'un investissement à une date donnée (dernière valorisation connue avant/à cette date). */
+export function investmentValueAsOf(investment, entries, cutoffDate) {
+  const relevant = entries
+    .filter((e) => e.investmentId === investment.id && e.type === 'valuation' && (!cutoffDate || e.date <= cutoffDate))
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  if (relevant.length) return relevant[0].amount;
+  if (cutoffDate && investment.createdAt && investment.createdAt.slice(0, 10) > cutoffDate) return 0;
+  return investment.capitalInvested || 0;
+}
+
+/** Montant restant dû d'une dette/créance à une date donnée. */
+function debtRemainingAsOf(debt, payments, cutoffDate) {
+  if (cutoffDate && debt.startDate && debt.startDate > cutoffDate) return 0;
+  const paid = payments
+    .filter((p) => p.debtId === debt.id && (!cutoffDate || p.date <= cutoffDate))
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  return Math.max(0, (debt.principal || 0) - paid);
+}
+
+export async function computeNetWorth(cutoffDate = null) {
+  const { wallets, transactions, investments, investmentEntries, debts, debtPayments, rates, baseCurrency } = await ctx();
+  const balances = walletBalancesAsOf(wallets, transactions, cutoffDate);
+
+  let total = 0;
+  for (const w of wallets) {
+    if (cutoffDate && w.createdAt && w.createdAt.slice(0, 10) > cutoffDate) continue;
+    total += toBase(balances.get(w.id) || 0, w.currency, rates, baseCurrency);
+  }
+  for (const inv of investments) {
+    total += toBase(investmentValueAsOf(inv, investmentEntries, cutoffDate), inv.currency, rates, baseCurrency);
+  }
+  for (const d of debts) {
+    const remaining = debtRemainingAsOf(d, debtPayments, cutoffDate);
+    total += (d.type === 'receivable' ? 1 : -1) * toBase(remaining, d.currency, rates, baseCurrency);
+  }
+  return { total, currency: baseCurrency };
+}
+
+/** Historique du patrimoine net sur N mois (fin de chaque mois), pour le graphique de tendance. */
+export async function computeNetWorthHistory(months = 6) {
+  const points = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 0); // dernier jour du mois
+    const cutoff = localISODate(d);
+    const { total } = await computeNetWorth(cutoff);
+    points.push({ label: d.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), value: Math.round(total * 100) / 100 });
+  }
+  return points;
+}
+
+/** Résumé du mois : entrées, sorties, épargne nette, cash-flow (converti en devise de base). */
+export async function computeMonthSummary(monthKey = currentMonthKey()) {
+  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  let income = 0, expenses = 0;
+  for (const t of transactions) {
+    if (!t.date || !t.date.startsWith(monthKey)) continue;
+    const cur = walletCurrency[t.walletId] || baseCurrency;
+    const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
+    if (t.type === 'income') income += amt;
+    else if (t.type === 'expense') expenses += amt;
+  }
+  const netSavings = income - expenses;
+  return { income, expenses, netSavings, cashFlow: netSavings, currency: baseCurrency };
+}
+
+/** Dépenses du mois groupées par catégorie (top 7 + "Autres"). */
+export async function computeExpensesByCategory(monthKey = currentMonthKey()) {
+  const { wallets, transactions, categories, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const catName = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+  const totals = new Map();
+  for (const t of transactions) {
+    if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
+    const cur = walletCurrency[t.walletId] || baseCurrency;
+    const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
+    const label = catName[t.categoryId] || 'Sans catégorie';
+    totals.set(label, (totals.get(label) || 0) + amt);
+  }
+  const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value }));
+  if (sorted.length <= 8) return sorted;
+  const top = sorted.slice(0, 7);
+  const autres = sorted.slice(7).reduce((s, r) => s + r.value, 0);
+  top.push({ label: 'Autres', value: autres });
+  return top;
+}
+
+/** Budget vs réel du mois, par catégorie budgétée. */
+export async function computeBudgetVsActual(monthKey = currentMonthKey()) {
+  const { wallets, transactions, categories, budgets, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const catName = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+  const monthBudgets = budgets.filter((b) => b.month === monthKey);
+
+  const actualByCategory = new Map();
+  for (const t of transactions) {
+    if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
+    const cur = walletCurrency[t.walletId] || baseCurrency;
+    const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
+    actualByCategory.set(t.categoryId, (actualByCategory.get(t.categoryId) || 0) + amt);
+  }
+
+  return monthBudgets.map((b) => ({
+    categoryId: b.categoryId,
+    label: catName[b.categoryId] || 'Sans catégorie',
+    budget: b.limit,
+    actual: actualByCategory.get(b.categoryId) || 0,
+  }));
+}
+
+export async function getExchangeRates() {
+  const { rates, baseCurrency } = await ctx();
+  return { rates, baseCurrency };
+}
+
+/** Somme des soldes de portefeuilles actifs (liquidités), hors investissements/dettes. */
+export async function computeLiquidBalance(cutoffDate = null) {
+  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const balances = walletBalancesAsOf(wallets, transactions, cutoffDate);
+  let total = 0;
+  for (const w of wallets) {
+    if (w.archived) continue;
+    total += toBase(balances.get(w.id) || 0, w.currency, rates, baseCurrency);
+  }
+  return { total, currency: baseCurrency };
+}
+
+/** Dépenses/recettes réelles du mois pour CHAQUE catégorie d'un type donné (y compris à 0). */
+export async function computeCategoryActuals(monthKey = currentMonthKey(), type = 'expense') {
+  const { wallets, transactions, categories, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const cats = categories.filter((c) => c.type === type);
+  const totals = new Map(cats.map((c) => [c.id, 0]));
+  for (const t of transactions) {
+    if (t.type !== type || !t.date || !t.date.startsWith(monthKey)) continue;
+    const cur = walletCurrency[t.walletId] || baseCurrency;
+    const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
+    totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);
+  }
+  return cats.map((c) => ({ categoryId: c.id, label: c.name, parentId: c.parentId, actual: totals.get(c.id) || 0 }));
+}
+
+/** Solde prévisionnel de fin de mois = liquidités actuelles + récurrences actives restant à échoir ce mois-ci. */
+export async function computeEndOfMonthForecast() {
+  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const recurring = await dbGetAll(STORES.RECURRING);
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const balances = walletBalancesAsOf(wallets, transactions);
+
+  let current = 0;
+  for (const w of wallets) {
+    if (w.archived) continue;
+    current += toBase(balances.get(w.id) || 0, w.currency, rates, baseCurrency);
+  }
+
+  const today = new Date();
+  const todayStr = localISODate(today);
+  const endOfMonthStr = localISODate(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+
+  let projected = current;
+  const upcoming = [];
+  for (const r of recurring) {
+    if (!r.active || !r.nextDate) continue;
+    if (r.nextDate >= todayStr && r.nextDate <= endOfMonthStr) {
+      const cur = walletCurrency[r.walletId] || baseCurrency;
+      const amt = toBase(Number(r.amount) || 0, cur, rates, baseCurrency);
+      projected += (r.type === 'income' ? 1 : -1) * amt;
+      upcoming.push({ ...r, amountBase: amt });
+    }
+  }
+  upcoming.sort((a, b) => a.nextDate.localeCompare(b.nextDate));
+  return { current, projected, currency: baseCurrency, upcoming };
+}
+
+/** Transactions jointes (portefeuille/catégorie), triées récentes d'abord, avec filtres optionnels. */
+export async function getEnrichedTransactions({ limit = null, monthKey = null, walletId = null, categoryId = null, type = null } = {}) {
+  const { wallets, transactions, categories } = await ctx();
+  const walletById = Object.fromEntries(wallets.map((w) => [w.id, w]));
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
+
+  let rows = transactions.filter((t) => {
+    if (monthKey && !(t.date || '').startsWith(monthKey)) return false;
+    if (walletId && t.walletId !== walletId && t.targetWalletId !== walletId) return false;
+    if (categoryId && t.categoryId !== categoryId) return false;
+    if (type && t.type !== type) return false;
+    return true;
+  });
+
+  rows.sort((a, b) => (a.date === b.date ? (b.createdAt || '').localeCompare(a.createdAt || '') : b.date.localeCompare(a.date)));
+  if (limit) rows = rows.slice(0, limit);
+
+  return rows.map((t) => ({
+    ...t,
+    wallet: walletById[t.walletId] || null,
+    targetWallet: t.targetWalletId ? walletById[t.targetWalletId] || null : null,
+    category: catById[t.categoryId] || null,
+  }));
+}

@@ -1,0 +1,36 @@
+{
+  "name": "GeoFinance System",
+  "short_name": "GeoFinance",
+  "description": "Gestion complète de vos finances personnelles — 100% locale et hors-ligne.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F5F6FA",
+  "theme_color": "#4F5BFF",
+  "lang": "fr",
+  "dir": "ltr",
+  "categories": ["finance", "productivity", "utilities"],
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Saisie express",
+      "short_name": "Ajouter",
+      "description": "Enregistrer rapidement une dépense ou une recette",
+      "url": "./index.html?action=quick-add",
+      "icons": [{ "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Tableau de bord",
+      "short_name": "Dashboard",
+      "url": "./index.html?view=dashboard",
+      "icons": [{ "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ]
+}
