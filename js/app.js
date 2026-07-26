@@ -41,7 +41,7 @@ const VIEW_TITLES = {
   reports: 'Rapports', settings: 'Paramètres',
 };
 
-const MORE_VIEWS = ['savings', 'investments', 'debts', 'tools', 'reports', 'settings'];
+const MORE_VIEWS = ['wallets', 'savings', 'investments', 'debts', 'tools', 'reports', 'settings'];
 
 let lockScreenApi = null;
 
