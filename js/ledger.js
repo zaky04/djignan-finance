@@ -210,6 +210,16 @@ export async function computeBudgetVsActual(monthKey = currentMonthKey()) {
   }));
 }
 
+/** Budget mensuel total : somme des plafonds attribués à chaque catégorie ce mois-ci,
+    dépensé sur ces catégories budgétées, et ce qu'il reste à dépenser. */
+export async function computeMonthlyBudgetSummary(monthKey = currentMonthKey()) {
+  const rows = await computeBudgetVsActual(monthKey);
+  const { baseCurrency } = await ctx();
+  const totalBudget = rows.reduce((sum, r) => sum + (r.budget || 0), 0);
+  const totalSpent = rows.reduce((sum, r) => sum + (r.actual || 0), 0);
+  return { totalBudget, totalSpent, remaining: totalBudget - totalSpent, currency: baseCurrency };
+}
+
 export async function getExchangeRates() {
   const { rates, baseCurrency } = await ctx();
   return { rates, baseCurrency };

@@ -3,7 +3,7 @@
    ========================================================================== */
 
 import { formatCurrency, formatDate, escapeHtml, currentMonthKey, percentage, budgetProgressClass } from '../utils.js';
-import { computeNetWorth, computeNetWorthHistory, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, getEnrichedTransactions } from '../ledger.js';
+import { computeNetWorth, computeNetWorthHistory, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, getEnrichedTransactions } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart } from '../charts.js';
 
 const TX_ICONS = {
@@ -72,12 +72,13 @@ function renderRecentTransactions(rows) {
 export async function renderDashboard() {
   const monthKey = currentMonthKey();
 
-  const [{ total, currency }, summary, expensesByCategory, netWorthHistory, budgetVsActual, recentTx] = await Promise.all([
+  const [{ total, currency }, summary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, recentTx] = await Promise.all([
     computeNetWorth(),
     computeMonthSummary(monthKey),
     computeExpensesByCategory(monthKey),
     computeNetWorthHistory(6),
     computeBudgetVsActual(monthKey),
+    computeMonthlyBudgetSummary(monthKey),
     getEnrichedTransactions({ limit: 8 }),
   ]);
 
@@ -93,6 +94,17 @@ export async function renderDashboard() {
     trendEl.textContent = `${sign}${formatCurrency(diff, currency)}${pctLabel} vs mois dernier`;
   } else {
     trendEl.textContent = 'Pas encore assez d\'historique';
+  }
+
+  setAmount(document.getElementById('budget-month-value'), monthlyBudget.totalBudget, monthlyBudget.currency);
+  const budgetTrendEl = document.getElementById('budget-month-trend');
+  if (monthlyBudget.totalBudget > 0) {
+    const remainingLabel = monthlyBudget.remaining >= 0
+      ? `Reste ${formatCurrency(monthlyBudget.remaining, monthlyBudget.currency)} ce mois-ci`
+      : `Dépassé de ${formatCurrency(Math.abs(monthlyBudget.remaining), monthlyBudget.currency)}`;
+    budgetTrendEl.textContent = `${formatCurrency(monthlyBudget.totalSpent, monthlyBudget.currency)} dépensé · ${remainingLabel}`;
+  } else {
+    budgetTrendEl.textContent = 'Aucun budget défini pour ce mois — allez dans Budgets pour en attribuer';
   }
 
   const summaryEls = document.querySelectorAll('#view-dashboard .summary-card .summary-card-value');

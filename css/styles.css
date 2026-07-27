@@ -260,11 +260,14 @@ body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
 .alert-danger { background: var(--neg-soft); color: var(--neg); }
 .alert-info { background: var(--accent-soft); color: var(--accent); }
 
+.hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
 .hero-card {
   background: linear-gradient(135deg, var(--accent) 0%, #7b5bff 100%);
   color: #fff; border-radius: var(--radius-lg);
   padding: 28px 30px; box-shadow: var(--shadow-lg);
 }
+.hero-card-budget { background: linear-gradient(135deg, #0d9488 0%, #16a34a 100%); }
 .hero-card-label { font-size: 13.5px; opacity: .85; font-weight: 600; }
 .hero-card-value { font-size: 38px; font-weight: 800; margin: 6px 0; }
 .hero-card-value .amount { color: #fff; }
@@ -472,6 +475,7 @@ body[data-privacy="hidden"] .hero-card-value .amount::after { color: #fff; }
   .bottom-nav { display: flex; }
   .view-root { padding: 18px 16px 100px; }
   .topbar { padding: 0 16px; }
+  .hero-grid { grid-template-columns: 1fr; }
   .summary-grid { grid-template-columns: 1fr 1fr; }
   .charts-grid { grid-template-columns: 1fr; }
   .chart-card:first-child { grid-row: auto; }
