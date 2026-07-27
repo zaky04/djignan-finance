@@ -16,7 +16,7 @@ body {
   overflow-x: hidden;
 }
 ul, ol { list-style: none; margin: 0; padding: 0; }
-button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; touch-action: manipulation; }
 input, select, textarea { font: inherit; color: inherit; }
 h1, h2, h3, h4, p { margin: 0; }
 a { color: inherit; }
@@ -204,14 +204,17 @@ body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
   padding: 0 28px; border-bottom: 1px solid var(--border);
   position: sticky; top: 0; background: var(--bg); z-index: 20;
 }
-.page-title { font-size: 19px; font-weight: 700; }
-.topbar-actions { display: flex; align-items: center; gap: 8px; }
+/* min-width:0 + ellipsis : le titre rétrécit avant de pousser les boutons
+   d'action hors de l'écran sur les titres longs ("Dettes & créances"...). */
+.page-title { font-size: 19px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .icon-btn {
   width: 38px; height: 38px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   color: var(--text-muted);
   transition: background .15s, color .15s;
+  touch-action: manipulation;
 }
 .icon-btn:hover { background: var(--surface-alt); color: var(--text); }
 
@@ -236,8 +239,13 @@ body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
 .view { display: flex; flex-direction: column; gap: 20px; }
 .view[hidden] { display: none; }
 
-.view-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+/* flex-wrap : sur petit écran, le bouton d'action passe sous le titre plutôt
+   que d'être coupé au bord de l'écran (ex: "+ Nouveau portefeuille"). */
+.view-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 4px; }
 .view-header h2 { font-size: 20px; font-weight: 800; }
+@media (max-width: 480px) {
+  .view-header .btn { flex: 1 1 100%; }
+}
 
 /* ==========================================================================
    CARDS / DASHBOARD
@@ -422,6 +430,11 @@ body[data-privacy="hidden"] .hero-card-value .amount::after { color: #fff; }
   .summary-grid { grid-template-columns: 1fr 1fr; }
   .charts-grid { grid-template-columns: 1fr; }
   .chart-card:first-child { grid-row: auto; }
+  /* Cibles tactiles agrandies (min. ~40-44px recommandé) et espacement accru
+     pour éviter les appuis sur le mauvais bouton. */
+  .card-actions { gap: 6px; }
+  .card-actions .icon-btn { width: 40px; height: 40px; }
+  .tx-row .card-actions .icon-btn { width: 38px; height: 38px; }
 }
 @media (max-width: 480px) {
   .summary-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -445,9 +458,16 @@ body[data-privacy="hidden"] .hero-card-value .amount::after { color: #fff; }
 .stat-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px dashed var(--border); }
 .stat-row:last-child { border-bottom: none; }
 .stat-row-label { color: var(--text-muted); }
-.tabs-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; overflow-x: auto; }
-.tab-btn { padding: 10px 14px; font-size: 13.5px; font-weight: 700; color: var(--text-muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+.tabs-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+/* flex:1 + min-width:0 + wrap garantit que chaque onglet reste entièrement
+   visible et tapable quelle que soit la largeur d'écran (pas de scroll caché). */
+.tab-btn {
+  flex: 1 1 0; min-width: 0; padding: 10px 6px; font-size: 12.5px; font-weight: 700;
+  color: var(--text-muted); border-bottom: 2px solid transparent; white-space: normal;
+  text-align: center; line-height: 1.25; min-height: 44px;
+}
 .tab-btn.is-active { color: var(--accent); border-color: var(--accent); }
+@media (min-width: 640px) { .tab-btn { flex: 0 1 auto; padding: 10px 14px; font-size: 13.5px; white-space: nowrap; } }
 
 /* Scrollbar (webkit) */
 ::-webkit-scrollbar { width: 8px; height: 8px; }

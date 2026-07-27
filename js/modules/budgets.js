@@ -400,7 +400,7 @@ export async function renderBudgets() {
     <div class="tabs-bar">
       <button type="button" class="tab-btn ${activeTab === 'monthly' ? 'is-active' : ''}" data-tab="monthly">Budgets du mois</button>
       <button type="button" class="tab-btn ${activeTab === 'categories' ? 'is-active' : ''}" data-tab="categories">Catégories</button>
-      <button type="button" class="tab-btn ${activeTab === 'recurring' ? 'is-active' : ''}" data-tab="recurring">Récurrences &amp; Échéancier</button>
+      <button type="button" class="tab-btn ${activeTab === 'recurring' ? 'is-active' : ''}" data-tab="recurring">Récurrences</button>
     </div>
     <div id="budgets-tab-content" style="margin-top:16px;"></div>`;
 
