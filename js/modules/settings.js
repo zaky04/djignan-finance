@@ -8,7 +8,8 @@ import { STORES, dbGetAll, dbBulkPut, getSetting, setSetting, wipeAllData } from
 import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric } from '../auth.js';
 import { exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup, importTransactionsCsv, exportTransactionsCsv } from '../backup.js';
 import { isNotificationSupported, getNotificationPermission, requestNotificationPermission, checkAndNotify } from '../notifications.js';
-import { escapeHtml, CURRENCIES, openModal, confirmDialog, showToast } from '../utils.js';
+import { isStandalone, isIOS, isSafari, isAndroid, hasDeferredPrompt, triggerInstall, resetInstallPromptSnooze } from '../install-prompt.js';
+import { escapeHtml, formatDate, CURRENCIES, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 
 function hiddenFileInput(accept, onFile) {
@@ -114,12 +115,20 @@ async function renderCurrencySection(container) {
   });
 }
 
-function renderBackupSection(container) {
+async function renderBackupSection(container) {
+  const lastBackupAt = await getSetting('lastBackupAt');
+  const backupSnoozedUntil = await getSetting('backupSnoozedUntil');
+  const lastBackupLabel = lastBackupAt ? formatDate(lastBackupAt) : 'jamais';
+  const snoozedLabel = backupSnoozedUntil && Date.now() < new Date(backupSnoozedUntil).getTime()
+    ? ` · rappel mis en pause jusqu'au ${formatDate(backupSnoozedUntil)}`
+    : '';
+
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>Sauvegarde &amp; restauration</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Toutes vos données restent locales. Exportez régulièrement une copie (JSON complet ou CSV) pour éviter toute perte.</p>
-      <div style="display:flex;flex-wrap:wrap;gap:10px;">
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Toutes vos données restent locales. Exportez régulièrement une copie (JSON complet ou CSV) pour éviter toute perte. Un rappel s'affiche automatiquement si aucune sauvegarde n'a été faite depuis 7 jours.</p>
+      <div class="stat-row"><span class="stat-row-label">Dernière sauvegarde</span><span>${lastBackupLabel}${snoozedLabel}</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
         <button type="button" class="btn btn-primary" id="export-json-btn">Exporter (JSON)</button>
         <button type="button" class="btn btn-ghost" id="import-json-btn">Importer (JSON)</button>
         <button type="button" class="btn btn-ghost" id="export-encrypted-btn">Exporter (JSON chiffré)</button>
@@ -133,7 +142,7 @@ function renderBackupSection(container) {
       <button type="button" class="btn btn-danger" id="wipe-data-btn">Réinitialiser toutes les données</button>
     </div>`;
 
-  container.querySelector('#export-json-btn').addEventListener('click', async () => { await exportJsonBackup(); showToast('Sauvegarde JSON exportée.'); });
+  container.querySelector('#export-json-btn').addEventListener('click', async () => { await exportJsonBackup(); showToast('Sauvegarde JSON exportée.'); renderBackupSection(container); });
 
   container.querySelector('#import-json-btn').addEventListener('click', () => {
     hiddenFileInput('application/json', async (file) => {
@@ -150,6 +159,7 @@ function renderBackupSection(container) {
     if (!p1) return;
     await exportEncryptedBackup(p1);
     showToast('Sauvegarde chiffrée exportée.');
+    renderBackupSection(container);
   });
 
   container.querySelector('#import-encrypted-btn').addEventListener('click', () => {
@@ -227,6 +237,53 @@ async function renderNotificationsSection(container) {
   });
 }
 
+async function renderInstallSection(container) {
+  const standalone = isStandalone();
+  const iosSafari = isIOS() && isSafari();
+  const iosOther = isIOS() && !isSafari();
+  const androidLike = isAndroid() && !isIOS();
+
+  let statusHtml, extraHtml = '';
+  if (standalone) {
+    statusHtml = '<span class="badge badge-pos">Déjà installée</span>';
+  } else if (hasDeferredPrompt()) {
+    statusHtml = '<span class="badge badge-pos">Disponible</span><button type="button" class="btn btn-primary" id="install-now-btn" style="margin-left:8px;">Installer maintenant</button>';
+  } else if (iosSafari) {
+    statusHtml = '<span class="badge">Installation manuelle</span>';
+    extraHtml = "<p style=\"font-size:12.5px;color:var(--text-muted);margin-top:10px;\">Appuyez sur <strong>Partager</strong>, puis <strong>« Sur l'écran d'accueil »</strong>.</p>";
+  } else if (iosOther) {
+    statusHtml = '<span class="badge">Non disponible dans ce navigateur</span>';
+    extraHtml = '<p style="font-size:12.5px;color:var(--text-muted);margin-top:10px;">Sur iPhone/iPad, l\'installation n\'est possible que depuis <strong>Safari</strong> (restriction Apple). Ouvrez ce site dans Safari, puis Partager → « Sur l\'écran d\'accueil ».</p>';
+  } else if (androidLike) {
+    statusHtml = '<span class="badge">Pas encore proposée</span>';
+    extraHtml = '<p style="font-size:12.5px;color:var(--text-muted);margin-top:10px;">Ouvrez le menu ⋮ de votre navigateur et choisissez « Installer l\'application » ou « Ajouter à l\'écran d\'accueil ».</p>';
+  } else {
+    statusHtml = '<span class="badge">Pas encore proposée</span>';
+    extraHtml = '<p style="font-size:12.5px;color:var(--text-muted);margin-top:10px;">Cherchez une icône d\'installation dans la barre d\'adresse, ou le menu du navigateur → « Installer GeoFinance ».</p>';
+  }
+
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>Installation</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Installez GeoFinance sur cet appareil pour un accès direct depuis l'écran d'accueil, en plein écran et 100% hors-ligne.</p>
+      <div class="stat-row"><span class="stat-row-label">Statut</span><span>${statusHtml}</span></div>
+      ${extraHtml}
+      ${!standalone ? '<button type="button" class="btn btn-ghost" id="reset-install-snooze-btn" style="margin-top:12px;">Réafficher le rappel automatique</button>' : ''}
+    </div>`;
+
+  container.querySelector('#install-now-btn')?.addEventListener('click', async () => {
+    const outcome = await triggerInstall();
+    if (outcome === 'accepted') showToast('Application installée !');
+    else if (outcome === 'dismissed') showToast('Installation annulée.');
+    renderInstallSection(container);
+  });
+
+  container.querySelector('#reset-install-snooze-btn')?.addEventListener('click', async () => {
+    await resetInstallPromptSnooze();
+    showToast("Le rappel d'installation réapparaîtra à la prochaine ouverture (si votre navigateur le propose).");
+  });
+}
+
 async function renderUpdateSection(container) {
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
@@ -289,12 +346,13 @@ async function renderUpdateSection(container) {
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-update"></div><div id="settings-currency"></div><div id="settings-backup"></div>';
+  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-currency"></div><div id="settings-backup"></div>';
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
+  await renderInstallSection(document.getElementById('settings-install'));
   await renderUpdateSection(document.getElementById('settings-update'));
   await renderCurrencySection(document.getElementById('settings-currency'));
-  renderBackupSection(document.getElementById('settings-backup'));
+  await renderBackupSection(document.getElementById('settings-backup'));
 }
 
 export function initSettingsModule() {}

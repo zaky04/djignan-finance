@@ -19,18 +19,38 @@ window.addEventListener('appinstalled', () => {
   deferredPrompt = null;
 });
 
-function isStandalone() {
+export function isStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
-function isIOS() {
+export function isIOS() {
   const ua = window.navigator.userAgent;
   const isIPhoneLike = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
   const isIPadOS13Plus = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
   return isIPhoneLike || isIPadOS13Plus;
 }
-function isSafari() {
+export function isSafari() {
   const ua = window.navigator.userAgent;
   return /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(ua);
+}
+export function isAndroid() {
+  return /android/i.test(window.navigator.userAgent);
+}
+export function hasDeferredPrompt() {
+  return !!deferredPrompt;
+}
+
+/** Déclenche le prompt natif d'installation (Chrome/Edge). Retourne 'accepted' | 'dismissed' | null. */
+export async function triggerInstall() {
+  if (!deferredPrompt) return null;
+  deferredPrompt.prompt();
+  const choice = await deferredPrompt.userChoice;
+  deferredPrompt = null;
+  await setSetting('installPromptSnoozedUntil', choice.outcome === 'accepted' ? null : new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString());
+  return choice.outcome;
+}
+
+export async function resetInstallPromptSnooze() {
+  await setSetting('installPromptSnoozedUntil', null);
 }
 
 const SHARE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" style="vertical-align:-3px;"><path fill="currentColor" d="M12 2 8 6h2.5v9h3V6H16L12 2Zm7 9v9H5v-9H3v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9h-2Z"/></svg>';
@@ -89,11 +109,7 @@ export async function maybeShowInstallPrompt() {
   if (installBtn) {
     installBtn.addEventListener('click', async () => {
       banner.remove();
-      if (!deferredPrompt) return;
-      deferredPrompt.prompt();
-      const choice = await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      await setSetting('installPromptSnoozedUntil', choice.outcome === 'accepted' ? null : new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString());
+      await triggerInstall();
     });
   }
 }
