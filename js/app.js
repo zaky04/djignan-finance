@@ -11,6 +11,7 @@ import { bus, EVENTS, appState } from './state.js';
 import { uuid, escapeHtml, openModal, showToast } from './utils.js';
 import { checkWeeklyBackupReminder } from './backup.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
+import { checkAndNotify } from './notifications.js';
 
 import { renderDashboard } from './modules/dashboard.js';
 import { renderWallets, initWalletsModule } from './modules/wallets.js';
@@ -22,6 +23,7 @@ import { renderDebts, initDebtsModule } from './modules/debts.js';
 import { renderTools, initToolsModule } from './modules/tools.js';
 import { renderReports, initReportsModule } from './modules/reports.js';
 import { renderSettings, initSettingsModule } from './modules/settings.js';
+import { initSearchModule } from './modules/search.js';
 
 const VIEW_RENDERERS = {
   dashboard: renderDashboard,
@@ -149,27 +151,41 @@ async function onUnlocked() {
   await generateDueRecurring();
   navigateTo('dashboard');
   maybeShowInstallPrompt();
+  checkAndNotify();
   setTimeout(() => checkWeeklyBackupReminder(), 4000); // décalé pour ne pas superposer les deux invites
 }
 
 (async function boot() {
-  await seedDefaultsIfNeeded();
+  try {
+    await seedDefaultsIfNeeded();
 
-  initWalletsModule();
-  initTransactionsModule();
-  initBudgetsModule();
-  initSavingsModule();
-  initInvestmentsModule();
-  initDebtsModule();
-  initToolsModule();
-  initReportsModule();
-  initSettingsModule();
-  wireGlobalChrome();
+    initWalletsModule();
+    initTransactionsModule();
+    initBudgetsModule();
+    initSavingsModule();
+    initInvestmentsModule();
+    initDebtsModule();
+    initToolsModule();
+    initReportsModule();
+    initSettingsModule();
+    initSearchModule();
+    wireGlobalChrome();
 
-  appState.theme = await getSetting('theme', 'auto');
-  applyTheme(appState.theme);
-  appState.privacyHidden = await getSetting('privacyHidden', false);
-  applyPrivacy(appState.privacyHidden);
+    appState.theme = await getSetting('theme', 'auto');
+    applyTheme(appState.theme);
+    appState.privacyHidden = await getSetting('privacyHidden', false);
+    applyPrivacy(appState.privacyHidden);
 
-  lockScreenApi = initLockScreen({ onUnlock: onUnlocked });
+    lockScreenApi = initLockScreen({ onUnlock: onUnlocked });
+  } catch (err) {
+    console.error('[GeoFinance] Échec critique au démarrage :', err);
+    const lockScreen = document.getElementById('lock-screen');
+    if (lockScreen) {
+      lockScreen.innerHTML = `
+        <div class="lock-card">
+          <p class="lock-error">Une erreur a empêché le démarrage de l'application. Rechargez la page ; si le problème persiste, essayez de vider le cache du navigateur pour ce site.</p>
+        </div>`;
+      lockScreen.hidden = false;
+    }
+  }
 })();

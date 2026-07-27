@@ -4,9 +4,10 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbDelete, dbAdd, logAudit, getSetting } from '../db.js';
-import { getExchangeRates } from '../ledger.js';
+import { getExchangeRates, computeDebtHistory } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, percentage, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { renderNetWorthTrendChart } from '../charts.js';
 
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
@@ -222,7 +223,19 @@ export async function renderDebts() {
     ? `<div class="grid-cards" style="margin-bottom:20px;">${debts.map((d) => debtCardHtml(d, payments)).join('')}</div>`
     : '<div class="empty-state">Aucune dette ni créance enregistrée.</div>';
 
-  container.innerHTML = `${cardsHtml}<div id="debts-simulator"></div>`;
+  const hasDebts = debts.some((d) => d.type === 'debt');
+  const chartHtml = hasDebts
+    ? `<div class="chart-card" style="margin-bottom:20px;"><h3>Évolution du désendettement</h3><div class="chart-canvas-wrap"><canvas id="chart-debts-trend"></canvas></div></div>`
+    : '';
+
+  container.innerHTML = `${cardsHtml}${chartHtml}<div id="debts-simulator"></div>`;
+
+  if (hasDebts) {
+    const { baseCurrency } = await getExchangeRates();
+    const history = await computeDebtHistory(6);
+    renderNetWorthTrendChart('chart-debts-trend', history, baseCurrency, 'Dette restante');
+  }
+
   await renderSimulator(document.getElementById('debts-simulator'));
 }
 

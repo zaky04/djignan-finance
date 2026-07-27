@@ -5,9 +5,10 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbDelete, dbAdd, logAudit, getSetting } from '../db.js';
-import { investmentValueAsOf, getExchangeRates } from '../ledger.js';
+import { investmentValueAsOf, getExchangeRates, computeInvestmentValueHistory } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { renderNetWorthTrendChart } from '../charts.js';
 
 const ASSET_CLASSES = {
   immobilier: 'Immobilier',
@@ -211,10 +212,17 @@ export async function renderInvestments() {
 
   container.innerHTML = `
     <div class="grid-cards" style="margin-bottom:18px;">${rows.map((r) => investmentCardHtml(r.inv, r.metrics)).join('')}</div>
+    <div class="chart-card" style="margin-bottom:18px;">
+      <h3>Évolution de la valeur du portefeuille</h3>
+      <div class="chart-canvas-wrap"><canvas id="chart-investments-trend"></canvas></div>
+    </div>
     <div class="panel">
       <div class="panel-header"><h3>Comparatif de rendement par classe d'actif</h3></div>
       ${renderYieldTable(rows, baseCurrency, rates)}
     </div>`;
+
+  const history = await computeInvestmentValueHistory(6);
+  renderNetWorthTrendChart('chart-investments-trend', history, baseCurrency, 'Valeur du portefeuille');
 }
 
 export function initInvestmentsModule() {

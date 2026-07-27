@@ -82,7 +82,7 @@ export function renderExpensesByCategoryChart(canvasId, rows, currency = 'EUR') 
 }
 
 /** Courbe : évolution de la valeur nette. points = [{label, value}] */
-export function renderNetWorthTrendChart(canvasId, points, currency = 'EUR') {
+export function renderNetWorthTrendChart(canvasId, points, currency = 'EUR', label = 'Valeur nette') {
   if (!ensureChartLib()) return;
   destroy(canvasId);
   const canvas = document.getElementById(canvasId);
@@ -94,7 +94,7 @@ export function renderNetWorthTrendChart(canvasId, points, currency = 'EUR') {
     data: {
       labels: (points || []).map((p) => p.label),
       datasets: [{
-        label: 'Valeur nette',
+        label,
         data: (points || []).map((p) => p.value),
         borderColor: colors.accent,
         backgroundColor: `${colors.accent}22`,

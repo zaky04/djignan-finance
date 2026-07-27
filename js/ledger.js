@@ -114,6 +114,42 @@ export async function computeNetWorthHistory(months = 6) {
   return points;
 }
 
+/** Historique de la valeur totale des investissements sur N mois (fin de chaque mois). */
+export async function computeInvestmentValueHistory(months = 6) {
+  const { investments, investmentEntries, rates, baseCurrency } = await ctx();
+  const points = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+    const cutoff = localISODate(d);
+    let total = 0;
+    for (const inv of investments) {
+      if (inv.createdAt && inv.createdAt.slice(0, 10) > cutoff) continue;
+      total += toBase(investmentValueAsOf(inv, investmentEntries, cutoff), inv.currency, rates, baseCurrency);
+    }
+    points.push({ label: d.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), value: Math.round(total * 100) / 100 });
+  }
+  return points;
+}
+
+/** Historique du total des dettes restant dues sur N mois (fin de chaque mois) — tendance de désendettement. */
+export async function computeDebtHistory(months = 6) {
+  const { debts, debtPayments, rates, baseCurrency } = await ctx();
+  const activeDebts = debts.filter((d) => d.type === 'debt');
+  const points = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+    const cutoff = localISODate(d);
+    let total = 0;
+    for (const debt of activeDebts) {
+      total += toBase(debtRemainingAsOf(debt, debtPayments, cutoff), debt.currency, rates, baseCurrency);
+    }
+    points.push({ label: d.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), value: Math.round(total * 100) / 100 });
+  }
+  return points;
+}
+
 /** Résumé du mois : entrées, sorties, épargne nette, cash-flow (converti en devise de base). */
 export async function computeMonthSummary(monthKey = currentMonthKey()) {
   const { wallets, transactions, rates, baseCurrency } = await ctx();

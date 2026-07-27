@@ -7,6 +7,7 @@
 import { STORES, dbGetAll, dbBulkPut, getSetting, setSetting, wipeAllData } from '../db.js';
 import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric } from '../auth.js';
 import { exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup, importTransactionsCsv, exportTransactionsCsv } from '../backup.js';
+import { isNotificationSupported, getNotificationPermission, requestNotificationPermission, checkAndNotify } from '../notifications.js';
 import { escapeHtml, CURRENCIES, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 
@@ -188,11 +189,50 @@ function renderBackupSection(container) {
   });
 }
 
+async function renderNotificationsSection(container) {
+  const supported = isNotificationSupported();
+  const permission = getNotificationPermission();
+
+  let statusHtml;
+  if (!supported) {
+    statusHtml = '<span class="badge">Non supportées par ce navigateur</span>';
+  } else if (permission === 'granted') {
+    statusHtml = '<span class="badge badge-pos">Activées</span><button type="button" class="btn btn-ghost" id="notif-test-btn" style="margin-left:8px;">Tester</button>';
+  } else if (permission === 'denied') {
+    statusHtml = '<span class="badge badge-neg">Bloquées par le navigateur</span>';
+  } else {
+    statusHtml = '<span class="badge">Désactivées</span><button type="button" class="btn btn-primary" id="notif-enable-btn" style="margin-left:8px;">Activer</button>';
+  }
+
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>Notifications</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Rappels locaux pour vos échéances récurrentes proches (3 jours) et vos budgets qui approchent leur limite (70%/90%). Ces rappels s'affichent quand l'application est ouverte ou récemment réactivée — un envoi en arrière-plan app totalement fermée nécessiterait un serveur distant, ce qui irait à l'encontre du principe 100% local de GeoFinance.</p>
+      <div class="stat-row"><span class="stat-row-label">Statut</span><span>${statusHtml}</span></div>
+      ${permission === 'denied' ? '<p style="font-size:12px;color:var(--text-faint);margin-top:8px;">Vous avez bloqué les notifications pour ce site. Autorisez-les dans les paramètres de votre navigateur pour les réactiver.</p>' : ''}
+    </div>`;
+
+  container.querySelector('#notif-enable-btn')?.addEventListener('click', async () => {
+    const perm = await requestNotificationPermission();
+    if (perm === 'granted') { showToast('Notifications activées.'); await checkAndNotify(); }
+    else if (perm === 'denied') { showToast('Notifications refusées.'); }
+    renderNotificationsSection(container);
+  });
+
+  container.querySelector('#notif-test-btn')?.addEventListener('click', async () => {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    const opts = { body: "Voici à quoi ressemblera un rappel.", icon: 'icons/icon-192.png' };
+    if (reg?.showNotification) await reg.showNotification('GeoFinance', opts);
+    else new Notification('GeoFinance', opts);
+  });
+}
+
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-security"></div><div id="settings-currency"></div><div id="settings-backup"></div>';
+  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-currency"></div><div id="settings-backup"></div>';
   await renderSecuritySection(document.getElementById('settings-security'));
+  await renderNotificationsSection(document.getElementById('settings-notifications'));
   await renderCurrencySection(document.getElementById('settings-currency'));
   renderBackupSection(document.getElementById('settings-backup'));
 }

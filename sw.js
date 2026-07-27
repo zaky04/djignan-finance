@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v12';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -20,6 +20,7 @@ const APP_SHELL = [
   './js/charts.js',
   './js/backup.js',
   './js/install-prompt.js',
+  './js/notifications.js',
   './js/modules/dashboard.js',
   './js/modules/wallets.js',
   './js/modules/transactions.js',
@@ -29,6 +30,7 @@ const APP_SHELL = [
   './js/modules/debts.js',
   './js/modules/tools.js',
   './js/modules/reports.js',
+  './js/modules/search.js',
   './vendor/chart.min.js',
   './vendor/jspdf.umd.min.js',
   './icons/icon.svg',
@@ -78,20 +80,33 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const networkFetch = fetch(request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached || caches.match('./index.html'));
-
-      // Stale-while-revalidate : sert le cache immédiatement si présent,
-      // met à jour en tâche de fond ; sinon attend le réseau.
-      return cached || networkFetch;
+    caches.match(request).then(async (cached) => {
+      // Cache-first strict : si la ressource est déjà précachée, on la sert
+      // directement sans tenter de requête réseau concurrente (inutile ici,
+      // la mise à jour se fait via CACHE_VERSION à chaque déploiement — et une
+      // requête réseau systématique, y compris hors-ligne, ralentit/perturbe
+      // le chargement du graphe de modules ES).
+      //
+      // La réponse est reconstruite explicitement (au lieu de renvoyer l'objet
+      // Response de la Cache Storage API tel quel) : les scripts de module ES
+      // sont chargés en mode "cors" (contrairement aux scripts classiques) et
+      // certains navigateurs échouent silencieusement le chargement d'un
+      // <script type="module">/import() servi par un Service Worker si la
+      // Response provient directement du cache sans être reconstruite.
+      if (cached) {
+        const body = await cached.arrayBuffer();
+        return new Response(body, { status: cached.status, statusText: cached.statusText, headers: cached.headers });
+      }
+      try {
+        const response = await fetch(request);
+        if (response && response.status === 200) {
+          const cache = await caches.open(CACHE_NAME);
+          cache.put(request, response.clone());
+        }
+        return response;
+      } catch {
+        return caches.match('./index.html');
+      }
     })
   );
 });
@@ -101,4 +116,17 @@ self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+});
+
+/* ---------- Clic sur une notification : ramène l'app au premier plan ---------- */
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('./index.html');
+    })
+  );
 });
