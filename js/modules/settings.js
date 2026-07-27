@@ -227,12 +227,72 @@ async function renderNotificationsSection(container) {
   });
 }
 
+async function renderUpdateSection(container) {
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>Mise à jour</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">GeoFinance fonctionne hors-ligne grâce à une copie locale de l'application. Vérifiez ici si une nouvelle version a été publiée : seul le code de l'application est remplacé, vos données (portefeuilles, transactions, budgets…) restent intactes.</p>
+      <div class="stat-row"><span class="stat-row-label">Statut</span><span id="update-status"><span class="badge">Non vérifié</span></span></div>
+      <button type="button" class="btn btn-primary" id="check-update-btn" style="margin-top:12px;">Vérifier les mises à jour</button>
+    </div>`;
+
+  const statusEl = container.querySelector('#update-status');
+  const btn = container.querySelector('#check-update-btn');
+
+  btn.addEventListener('click', async () => {
+    if (!('serviceWorker' in navigator)) {
+      showToast('Mises à jour automatiques non supportées par ce navigateur.');
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Vérification…';
+    statusEl.innerHTML = '<span class="badge">Vérification…</span>';
+
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) {
+        statusEl.innerHTML = '<span class="badge">Aucune installation hors-ligne active</span>';
+        return;
+      }
+
+      // sw.js active toute nouvelle version dès son installation (self.skipWaiting()
+      // inconditionnel) puis prend le contrôle de la page ouverte : "controllerchange"
+      // est donc le signal fiable qu'une nouvelle version vient d'être installée.
+      const updated = await new Promise((resolve) => {
+        const onControllerChange = () => resolve(true);
+        navigator.serviceWorker.addEventListener('controllerchange', onControllerChange, { once: true });
+        reg.update().catch(() => {});
+        setTimeout(() => {
+          navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+          resolve(false);
+        }, 4000);
+      });
+
+      if (updated) {
+        statusEl.innerHTML = '<span class="badge badge-pos">Nouvelle version installée</span>';
+        showToast('Nouvelle version installée, rechargement…');
+        window.location.reload();
+        return;
+      }
+      statusEl.innerHTML = '<span class="badge badge-pos">À jour</span>';
+      showToast('Vous utilisez déjà la dernière version.');
+    } catch (err) {
+      statusEl.innerHTML = '<span class="badge badge-neg">Échec de la vérification</span>';
+      showToast('Erreur : ' + (err.message || 'vérification impossible.'));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Vérifier les mises à jour';
+    }
+  });
+}
+
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-currency"></div><div id="settings-backup"></div>';
+  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-update"></div><div id="settings-currency"></div><div id="settings-backup"></div>';
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
+  await renderUpdateSection(document.getElementById('settings-update'));
   await renderCurrencySection(document.getElementById('settings-currency'));
   renderBackupSection(document.getElementById('settings-backup'));
 }
