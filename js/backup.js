@@ -5,7 +5,8 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbAdd, dbBulkPut, exportAllData, importAllData, getSetting, setSetting } from './db.js';
-import { uuid, todayISO, downloadFile, readFileAsText, showToast } from './utils.js';
+import { getEnrichedTransactions } from './ledger.js';
+import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast } from './utils.js';
 import { notifyDataChanged } from './state.js';
 
 function bufToBase64(buf) {
@@ -80,6 +81,26 @@ export async function importEncryptedBackup(file, passphrase, { merge = false } 
 }
 
 /* ---------- Import / export CSV des transactions ---------- */
+function csvEscape(value) {
+  const s = String(value ?? '');
+  return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** Exporte les transactions en CSV. Sans monthKey : historique complet. */
+export async function exportTransactionsCsv(monthKey = null) {
+  const rows = await getEnrichedTransactions(monthKey ? { monthKey } : {});
+  const header = ['Date', 'Type', 'Portefeuille', 'Vers portefeuille', 'Catégorie', 'Montant', 'Devise', 'Note', 'Pointée'];
+  const lines = [header.join(';')];
+  for (const t of rows) {
+    lines.push([
+      t.date, t.type, csvEscape(t.wallet?.name || ''), csvEscape(t.targetWallet?.name || ''),
+      csvEscape(t.category?.name || ''), t.amount, t.wallet?.currency || '', csvEscape(t.note || ''), t.reconciled ? 'Oui' : 'Non',
+    ].map(csvEscape).join(';'));
+  }
+  const suffix = monthKey || 'historique-complet';
+  downloadFile(`geofinance-transactions-${suffix}.csv`, '﻿' + lines.join('\n'), 'text/csv;charset=utf-8');
+}
+
 function parseCsvLine(line, delimiter = ';') {
   const out = [];
   let cur = '', inQuotes = false;

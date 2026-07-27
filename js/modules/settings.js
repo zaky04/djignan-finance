@@ -6,7 +6,7 @@
 
 import { STORES, dbGetAll, dbBulkPut, getSetting, setSetting, wipeAllData } from '../db.js';
 import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric } from '../auth.js';
-import { exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup, importTransactionsCsv } from '../backup.js';
+import { exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup, importTransactionsCsv, exportTransactionsCsv } from '../backup.js';
 import { escapeHtml, CURRENCIES, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 
@@ -118,14 +118,14 @@ function renderBackupSection(container) {
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>Sauvegarde &amp; restauration</h3></div>
       <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Toutes vos données restent locales. Exportez régulièrement une copie (JSON complet ou CSV) pour éviter toute perte.</p>
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;">
         <button type="button" class="btn btn-primary" id="export-json-btn">Exporter (JSON)</button>
         <button type="button" class="btn btn-ghost" id="import-json-btn">Importer (JSON)</button>
         <button type="button" class="btn btn-ghost" id="export-encrypted-btn">Exporter (JSON chiffré)</button>
         <button type="button" class="btn btn-ghost" id="import-encrypted-btn">Importer (JSON chiffré)</button>
+        <button type="button" class="btn btn-ghost" id="export-csv-btn">Exporter des transactions (CSV)</button>
         <button type="button" class="btn btn-ghost" id="import-csv-btn">Importer des transactions (CSV)</button>
       </div>
-      <p style="font-size:12px;color:var(--text-faint);">L'export CSV des transactions se trouve dans l'onglet Rapports.</p>
     </div>
     <div class="panel" style="border-color:var(--neg);">
       <div class="panel-header"><h3 style="color:var(--neg);">Zone dangereuse</h3></div>
@@ -161,6 +161,11 @@ function renderBackupSection(container) {
         showToast('Import réussi.');
       } catch (err) { showToast('Erreur : ' + (err.message || 'fichier invalide.')); }
     }).click();
+  });
+
+  container.querySelector('#export-csv-btn').addEventListener('click', async () => {
+    await exportTransactionsCsv();
+    showToast('Export CSV généré.');
   });
 
   container.querySelector('#import-csv-btn').addEventListener('click', () => {

@@ -1,10 +1,10 @@
 # ==============================================================================
 # GeoFinance System — Serveur local (zero dependance : PowerShell pur)
 # Necessaire car les Service Workers exigent http://localhost (jamais file://).
-# Usage : clic droit > "Executer avec PowerShell", ou :  .\serve.ps1 -Port 8090
+# Usage : clic droit > "Executer avec PowerShell", ou :  .\serve.ps1 -Port 8080
 # ==============================================================================
 param(
-    [int]$Port = 8090
+    [int]$Port = 8080
 )
 
 $root = $PSScriptRoot

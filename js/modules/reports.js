@@ -4,30 +4,11 @@
    catégorie, budget vs réel) et export CSV des transactions.
    ========================================================================== */
 
-import { computeNetWorth, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, getEnrichedTransactions } from '../ledger.js';
-import { formatCurrency, formatMonthLabel, formatDate, currentMonthKey, monthKeyOffset, downloadFile, showToast } from '../utils.js';
+import { computeNetWorth, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual } from '../ledger.js';
+import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, showToast } from '../utils.js';
+import { exportTransactionsCsv } from '../backup.js';
 
 let reportMonthKey = currentMonthKey();
-
-function csvEscape(value) {
-  const s = String(value ?? '');
-  return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-async function exportTransactionsCsv({ scopeToMonth }) {
-  const rows = await getEnrichedTransactions(scopeToMonth ? { monthKey: reportMonthKey } : {});
-  const header = ['Date', 'Type', 'Portefeuille', 'Vers portefeuille', 'Catégorie', 'Montant', 'Devise', 'Note', 'Pointée'];
-  const lines = [header.join(';')];
-  for (const t of rows) {
-    lines.push([
-      t.date, t.type, csvEscape(t.wallet?.name || ''), csvEscape(t.targetWallet?.name || ''),
-      csvEscape(t.category?.name || ''), t.amount, t.wallet?.currency || '', csvEscape(t.note || ''), t.reconciled ? 'Oui' : 'Non',
-    ].map(csvEscape).join(';'));
-  }
-  const suffix = scopeToMonth ? reportMonthKey : 'historique-complet';
-  downloadFile(`geofinance-transactions-${suffix}.csv`, '﻿' + lines.join('\n'), 'text/csv;charset=utf-8');
-  showToast('Export CSV généré.');
-}
 
 async function generatePdfReport() {
   if (!window.jspdf) { showToast("La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant)."); return; }
@@ -106,8 +87,8 @@ export async function renderReports() {
   container.querySelector('#rep-prev-month').onclick = () => { reportMonthKey = monthKeyOffset(reportMonthKey, -1); renderReports(); };
   container.querySelector('#rep-next-month').onclick = () => { reportMonthKey = monthKeyOffset(reportMonthKey, 1); renderReports(); };
   container.querySelector('#rep-pdf-btn').onclick = () => generatePdfReport();
-  container.querySelector('#rep-csv-month-btn').onclick = () => exportTransactionsCsv({ scopeToMonth: true });
-  container.querySelector('#rep-csv-all-btn').onclick = () => exportTransactionsCsv({ scopeToMonth: false });
+  container.querySelector('#rep-csv-month-btn').onclick = async () => { await exportTransactionsCsv(reportMonthKey); showToast('Export CSV généré.'); };
+  container.querySelector('#rep-csv-all-btn').onclick = async () => { await exportTransactionsCsv(); showToast('Export CSV généré.'); };
 }
 
 export function initReportsModule() {}
