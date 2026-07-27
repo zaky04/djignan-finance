@@ -83,6 +83,32 @@ export function openQuickAdd({ editTransaction = null } = {}) {
 
   segButtons.forEach((b) => b.addEventListener('click', () => setType(b.dataset.value)));
 
+  /* Auto-catégorisation : si la note ressemble à une transaction déjà catégorisée,
+     pré-sélectionne sa catégorie (tant que l'utilisateur n'a pas choisi la sienne). */
+  let categoryTouchedByUser = !!editTransaction;
+  categorySelect.addEventListener('change', () => { categoryTouchedByUser = true; });
+
+  const norm = (s) => (s || '').trim().toLowerCase();
+  async function suggestCategoryFromNote() {
+    if (categoryTouchedByUser || currentType === 'transfer') return;
+    const note = norm(form.elements.note.value);
+    if (note.length < 3) return;
+    const all = await dbGetAll(STORES.TRANSACTIONS);
+    const match = all
+      .filter((t) => t.type === currentType && t.categoryId && t.note)
+      .map((t) => ({ t, n: norm(t.note) }))
+      .filter(({ n }) => n === note || n.includes(note) || note.includes(n))
+      .sort((a, b) => (b.t.date || '').localeCompare(a.t.date || ''))[0]?.t;
+    if (match && categorySelect.querySelector(`option[value="${match.categoryId}"]`)) {
+      categorySelect.value = match.categoryId;
+    }
+  }
+  let suggestDebounce = null;
+  form.elements.note.addEventListener('input', () => {
+    clearTimeout(suggestDebounce);
+    suggestDebounce = setTimeout(suggestCategoryFromNote, 250);
+  });
+
   (async () => {
     await populateWallets();
     setType(currentType);
