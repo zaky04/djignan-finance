@@ -10,6 +10,7 @@ import { initLockScreen } from './auth.js';
 import { bus, EVENTS, appState } from './state.js';
 import { uuid, escapeHtml, openModal, showToast } from './utils.js';
 import { checkWeeklyBackupReminder } from './backup.js';
+import { maybeShowInstallPrompt } from './install-prompt.js';
 
 import { renderDashboard } from './modules/dashboard.js';
 import { renderWallets, initWalletsModule } from './modules/wallets.js';
@@ -147,7 +148,8 @@ async function onUnlocked() {
   document.getElementById('app').hidden = false;
   await generateDueRecurring();
   navigateTo('dashboard');
-  checkWeeklyBackupReminder();
+  maybeShowInstallPrompt();
+  setTimeout(() => checkWeeklyBackupReminder(), 4000); // décalé pour ne pas superposer les deux invites
 }
 
 (async function boot() {
