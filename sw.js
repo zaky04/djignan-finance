@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v14';
+const CACHE_VERSION = 'v15';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -31,6 +31,7 @@ const APP_SHELL = [
   './js/modules/tools.js',
   './js/modules/reports.js',
   './js/modules/search.js',
+  './js/modules/settings.js',
   './vendor/chart.min.js',
   './vendor/jspdf.umd.min.js',
   './icons/icon.svg',
@@ -44,13 +45,23 @@ const APP_SHELL = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      // addAll échoue globalement si une seule ressource est absente (ex: vendor
-      // pas encore téléchargé) -> on précache individuellement pour être tolérant.
+      // addAll/cache.add() échouent globalement si une seule ressource est absente
+      // (ex: vendor pas encore téléchargé) -> on précache individuellement pour être
+      // tolérant. On utilise fetch({cache:'reload'}) plutôt que cache.add() : GitHub
+      // Pages sert tous les fichiers avec "Cache-Control: max-age=600", et cache.add()
+      // respecte ce cache HTTP — un visiteur revenu dans les 10 minutes précédentes
+      // se retrouverait à re-précacher ses propres fichiers déjà obsolètes au lieu
+      // d'aller chercher la nouvelle version sur le réseau.
       return Promise.allSettled(
         APP_SHELL.map((url) =>
-          cache.add(url).catch((err) => {
-            console.warn('[SW] Précache échoué pour', url, err);
-          })
+          fetch(url, { cache: 'reload' })
+            .then((response) => {
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              return cache.put(url, response);
+            })
+            .catch((err) => {
+              console.warn('[SW] Précache échoué pour', url, err);
+            })
         )
       );
     }).then(() => self.skipWaiting())
