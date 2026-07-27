@@ -273,6 +273,11 @@ body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
 .hero-card-value .amount { color: #fff; }
 body[data-privacy="hidden"] .hero-card-value .amount::after { color: #fff; }
 .hero-card-trend { font-size: 13px; opacity: .9; }
+.hero-card-link {
+  display: inline-block; margin-top: 10px; color: #fff; font-weight: 600;
+  font-size: 13px; opacity: .95; text-decoration: none; cursor: pointer;
+}
+.hero-card-link:hover { text-decoration: underline; }
 
 .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .summary-card {

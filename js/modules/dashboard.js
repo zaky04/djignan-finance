@@ -102,7 +102,7 @@ export async function renderDashboard() {
     const remainingLabel = monthlyBudget.remaining >= 0
       ? `Reste ${formatCurrency(monthlyBudget.remaining, monthlyBudget.currency)} ce mois-ci`
       : `Dépassé de ${formatCurrency(Math.abs(monthlyBudget.remaining), monthlyBudget.currency)}`;
-    budgetTrendEl.textContent = `${formatCurrency(monthlyBudget.totalSpent, monthlyBudget.currency)} dépensé · ${remainingLabel}`;
+    budgetTrendEl.textContent = `${formatCurrency(monthlyBudget.totalSpent, monthlyBudget.currency)} dépensé sur catégories budgétées · ${remainingLabel}`;
   } else {
     budgetTrendEl.textContent = 'Aucun budget défini pour ce mois — allez dans Budgets pour en attribuer';
   }
