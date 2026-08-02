@@ -346,13 +346,15 @@ async function renderUpdateSection(container) {
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-currency"></div><div id="settings-backup"></div>';
+  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-credit"></div>';
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
   await renderInstallSection(document.getElementById('settings-install'));
   await renderUpdateSection(document.getElementById('settings-update'));
   await renderCurrencySection(document.getElementById('settings-currency'));
   await renderBackupSection(document.getElementById('settings-backup'));
+  document.getElementById('settings-credit').innerHTML =
+    '<p style="text-align:center;font-size:11px;color:var(--text-faint);margin:20px 0 4px;">Par Adtcheko 5T/ · <a href="mailto:ronywest01@gmail.com" style="color:inherit;">Contribuer / contact</a></p>';
 }
 
 export function initSettingsModule() {}

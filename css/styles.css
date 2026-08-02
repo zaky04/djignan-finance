@@ -185,6 +185,12 @@ body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
 }
 .sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .sidebar-footer { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--border); padding-top: 10px; }
+.sidebar-credit {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 10px 12px 2px; font-size: 11px; color: var(--text-faint);
+}
+.sidebar-credit a { color: var(--text-faint); text-decoration: none; }
+.sidebar-credit a:hover { color: var(--accent); text-decoration: underline; }
 
 .nav-item {
   display: flex; align-items: center; gap: 12px;
