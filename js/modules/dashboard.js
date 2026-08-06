@@ -3,7 +3,7 @@
    ========================================================================== */
 
 import { formatCurrency, formatDate, formatPercent, escapeHtml, currentMonthKey, percentage, budgetProgressClass } from '../utils.js';
-import { computeNetWorth, computeNetWorthHistory, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions } from '../ledger.js';
+import { computeNetWorthHistory, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart } from '../charts.js';
 
 const TX_ICONS = {
@@ -119,8 +119,7 @@ function renderUpcomingBills(upcoming, currency) {
 export async function renderDashboard() {
   const monthKey = currentMonthKey();
 
-  const [{ total, currency }, summary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, forecast, recentTx] = await Promise.all([
-    computeNetWorth(),
+  const [summary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, forecast, recentTx] = await Promise.all([
     computeMonthSummary(monthKey),
     computeExpensesByCategory(monthKey),
     computeNetWorthHistory(6),
@@ -129,19 +128,7 @@ export async function renderDashboard() {
     computeEndOfMonthForecast(),
     getEnrichedTransactions({ limit: 8 }),
   ]);
-
-  setAmount(document.getElementById('net-worth-value'), total, currency);
-
-  const trendEl = document.getElementById('net-worth-trend');
-  if (netWorthHistory.length >= 2) {
-    const prev = netWorthHistory[netWorthHistory.length - 2].value;
-    const diff = total - prev;
-    const sign = diff >= 0 ? '+' : '';
-    const pctLabel = prev !== 0 ? ` (${sign}${((diff / Math.abs(prev)) * 100).toFixed(1)}%)` : '';
-    trendEl.textContent = `${sign}${formatCurrency(diff, currency)}${pctLabel} vs mois dernier`;
-  } else {
-    trendEl.textContent = 'Pas encore assez d\'historique';
-  }
+  const currency = summary.currency;
 
   setAmount(document.getElementById('budget-month-value'), monthlyBudget.totalBudget, monthlyBudget.currency);
   const budgetTrendEl = document.getElementById('budget-month-trend');
@@ -164,17 +151,6 @@ export async function renderDashboard() {
   } else {
     unallocatedBadge.hidden = true;
   }
-
-  const upcomingBillsTotal = forecast.upcoming
-    .filter((u) => u.type === 'expense')
-    .reduce((sum, u) => sum + u.amountBase, 0);
-  const reservedBudget = Math.max(0, monthlyBudget.remaining);
-  const safeToSpend = forecast.current - upcomingBillsTotal - reservedBudget;
-  setAmount(document.getElementById('safe-to-spend-value'), safeToSpend, forecast.currency);
-  document.getElementById('hero-safe-to-spend').classList.toggle('is-negative', safeToSpend < 0);
-  document.getElementById('safe-to-spend-trend').textContent = safeToSpend >= 0
-    ? 'Après budgets réservés et échéances à venir'
-    : '⚠ Dépenses prévues supérieures aux liquidités disponibles';
 
   const summaryEls = document.querySelectorAll('#view-dashboard .summary-card .summary-card-value');
   setAmount(summaryEls[0], summary.income, summary.currency);

@@ -266,7 +266,7 @@ body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
 .alert-danger { background: var(--neg-soft); color: var(--neg); }
 .alert-info { background: var(--accent-soft); color: var(--accent); }
 
-.hero-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.hero-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 
 .hero-card {
   background: linear-gradient(135deg, var(--accent) 0%, #7b5bff 100%);

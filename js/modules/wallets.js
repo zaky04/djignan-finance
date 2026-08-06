@@ -3,9 +3,52 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbDelete, dbGetAllByIndex, logAudit, getSetting, setSetting } from '../db.js';
-import { getAllWalletBalances } from '../ledger.js';
-import { uuid, formatCurrency, escapeHtml, todayISO, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
+import { getAllWalletBalances, computeNetWorth, computeNetWorthHistory, computeMonthlyBudgetSummary, computeEndOfMonthForecast } from '../ledger.js';
+import { uuid, formatCurrency, escapeHtml, todayISO, currentMonthKey, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+
+function setAmount(el, value, currency) {
+  if (!el) return;
+  el.dataset.value = value;
+  el.textContent = formatCurrency(value, currency);
+}
+
+async function renderWealthHero() {
+  const [{ total, currency }, netWorthHistory, monthlyBudget, forecast] = await Promise.all([
+    computeNetWorth(),
+    computeNetWorthHistory(6),
+    computeMonthlyBudgetSummary(currentMonthKey()),
+    computeEndOfMonthForecast(),
+  ]);
+
+  setAmount(document.getElementById('net-worth-value'), total, currency);
+  const trendEl = document.getElementById('net-worth-trend');
+  if (trendEl) {
+    if (netWorthHistory.length >= 2) {
+      const prev = netWorthHistory[netWorthHistory.length - 2].value;
+      const diff = total - prev;
+      const sign = diff >= 0 ? '+' : '';
+      const pctLabel = prev !== 0 ? ` (${sign}${((diff / Math.abs(prev)) * 100).toFixed(1)}%)` : '';
+      trendEl.textContent = `${sign}${formatCurrency(diff, currency)}${pctLabel} vs mois dernier`;
+    } else {
+      trendEl.textContent = 'Pas encore assez d\'historique';
+    }
+  }
+
+  const upcomingBillsTotal = forecast.upcoming
+    .filter((u) => u.type === 'expense')
+    .reduce((sum, u) => sum + u.amountBase, 0);
+  const reservedBudget = Math.max(0, monthlyBudget.remaining);
+  const safeToSpend = forecast.current - upcomingBillsTotal - reservedBudget;
+  setAmount(document.getElementById('safe-to-spend-value'), safeToSpend, forecast.currency);
+  document.getElementById('hero-safe-to-spend')?.classList.toggle('is-negative', safeToSpend < 0);
+  const safeTrendEl = document.getElementById('safe-to-spend-trend');
+  if (safeTrendEl) {
+    safeTrendEl.textContent = safeToSpend >= 0
+      ? 'Après budgets réservés et échéances à venir'
+      : '⚠ Dépenses prévues supérieures aux liquidités disponibles';
+  }
+}
 
 const WALLET_TYPES = {
   bank: { label: 'Compte bancaire', icon: '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2 2 8v2h20V8L12 2Zm-7 9v7H3v2h18v-2h-2v-7h-2v7h-3v-7h-2v7H9v-7H7v7H5v-7H3Z"/></svg>' },
@@ -139,6 +182,7 @@ async function renderRatesPanel() {
 export async function renderWallets() {
   const grid = document.getElementById('wallets-grid');
   if (!grid) return;
+  await renderWealthHero();
   const wallets = await getAllWalletBalances();
   const active = wallets.filter((w) => !w.archived);
   const archived = wallets.filter((w) => w.archived);

@@ -52,6 +52,26 @@ function debt_paid_of(d, payments) {
   return payments.filter((p) => p.debtId === d.id).reduce((s, p) => s + p.amount, 0);
 }
 
+function latestPaymentDate(d, payments) {
+  const own = payments.filter((p) => p.debtId === d.id).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return own[0]?.date || d.startDate;
+}
+
+function paidDebtRowHtml(d, paidDate) {
+  const isDebt = d.type === 'debt';
+  return `
+    <div class="tx-row" data-debt-id="${d.id}">
+      <div class="tx-main">
+        <div class="tx-title">${escapeHtml(d.personName)}</div>
+        <div class="tx-sub">${formatDate(paidDate)}${d.note ? ' · ' + escapeHtml(d.note) : ''}</div>
+      </div>
+      <div class="tx-amount amount ${isDebt ? 'neg' : 'pos'}">${formatCurrency(d.principal, d.currency)}</div>
+      <div class="card-actions">
+        <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+      </div>
+    </div>`;
+}
+
 function debtFormHtml(d, defaultCurrency) {
   return `
     <form id="debt-form">
@@ -219,16 +239,30 @@ export async function renderDebts() {
   if (!container) return;
   const [debts, payments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
 
-  const cardsHtml = debts.length
-    ? `<div class="grid-cards" style="margin-bottom:20px;">${debts.map((d) => debtCardHtml(d, payments)).join('')}</div>`
-    : '<div class="empty-state">Aucune dette ni créance enregistrée.</div>';
+  const activeDebts = debts.filter((d) => d.status !== 'paid');
+  const paidDebts = debts.filter((d) => d.status === 'paid');
+
+  const cardsHtml = activeDebts.length
+    ? `<div class="grid-cards" style="margin-bottom:20px;">${activeDebts.map((d) => debtCardHtml(d, payments)).join('')}</div>`
+    : '<div class="empty-state">Aucune dette ni créance active.</div>';
 
   const hasDebts = debts.some((d) => d.type === 'debt');
   const chartHtml = hasDebts
     ? `<div class="chart-card" style="margin-bottom:20px;"><h3>Évolution du désendettement</h3><div class="chart-canvas-wrap"><canvas id="chart-debts-trend"></canvas></div></div>`
     : '';
 
-  container.innerHTML = `${cardsHtml}${chartHtml}<div id="debts-simulator"></div>`;
+  const paidHtml = paidDebts.length
+    ? `<div class="panel" style="margin-top:20px;">
+        <div class="panel-header"><h3>Soldées</h3></div>
+        ${paidDebts
+          .map((d) => ({ d, paidDate: latestPaymentDate(d, payments) }))
+          .sort((a, b) => (b.paidDate || '').localeCompare(a.paidDate || ''))
+          .map(({ d, paidDate }) => paidDebtRowHtml(d, paidDate))
+          .join('')}
+      </div>`
+    : '';
+
+  container.innerHTML = `${cardsHtml}${chartHtml}<div id="debts-simulator"></div>${paidHtml}`;
 
   if (hasDebts) {
     const { baseCurrency } = await getExchangeRates();
