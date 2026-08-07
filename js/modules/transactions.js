@@ -9,6 +9,7 @@ import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, logAudit } from '../db.js';
 import { getEnrichedTransactions } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { extractAmountFromImage } from '../ocr.js';
 
 const TX_ICONS = {
   income: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 20V6M6 12l6-6 6 6"/></svg>',
@@ -63,6 +64,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
   const receiptPreviewWrap = backdrop.querySelector('#qa-receipt-preview');
   const receiptPreviewImg = backdrop.querySelector('#qa-receipt-preview-img');
   const receiptRemoveBtn = backdrop.querySelector('#qa-receipt-remove');
+  const receiptScanBtn = backdrop.querySelector('#qa-receipt-scan');
 
   let currentType = editTransaction?.type || 'expense';
   let splitMode = false;
@@ -82,6 +84,31 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     receiptInput.value = '';
     receiptRemoved = true;
     receiptPreviewWrap.hidden = true;
+  });
+
+  receiptScanBtn.addEventListener('click', async () => {
+    const source = receiptInput.files[0] || (!receiptRemoved && editTransaction?.receiptBlob) || null;
+    if (!source) return;
+    const originalLabel = receiptScanBtn.textContent;
+    receiptScanBtn.textContent = 'Analyse en cours…';
+    receiptScanBtn.disabled = true;
+    try {
+      const amount = await extractAmountFromImage(source);
+      if (amount != null && !splitMode) {
+        form.elements.amount.value = amount.toFixed(2);
+        showToast(`Montant détecté : ${amount.toFixed(2)} — vérifiez avant d'enregistrer.`);
+      } else if (amount != null) {
+        showToast(`Montant détecté : ${amount.toFixed(2)} — ajoutez-le manuellement à une ligne (mode scindé).`);
+      } else {
+        showToast('Aucun montant détecté sur cette photo, saisissez-le manuellement.');
+      }
+    } catch (err) {
+      console.warn('[OCR]', err);
+      showToast("Échec de la lecture automatique. Saisissez le montant manuellement.");
+    } finally {
+      receiptScanBtn.textContent = originalLabel;
+      receiptScanBtn.disabled = false;
+    }
   });
 
   function updateSplitTotal() {
@@ -400,6 +427,9 @@ function openReconciliationModal() {
    Liste des transactions (vue complète, filtrable)
    ========================================================================== */
 const filters = { monthKey: currentMonthKey(), walletId: '', categoryId: '', type: '', reconciled: '' };
+let bulkMode = false;
+const selectedIds = new Set();
+let visibleIds = [];
 
 function txRowHtml(t) {
   const isTransfer = t.type === 'transfer';
@@ -409,9 +439,13 @@ function txRowHtml(t) {
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   const currency = t.wallet?.currency || 'EUR';
   const tagsHtml = t.tags?.length ? `<div class="tx-tags">${t.tags.map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`).join('')}</div>` : '';
+  const checkboxHtml = bulkMode
+    ? `<input type="checkbox" class="tx-select" data-tx-select="${t.id}" ${selectedIds.has(t.id) ? 'checked' : ''} style="width:18px;height:18px;flex-shrink:0;">`
+    : '';
 
   return `
     <div class="tx-row" data-tx-id="${t.id}">
+      ${checkboxHtml}
       <div class="tx-icon">${TX_ICONS[t.type] || ''}</div>
       <div class="tx-main">
         <div class="tx-title">${escapeHtml(title)}</div>
@@ -441,8 +475,130 @@ async function renderList() {
   });
   if (filters.reconciled === 'yes') rows = rows.filter((r) => r.reconciled);
   if (filters.reconciled === 'no') rows = rows.filter((r) => !r.reconciled);
+  visibleIds = rows.map((r) => r.id);
+  for (const id of [...selectedIds]) { if (!visibleIds.includes(id)) selectedIds.delete(id); }
 
   container.innerHTML = rows.length ? rows.map(txRowHtml).join('') : '<div class="tx-empty">Aucune transaction pour ces filtres.</div>';
+
+  if (bulkMode) {
+    container.querySelectorAll('[data-tx-select]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectedIds.add(cb.dataset.txSelect);
+        else selectedIds.delete(cb.dataset.txSelect);
+        renderBulkBar();
+      });
+    });
+  }
+  renderBulkBar();
+}
+
+/* ---------- Sélection multiple / édition groupée ---------- */
+function toggleBulkMode(on) {
+  bulkMode = on;
+  selectedIds.clear();
+  document.getElementById('transaction-bulk-toggle-btn')?.classList.toggle('is-active', on);
+  renderList();
+}
+
+async function openBulkCategorizeModal() {
+  const categories = await dbGetAll(STORES.CATEGORIES);
+  const roots = categories.filter((c) => !c.parentId);
+  const optionsHtml = roots.map((r) => {
+    const children = categories.filter((c) => c.parentId === r.id).map((ch) => `<option value="${ch.id}">— ${escapeHtml(ch.name)}</option>`).join('');
+    return `<option value="${r.id}">${escapeHtml(r.name)}</option>${children}`;
+  }).join('');
+  const modal = openModal(`
+    <div class="form-row"><label>Nouvelle catégorie pour ${selectedIds.size} transaction(s)</label><select id="bulk-category-select">${optionsHtml}</select></div>
+    <button type="button" class="btn btn-primary btn-block" id="bulk-category-confirm">Appliquer</button>
+  `, { title: 'Changer la catégorie' });
+
+  modal.el.querySelector('#bulk-category-confirm').addEventListener('click', async () => {
+    const categoryId = modal.el.querySelector('#bulk-category-select').value;
+    const all = await dbGetAll(STORES.TRANSACTIONS);
+    for (const id of selectedIds) {
+      const t = all.find((x) => x.id === id);
+      if (!t) continue;
+      const before = { ...t };
+      t.categoryId = categoryId;
+      await dbPut(STORES.TRANSACTIONS, t);
+      await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: 'Catégorisation groupée' });
+    }
+    modal.close();
+    showToast(`${selectedIds.size} transaction(s) recatégorisée(s).`);
+    notifyDataChanged('transactions');
+  });
+}
+
+async function bulkSetReconciled(reconciled) {
+  const all = await dbGetAll(STORES.TRANSACTIONS);
+  for (const id of selectedIds) {
+    const t = all.find((x) => x.id === id);
+    if (!t || t.reconciled === reconciled) continue;
+    const before = { ...t };
+    t.reconciled = reconciled;
+    await dbPut(STORES.TRANSACTIONS, t);
+    await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: reconciled ? 'Pointée (groupé)' : 'Dépointée (groupé)' });
+  }
+  showToast(`${selectedIds.size} transaction(s) mise(s) à jour.`);
+  notifyDataChanged('transactions');
+}
+
+async function bulkDelete() {
+  const count = selectedIds.size;
+  const ok = await confirmDialog(`Supprimer ${count} transaction(s) sélectionnée(s) ?`, { danger: true, confirmText: 'Supprimer' });
+  if (!ok) return;
+  const all = await dbGetAll(STORES.TRANSACTIONS);
+  const deleted = [];
+  for (const id of selectedIds) {
+    const t = all.find((x) => x.id === id);
+    if (!t) continue;
+    deleted.push(t);
+    await dbDelete(STORES.TRANSACTIONS, id);
+    await logAudit({ entityType: 'transaction', entityId: id, action: 'delete', before: t, note: 'Suppression groupée' });
+  }
+  selectedIds.clear();
+  notifyDataChanged('transactions');
+  showToast(`${deleted.length} transaction(s) supprimée(s).`, {
+    actionLabel: 'Annuler',
+    onAction: async () => {
+      for (const t of deleted) {
+        await dbAdd(STORES.TRANSACTIONS, t);
+        await logAudit({ entityType: 'transaction', entityId: t.id, action: 'create', after: t, note: 'Restaurée (annulation groupée)' });
+      }
+      showToast(`${deleted.length} transaction(s) restaurée(s).`);
+      notifyDataChanged('transactions');
+    },
+  });
+}
+
+async function renderBulkBar() {
+  const bar = document.getElementById('transactions-bulk-bar');
+  if (!bar) return;
+  if (!bulkMode) { bar.hidden = true; bar.innerHTML = ''; return; }
+  bar.hidden = false;
+  const count = selectedIds.size;
+  const allSelected = visibleIds.length > 0 && count === visibleIds.length;
+  bar.innerHTML = `
+    <div class="filters-bar" style="align-items:center;background:var(--surface-alt);border-radius:10px;padding:8px 12px;">
+      <span style="font-size:13px;font-weight:700;">${count} sélectionnée(s)</span>
+      <button type="button" class="btn btn-ghost" id="bulk-select-all">${allSelected ? 'Tout désélectionner' : 'Tout sélectionner'}</button>
+      ${count ? `
+        <button type="button" class="btn btn-ghost" id="bulk-categorize">Changer la catégorie</button>
+        <button type="button" class="btn btn-ghost" id="bulk-reconcile">Marquer pointées</button>
+        <button type="button" class="btn btn-ghost" id="bulk-unreconcile">Marquer non pointées</button>
+        <button type="button" class="btn btn-danger" id="bulk-delete">Supprimer</button>
+      ` : ''}
+    </div>`;
+
+  bar.querySelector('#bulk-select-all').addEventListener('click', () => {
+    if (allSelected) selectedIds.clear();
+    else visibleIds.forEach((id) => selectedIds.add(id));
+    renderList();
+  });
+  bar.querySelector('#bulk-categorize')?.addEventListener('click', () => openBulkCategorizeModal());
+  bar.querySelector('#bulk-reconcile')?.addEventListener('click', () => bulkSetReconciled(true));
+  bar.querySelector('#bulk-unreconcile')?.addEventListener('click', () => bulkSetReconciled(false));
+  bar.querySelector('#bulk-delete')?.addEventListener('click', () => bulkDelete());
 }
 
 async function renderFiltersBar() {
@@ -486,6 +642,7 @@ export async function renderTransactions() {
 export function initTransactionsModule() {
   document.getElementById('transaction-add-btn')?.addEventListener('click', () => openQuickAdd());
   document.getElementById('transaction-reconcile-btn')?.addEventListener('click', () => openReconciliationModal());
+  document.getElementById('transaction-bulk-toggle-btn')?.addEventListener('click', () => toggleBulkMode(!bulkMode));
 
   document.getElementById('transactions-list')?.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');
@@ -507,12 +664,20 @@ export function initTransactionsModule() {
     } else if (btn.dataset.action === 'edit') {
       openQuickAdd({ editTransaction: t });
     } else if (btn.dataset.action === 'delete') {
-      const ok = await confirmDialog('Supprimer définitivement cette transaction ?', { danger: true, confirmText: 'Supprimer' });
+      const ok = await confirmDialog('Supprimer cette transaction ?', { danger: true, confirmText: 'Supprimer' });
       if (ok) {
         await dbDelete(STORES.TRANSACTIONS, txId);
         await logAudit({ entityType: 'transaction', entityId: txId, action: 'delete', before: t });
-        showToast('Transaction supprimée.');
         notifyDataChanged('transactions');
+        showToast('Transaction supprimée.', {
+          actionLabel: 'Annuler',
+          onAction: async () => {
+            await dbAdd(STORES.TRANSACTIONS, t);
+            await logAudit({ entityType: 'transaction', entityId: t.id, action: 'create', after: t, note: 'Restaurée (annulation)' });
+            showToast('Transaction restaurée.');
+            notifyDataChanged('transactions');
+          },
+        });
       }
     }
   });

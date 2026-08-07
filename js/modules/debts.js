@@ -296,8 +296,17 @@ export function initDebtsModule() {
         for (const p of payments) await dbDelete(STORES.DEBT_PAYMENTS, p.id);
         await dbDelete(STORES.DEBTS, d.id);
         await logAudit({ entityType: 'debt', entityId: d.id, action: 'delete', before: d });
-        showToast('Supprimé.');
         notifyDataChanged('debts');
+        showToast('Supprimé.', {
+          actionLabel: 'Annuler',
+          onAction: async () => {
+            await dbAdd(STORES.DEBTS, d);
+            for (const p of payments) await dbAdd(STORES.DEBT_PAYMENTS, p);
+            await logAudit({ entityType: 'debt', entityId: d.id, action: 'create', after: d, note: 'Restaurée (annulation)' });
+            showToast('Restauré.');
+            notifyDataChanged('debts');
+          },
+        });
       }
     }
   });

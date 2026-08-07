@@ -4,7 +4,7 @@
 
 import { formatCurrency, formatDate, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';
 import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions } from '../ledger.js';
-import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart } from '../charts.js';
+import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderIncomeFlowSankey, PALETTE } from '../charts.js';
 import { getSetting } from '../db.js';
 
 export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true, safeToSpend: true, netWorth: true, debtsBalance: true };
@@ -246,6 +246,10 @@ export async function renderDashboard() {
     renderExpensesByCategoryChart('chart-expenses-category', expensesByCategory, currency);
     renderNetWorthTrendChart('chart-net-worth-trend', netWorthHistory, currency);
     renderBudgetVsActualChart('chart-budget-vs-actual', budgetVsActual, currency);
+
+    const flows = expensesByCategory.map((c, i) => ({ label: c.label, value: c.value, color: c.color || PALETTE[i % PALETTE.length] }));
+    if (summary.netSavings > 0) flows.push({ label: 'Épargne nette', value: summary.netSavings, color: 'var(--pos, #16a34a)' });
+    renderIncomeFlowSankey('dashboard-income-flow', { income: summary.income, flows, currency });
   }
 
   renderAlerts(budgetVsActual, thresholds);

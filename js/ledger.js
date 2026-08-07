@@ -205,6 +205,21 @@ export async function computeMonthSummary(monthKey = currentMonthKey()) {
   return { income, expenses, netSavings, cashFlow: netSavings, currency: baseCurrency };
 }
 
+/** Entrées/sorties sur une plage de dates [startDate, endDate] incluses (YYYY-MM-DD), pour les
+    résumés qui ne s'alignent pas sur un mois calendaire (ex : résumé hebdomadaire). */
+export async function computeSpendingBetween(startDate, endDate) {
+  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  let income = 0, expenses = 0;
+  for (const t of transactions) {
+    if (!t.date || t.date < startDate || t.date > endDate) continue;
+    const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
+    if (t.type === 'income') income += amt;
+    else if (t.type === 'expense') expenses += amt;
+  }
+  return { income, expenses, netSavings: income - expenses, currency: baseCurrency };
+}
+
 /** Dépenses du mois groupées par catégorie (top 7 + "Autres"). Chaque ligne porte la couleur
     personnalisée de la catégorie (color, si définie) pour que le graphique et la liste utilisent
     la même teinte — null pour "Sans catégorie"/"Autres" (couleur de repli côté graphique). */

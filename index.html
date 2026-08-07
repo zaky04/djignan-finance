@@ -255,6 +255,10 @@
             <h3>Budget vs réel</h3>
             <div class="chart-canvas-wrap"><canvas id="chart-budget-vs-actual"></canvas></div>
           </div>
+          <div class="chart-card chart-card-wide">
+            <h3>Répartition des revenus du mois</h3>
+            <div id="dashboard-income-flow"></div>
+          </div>
         </div>
 
         <div class="panel" id="panel-recent-transactions">
@@ -303,11 +307,13 @@
         <div class="view-header">
           <h2>Transactions</h2>
           <div style="display:flex;gap:8px;">
+            <button id="transaction-bulk-toggle-btn" class="btn btn-ghost">Sélection multiple</button>
             <button id="transaction-reconcile-btn" class="btn btn-ghost">Rapprochement</button>
             <button id="transaction-add-btn" class="btn btn-primary">+ Nouvelle transaction</button>
           </div>
         </div>
         <div id="transactions-filters" class="filters-bar"></div>
+        <div id="transactions-bulk-bar" hidden></div>
         <div id="transactions-list" class="tx-list"></div>
       </section>
 
@@ -471,7 +477,10 @@
           <input type="file" name="receipt" accept="image/*" capture="environment">
           <div id="qa-receipt-preview" style="margin-top:8px;" hidden>
             <img id="qa-receipt-preview-img" alt="Aperçu du justificatif" style="max-width:120px;max-height:120px;border-radius:8px;border:1px solid var(--border);display:block;">
-            <button type="button" id="qa-receipt-remove" class="link-btn" style="font-size:12.5px;margin-top:4px;">Retirer le justificatif</button>
+            <div style="display:flex;gap:14px;align-items:center;margin-top:6px;">
+              <button type="button" id="qa-receipt-scan" class="link-btn" style="font-size:12.5px;">Scanner le montant</button>
+              <button type="button" id="qa-receipt-remove" class="link-btn" style="font-size:12.5px;">Retirer le justificatif</button>
+            </div>
           </div>
         </div>
         <button type="submit" class="btn btn-primary btn-block">Enregistrer</button>

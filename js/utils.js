@@ -165,14 +165,32 @@ export function escapeHtml(str) {
 }
 
 /** Toast simple, auto-disparaissant. */
-export function showToast(message, { duration = 3000 } = {}) {
+/** Toast simple, ou avec une action (ex: "Annuler") si actionLabel/onAction sont fournis. */
+export function showToast(message, { duration = 3000, actionLabel = null, onAction = null } = {}) {
   const container = document.getElementById('toast-container');
   if (!container) return;
   const el = document.createElement('div');
   el.className = 'toast';
-  el.textContent = message;
+  const textEl = document.createElement('span');
+  textEl.textContent = message;
+  el.appendChild(textEl);
+
+  let timer;
+  if (actionLabel && onAction) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = actionLabel;
+    btn.addEventListener('click', () => {
+      clearTimeout(timer);
+      el.remove();
+      onAction();
+    });
+    el.appendChild(btn);
+    duration = Math.max(duration, 5000);
+  }
   container.appendChild(el);
-  setTimeout(() => el.remove(), duration);
+  timer = setTimeout(() => el.remove(), duration);
 }
 
 /** Déclenche le téléchargement d'un fichier texte/JSON/CSV généré côté client. */

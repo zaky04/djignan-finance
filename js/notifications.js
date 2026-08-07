@@ -8,8 +8,16 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, getSetting, setSetting } from './db.js';
-import { computeBudgetVsActual, getAllWalletBalances } from './ledger.js';
-import { formatCurrency, formatDate, currentMonthKey, percentage, todayISO } from './utils.js';
+import { computeBudgetVsActual, getAllWalletBalances, computeSpendingBetween } from './ledger.js';
+import { formatCurrency, formatDate, currentMonthKey, percentage, todayISO, localISODate } from './utils.js';
+
+/** Lundi (YYYY-MM-DD) de la semaine contenant `date`. */
+function mondayOf(date) {
+  const d = new Date(date);
+  const day = d.getDay(); // 0 = dimanche … 6 = samedi
+  d.setDate(d.getDate() + ((day === 0 ? -6 : 1) - day));
+  return localISODate(d);
+}
 
 export function isNotificationSupported() {
   return 'Notification' in window;
@@ -142,4 +150,29 @@ export async function checkAndNotify() {
   if (budgetsChanged) await setSetting('notifiedBudgetTiers', notifiedBudgets);
   if (debtsChanged) await setSetting('notifiedDebtDates', notifiedDebts);
   if (lowBalanceChanged) await setSetting('notifiedLowBalanceWallets', notifiedLowBalance);
+
+  // ---- Résumé de la semaine passée, une fois par semaine au premier déverrouillage ----
+  const currentWeekStart = mondayOf(new Date());
+  const lastWeeklySummaryWeek = await getSetting('lastWeeklySummaryWeek');
+  if (lastWeeklySummaryWeek !== currentWeekStart) {
+    const prevWeekEnd = new Date(currentWeekStart);
+    prevWeekEnd.setDate(prevWeekEnd.getDate() - 1);
+    const prevWeekStart = new Date(prevWeekEnd);
+    prevWeekStart.setDate(prevWeekStart.getDate() - 6);
+    const prevWeekStartStr = localISODate(prevWeekStart);
+    const prevWeekEndStr = localISODate(prevWeekEnd);
+
+    const weekSummary = await computeSpendingBetween(prevWeekStartStr, prevWeekEndStr);
+    if (weekSummary.income > 0 || weekSummary.expenses > 0) {
+      const ok = await fireNotification('Résumé de la semaine', {
+        body: `${formatCurrency(weekSummary.expenses, weekSummary.currency)} dépensé, ${formatCurrency(weekSummary.income, weekSummary.currency)} reçu · épargne nette ${formatCurrency(weekSummary.netSavings, weekSummary.currency)}.`,
+        tag: `weekly-summary-${currentWeekStart}`,
+      });
+      if (ok) await setSetting('lastWeeklySummaryWeek', currentWeekStart);
+    } else {
+      // Aucune activité la semaine passée : on marque quand même la semaine comme traitée
+      // pour ne pas re-tenter le calcul à chaque déverrouillage.
+      await setSetting('lastWeeklySummaryWeek', currentWeekStart);
+    }
+  }
 }
