@@ -31,9 +31,43 @@ async function deriveAesKey(passphrase, saltBuf) {
   );
 }
 
+/* JSON.stringify() sérialise silencieusement un Blob en "{}" (aucune propriété
+   énumérable) : les justificatifs photo des transactions (receiptBlob) seraient
+   perdus sans bruit à l'export. On les convertit en data URL (chaîne base64)
+   avant stringify, et on les reconvertit en Blob après parse à l'import. */
+async function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+async function dataUrlToBlob(dataUrl) {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+async function serializeReceiptsForExport(data) {
+  for (const t of data.stores?.[STORES.TRANSACTIONS] || []) {
+    if (t.receiptBlob instanceof Blob) {
+      t.receiptDataUrl = await blobToDataUrl(t.receiptBlob);
+      delete t.receiptBlob;
+    }
+  }
+}
+async function deserializeReceiptsForImport(data) {
+  for (const t of data.stores?.[STORES.TRANSACTIONS] || []) {
+    if (t.receiptDataUrl) {
+      t.receiptBlob = await dataUrlToBlob(t.receiptDataUrl);
+      delete t.receiptDataUrl;
+    }
+  }
+}
+
 /* ---------- Export / import JSON en clair ---------- */
 export async function exportJsonBackup() {
   const data = await exportAllData();
+  await serializeReceiptsForExport(data);
   downloadFile(`geofinance-backup-${todayISO()}.json`, JSON.stringify(data, null, 2), 'application/json');
   await setSetting('lastBackupAt', new Date().toISOString());
 }
@@ -41,6 +75,7 @@ export async function exportJsonBackup() {
 export async function importJsonBackup(file, { merge = false } = {}) {
   const text = await readFileAsText(file);
   const data = JSON.parse(text);
+  await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
   notifyDataChanged('all');
 }
@@ -48,6 +83,7 @@ export async function importJsonBackup(file, { merge = false } = {}) {
 /* ---------- Export / import JSON chiffré (AES-GCM 256, PBKDF2) ---------- */
 export async function exportEncryptedBackup(passphrase) {
   const data = await exportAllData();
+  await serializeReceiptsForExport(data);
   const json = JSON.stringify(data);
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -76,6 +112,7 @@ export async function importEncryptedBackup(file, passphrase, { merge = false } 
     throw new Error('Mot de passe incorrect ou fichier corrompu.');
   }
   const data = JSON.parse(new TextDecoder().decode(plainBuf));
+  await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
   notifyDataChanged('all');
 }
@@ -328,6 +365,7 @@ export async function runAutoBackupIfConfigured() {
   try {
     if (!(await ensureAutoBackupPermission(handle))) return false;
     const data = await exportAllData();
+    await serializeReceiptsForExport(data);
     const fileHandle = await handle.getFileHandle(`geofinance-backup-${todayISO()}.json`, { create: true });
     const writable = await fileHandle.createWritable();
     await writable.write(JSON.stringify(data, null, 2));

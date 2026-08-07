@@ -3,11 +3,11 @@
    ========================================================================== */
 
 import { formatCurrency, formatDate, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';
-import { computeNetWorthHistory, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions } from '../ledger.js';
+import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart } from '../charts.js';
 import { getSetting } from '../db.js';
 
-export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true };
+export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true, safeToSpend: true, netWorth: true, debtsBalance: true };
 export const BUDGET_ALERT_THRESHOLD_DEFAULTS = { warn: 70, danger: 90 };
 
 const TX_ICONS = {
@@ -138,6 +138,10 @@ export async function renderDashboard() {
   const panels = { ...DASHBOARD_PANEL_DEFAULTS, ...(await getSetting('dashboardPanels', {})) };
   const thresholds = { ...BUDGET_ALERT_THRESHOLD_DEFAULTS, ...(await getSetting('budgetAlertThresholds', {})) };
 
+  const profile = await getSetting('userProfile', {});
+  const greetingEl = document.getElementById('dashboard-greeting');
+  if (greetingEl) greetingEl.textContent = profile.firstName ? `Bonjour, ${profile.firstName} 👋` : '';
+
   const watchEl = document.getElementById('panel-watch-categories');
   const billsEl = document.getElementById('panel-upcoming-bills');
   if (watchEl) watchEl.hidden = !panels.watchCategories;
@@ -148,8 +152,14 @@ export async function renderDashboard() {
   if (chartsEl) chartsEl.hidden = !panels.charts;
   const recentEl = document.getElementById('panel-recent-transactions');
   if (recentEl) recentEl.hidden = !panels.recentTransactions;
+  const safeToSpendEl = document.getElementById('panel-safe-to-spend-dash');
+  if (safeToSpendEl) safeToSpendEl.hidden = !panels.safeToSpend;
+  const netWorthEl = document.getElementById('panel-net-worth-dash');
+  if (netWorthEl) netWorthEl.hidden = !panels.netWorth;
+  const debtsBalanceEl = document.getElementById('panel-debts-balance-dash');
+  if (debtsBalanceEl) debtsBalanceEl.hidden = !panels.debtsBalance;
 
-  const [summary, prevSummary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, forecast, recentTx] = await Promise.all([
+  const [summary, prevSummary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, forecast, recentTx, netWorth, composition] = await Promise.all([
     computeMonthSummary(monthKey),
     computeMonthSummary(monthKeyOffset(monthKey, -1)),
     computeExpensesByCategory(monthKey),
@@ -158,8 +168,46 @@ export async function renderDashboard() {
     computeMonthlyBudgetSummary(monthKey),
     computeEndOfMonthForecast(),
     getEnrichedTransactions({ limit: 8 }),
+    computeNetWorth(),
+    computeNetWorthComposition(),
   ]);
   const currency = summary.currency;
+
+  if (panels.safeToSpend) {
+    const upcomingBillsTotal = forecast.upcoming.filter((u) => u.type === 'expense').reduce((sum, u) => sum + u.amountBase, 0);
+    const reservedBudget = Math.max(0, monthlyBudget.remaining);
+    const safeToSpend = forecast.current - upcomingBillsTotal - reservedBudget;
+    setAmount(document.getElementById('dash-safe-to-spend-value'), safeToSpend, forecast.currency);
+    safeToSpendEl?.classList.toggle('is-negative', safeToSpend < 0);
+    const safeTrendEl = document.getElementById('dash-safe-to-spend-trend');
+    if (safeTrendEl) {
+      safeTrendEl.textContent = safeToSpend >= 0
+        ? 'Après budgets réservés et échéances à venir'
+        : '⚠ Dépenses prévues supérieures aux liquidités disponibles';
+    }
+  }
+
+  if (panels.netWorth) {
+    setAmount(document.getElementById('dash-net-worth-value'), netWorth.total, netWorth.currency);
+    const netWorthTrendEl = document.getElementById('dash-net-worth-trend');
+    if (netWorthTrendEl) {
+      if (netWorthHistory.length >= 2) {
+        const prev = netWorthHistory[netWorthHistory.length - 2].value;
+        const diff = netWorth.total - prev;
+        const sign = diff >= 0 ? '+' : '';
+        const pctLabel = prev !== 0 ? ` (${sign}${((diff / Math.abs(prev)) * 100).toFixed(1)}%)` : '';
+        netWorthTrendEl.textContent = `${sign}${formatCurrency(diff, netWorth.currency)}${pctLabel} vs mois dernier`;
+      } else {
+        netWorthTrendEl.textContent = 'Pas encore assez d\'historique';
+      }
+    }
+  }
+
+  if (panels.debtsBalance) {
+    setAmount(document.getElementById('dash-receivables-value'), composition.receivables, composition.currency);
+    setAmount(document.getElementById('dash-debts-value'), composition.debts, composition.currency);
+    setAmount(document.getElementById('dash-debts-net-value'), composition.receivables - composition.debts, composition.currency);
+  }
 
   renderMonthTrend('summary-trend-income', summary.income, prevSummary.income, currency);
   renderMonthTrend('summary-trend-expenses', summary.expenses, prevSummary.expenses, currency, true);

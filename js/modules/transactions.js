@@ -23,6 +23,7 @@ const CHECK_CIRCLE = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill
 const EMPTY_CIRCLE = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/></svg>';
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
+const RECEIPT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 2h12v20l-3-2-3 2-3-2-3 2V2Zm2 5h8V5H8v2Zm0 4h8V9H8v2Zm0 4h5v-2H8v2Z"/></svg>';
 
 /* ==========================================================================
    Modale Saisie express (création + édition)
@@ -58,9 +59,30 @@ export function openQuickAdd({ editTransaction = null } = {}) {
   const walletSelect = form.elements.walletId;
   const targetWalletSelect = form.elements.targetWalletId;
   const categorySelect = form.elements.categoryId;
+  const receiptInput = form.elements.receipt;
+  const receiptPreviewWrap = backdrop.querySelector('#qa-receipt-preview');
+  const receiptPreviewImg = backdrop.querySelector('#qa-receipt-preview-img');
+  const receiptRemoveBtn = backdrop.querySelector('#qa-receipt-remove');
 
   let currentType = editTransaction?.type || 'expense';
   let splitMode = false;
+  let receiptRemoved = false;
+
+  function showReceiptPreview(blob) {
+    receiptPreviewImg.src = URL.createObjectURL(blob);
+    receiptPreviewWrap.hidden = false;
+  }
+  if (editTransaction?.receiptBlob) showReceiptPreview(editTransaction.receiptBlob);
+
+  receiptInput.addEventListener('change', () => {
+    receiptRemoved = false;
+    if (receiptInput.files[0]) showReceiptPreview(receiptInput.files[0]);
+  });
+  receiptRemoveBtn.addEventListener('click', () => {
+    receiptInput.value = '';
+    receiptRemoved = true;
+    receiptPreviewWrap.hidden = true;
+  });
 
   function updateSplitTotal() {
     const rows = [...splitList.querySelectorAll('[data-split-row]')];
@@ -154,6 +176,18 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     if (categoryTouchedByUser || currentType === 'transfer') return;
     const note = norm(form.elements.note.value);
     if (note.length < 3) return;
+
+    // Priorité aux règles explicites de l'utilisateur (Budgets > Règles) sur la
+    // suggestion implicite par similarité de note, plus fiable pour l'utilisateur.
+    if (currentType === 'expense') {
+      const rules = await dbGetAll(STORES.CATEGORIZATION_RULES);
+      const ruleMatch = rules.find((r) => r.pattern && note.includes(r.pattern));
+      if (ruleMatch && categorySelect.querySelector(`option[value="${ruleMatch.categoryId}"]`)) {
+        categorySelect.value = ruleMatch.categoryId;
+        return;
+      }
+    }
+
     const all = await dbGetAll(STORES.TRANSACTIONS);
     const match = all
       .filter((t) => t.type === currentType && t.categoryId && t.note)
@@ -195,6 +229,8 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     if (!walletId) { showToast('Créez au moins un portefeuille avant de saisir une transaction.'); return; }
     if (type === 'transfer' && walletId === targetWalletId) { showToast('Choisissez deux portefeuilles différents.'); return; }
 
+    const receiptBlob = receiptInput.files[0] || (receiptRemoved ? null : editTransaction?.receiptBlob || null);
+
     if (splitMode && type !== 'transfer') {
       const rows = [...splitList.querySelectorAll('[data-split-row]')]
         .map((row) => ({
@@ -211,7 +247,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
       for (const r of rows) {
         const splitRecord = {
           id: uuid(), type, walletId, targetWalletId: null,
-          categoryId: r.categoryId || null, amount: r.amount, date, note, tags,
+          categoryId: r.categoryId || null, amount: r.amount, date, note, tags, receiptBlob,
           reconciled: false, splitGroupId, createdAt: new Date().toISOString(),
         };
         await dbAdd(STORES.TRANSACTIONS, splitRecord);
@@ -233,6 +269,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
       date: fd.get('date'),
       note: (fd.get('note') || '').trim().slice(0, 140),
       tags: parseTags(fd.get('tags')),
+      receiptBlob,
       reconciled: editTransaction?.reconciled || false,
       createdAt: editTransaction?.createdAt || new Date().toISOString(),
     };
@@ -383,6 +420,7 @@ function txRowHtml(t) {
       </div>
       <div class="tx-amount amount ${cls}" data-value="${t.amount}">${sign}${formatCurrency(t.amount, currency)}</div>
       <div class="card-actions">
+        ${t.receiptBlob ? `<button type="button" class="icon-btn" data-action="view-receipt" title="Voir le justificatif">${RECEIPT_ICON}</button>` : ''}
         <button type="button" class="icon-btn" data-action="reconcile" title="${t.reconciled ? 'Pointée (cliquer pour annuler)' : 'Marquer comme pointée'}" style="color:${t.reconciled ? 'var(--pos)' : 'var(--text-faint)'}">
           ${t.reconciled ? CHECK_CIRCLE : EMPTY_CIRCLE}
         </button>
@@ -458,7 +496,9 @@ export function initTransactionsModule() {
     const t = all.find((x) => x.id === txId);
     if (!t) return;
 
-    if (btn.dataset.action === 'reconcile') {
+    if (btn.dataset.action === 'view-receipt') {
+      if (t.receiptBlob) openModal(`<img src="${URL.createObjectURL(t.receiptBlob)}" alt="Justificatif" style="max-width:100%;border-radius:8px;display:block;">`, { title: 'Justificatif' });
+    } else if (btn.dataset.action === 'reconcile') {
       const before = { ...t };
       t.reconciled = !t.reconciled;
       await dbPut(STORES.TRANSACTIONS, t);

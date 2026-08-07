@@ -296,6 +296,21 @@ export async function computeCategoryActuals(monthKey = currentMonthKey(), type 
   return cats.map((c) => ({ categoryId: c.id, label: c.name, parentId: c.parentId, actual: totals.get(c.id) || 0 }));
 }
 
+/** Dépenses/recettes réelles de l'ANNÉE pour CHAQUE catégorie d'un type donné (y compris à 0). */
+export async function computeAnnualCategoryActuals(year, type = 'expense') {
+  const { wallets, transactions, categories, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const cats = categories.filter((c) => c.type === type);
+  const totals = new Map(cats.map((c) => [c.id, 0]));
+  for (const t of transactions) {
+    if (t.type !== type || !t.date || !t.date.startsWith(String(year))) continue;
+    const cur = walletCurrency[t.walletId] || baseCurrency;
+    const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
+    totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);
+  }
+  return cats.map((c) => ({ categoryId: c.id, label: c.name, parentId: c.parentId, actual: totals.get(c.id) || 0 }));
+}
+
 /** Solde prévisionnel de fin de mois = liquidités actuelles + récurrences actives restant à échoir ce mois-ci. */
 export async function computeEndOfMonthForecast() {
   const { wallets, transactions, rates, baseCurrency } = await ctx();
@@ -351,4 +366,93 @@ export async function getEnrichedTransactions({ limit = null, monthKey = null, w
     targetWallet: t.targetWalletId ? walletById[t.targetWalletId] || null : null,
     category: catById[t.categoryId] || null,
   }));
+}
+
+/** Report d'enveloppe : cumul (budget - dépensé) de tous les mois BUDGÉTÉS avant monthKey pour
+    cette catégorie. Utilisé quand la catégorie a envelopeMode activé, pour que le solde non
+    dépensé (ou le dépassement) d'un mois se reporte sur le suivant, façon YNAB. */
+export async function computeEnvelopeCarryover(categoryId, monthKey) {
+  const { wallets, transactions, budgets, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const priorBudgets = budgets.filter((b) => b.categoryId === categoryId && b.month < monthKey && !b.period);
+  let carry = 0;
+  for (const b of priorBudgets) {
+    const actual = transactions
+      .filter((t) => t.type === 'expense' && t.categoryId === categoryId && (t.date || '').startsWith(b.month))
+      .reduce((sum, t) => sum + toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency), 0);
+    carry += (b.limit || 0) - actual;
+  }
+  return carry;
+}
+
+/** Détecte les paiements récurrents non déclarés en Récurrences : même note + montant similaire
+    apparaissant sur au moins 2 mois distincts. Exclut ce qui correspond déjà à une récurrence active. */
+export async function detectRecurringCandidates() {
+  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const recurring = await dbGetAll(STORES.RECURRING);
+  const recurringNames = new Set(recurring.map((r) => (r.name || '').trim().toLowerCase()));
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+
+  const groups = new Map();
+  for (const t of transactions) {
+    if (t.type !== 'expense' || !t.note || !t.note.trim()) continue;
+    const noteKey = t.note.trim().toLowerCase();
+    if (recurringNames.has(noteKey)) continue;
+    const amtBase = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
+    const key = `${noteKey}::${Math.round(amtBase)}`;
+    if (!groups.has(key)) groups.set(key, { note: t.note.trim(), amounts: [], months: new Set() });
+    const g = groups.get(key);
+    g.amounts.push(amtBase);
+    g.months.add((t.date || '').slice(0, 7));
+  }
+
+  const candidates = [...groups.values()]
+    .filter((g) => g.months.size >= 2)
+    .map((g) => ({
+      note: g.note,
+      occurrences: g.months.size,
+      avgAmount: g.amounts.reduce((a, b) => a + b, 0) / g.amounts.length,
+    }))
+    .sort((a, b) => b.avgAmount - a.avgAmount);
+
+  const totalMonthly = candidates.reduce((s, c) => s + c.avgAmount, 0);
+  return { candidates, totalMonthly, currency: baseCurrency };
+}
+
+/** Dépenses quotidiennes du mois (en devise de base), pour la vue calendrier. */
+export async function computeDailySpending(monthKey) {
+  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const totals = new Map();
+  for (const t of transactions) {
+    if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
+    const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
+    totals.set(t.date, (totals.get(t.date) || 0) + amt);
+  }
+  return { totals, currency: baseCurrency };
+}
+
+/** Score de santé financière (0-100) : taux d'épargne (40%), ratio d'endettement (30%),
+    respect du budget du mois (30%). Composite indicatif, pas un conseil financier personnalisé. */
+export async function computeFinancialHealthScore(monthKey = currentMonthKey()) {
+  const [summary, composition, budgetRows] = await Promise.all([
+    computeMonthSummary(monthKey),
+    computeNetWorthComposition(),
+    computeBudgetVsActual(monthKey),
+  ]);
+
+  const savingsRate = summary.income > 0 ? summary.netSavings / summary.income : 0;
+  const savingsScore = Math.max(0, Math.min(100, (savingsRate / 0.2) * 100));
+
+  const grossAssets = composition.liquid + composition.invested + composition.receivables;
+  const debtRatio = grossAssets > 0 ? composition.debts / grossAssets : (composition.debts > 0 ? 1 : 0);
+  const debtScore = Math.max(0, Math.min(100, 100 - debtRatio * 100));
+
+  const budgeted = budgetRows.filter((r) => r.budget > 0);
+  const withinBudget = budgeted.filter((r) => r.actual <= r.budget).length;
+  const budgetAdherencePct = budgeted.length ? (withinBudget / budgeted.length) * 100 : 70;
+  const budgetScore = budgetAdherencePct;
+
+  const score = Math.round(savingsScore * 0.4 + debtScore * 0.3 + budgetScore * 0.3);
+  return { score, savingsRate, debtRatio, budgetAdherencePct, currency: summary.currency };
 }

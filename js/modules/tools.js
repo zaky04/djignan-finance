@@ -6,7 +6,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, getSetting } from '../db.js';
-import { computeMonthSummary, computeLiquidBalance, computeNetWorth } from '../ledger.js';
+import { computeMonthSummary, computeLiquidBalance, computeNetWorth, detectRecurringCandidates } from '../ledger.js';
 import { formatCurrency, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, convertAmount, localISODate } from '../utils.js';
 
 function panel(title, bodyHtml, id) {
@@ -164,7 +164,19 @@ async function renderEnvelopeTool() {
   return { html, wire: () => { document.getElementById('tool-envelope').addEventListener('input', compute); compute(); } };
 }
 
-/* ---------- 5. Analyse des habitudes & détection d'anomalies ---------- */
+/* ---------- 5. Détection des abonnements récurrents non déclarés ---------- */
+async function renderSubscriptionsTool() {
+  const { candidates, totalMonthly, currency } = await detectRecurringCandidates();
+  const body = candidates.length
+    ? `<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">Détectés par similarité de note + montant sur au moins 2 mois distincts — vérifiez avant de les déclarer en Récurrences (Budgets &gt; Récurrences) pour un suivi précis.</p>
+       ${candidates.map((c) => `<div class="stat-row"><span class="stat-row-label">${escapeHtml(c.note)} <span class="badge" style="margin-left:6px;">${c.occurrences} mois</span></span><span>${formatCurrency(c.avgAmount, currency)}/mois</span></div>`).join('')}
+       <div class="stat-row" style="border-top:2px solid var(--border);margin-top:6px;padding-top:10px;font-weight:700;"><span class="stat-row-label">Total mensuel estimé</span><span>${formatCurrency(totalMonthly, currency)}</span></div>`
+    : '<div class="empty-state">Aucun abonnement non déclaré détecté pour le moment.</div>';
+  const html = panel('Abonnements & paiements récurrents détectés', body);
+  return { html, wire: () => {} };
+}
+
+/* ---------- 6. Analyse des habitudes & détection d'anomalies ---------- */
 async function renderAnomalyTool() {
   const [wallets, transactions] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.TRANSACTIONS)]);
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
@@ -210,7 +222,7 @@ async function getExchangeRatesSafe() {
   return { rates, baseCurrency };
 }
 
-/* ---------- 6. Journal d'audit ---------- */
+/* ---------- 7. Journal d'audit ---------- */
 function formatDateTime(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
@@ -242,6 +254,7 @@ export async function renderTools() {
     renderInflationTool(),
     renderEmergencyFundTool(),
     renderEnvelopeTool(),
+    renderSubscriptionsTool(),
     renderAnomalyTool(),
     renderAuditLogTool(),
   ]);

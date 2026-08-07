@@ -7,6 +7,13 @@
 import { computeNetWorth, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeCategoryActuals } from '../ledger.js';
 import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, localISODate, showToast } from '../utils.js';
 import { exportTransactionsCsv } from '../backup.js';
+import { getSetting } from '../db.js';
+import { healthScorePanelHtml, calendarPanelHtml, wireCalendarPanel } from './reports-extras.js';
+
+function profileHeaderLines(profile) {
+  const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
+  return [fullName, profile.jobTitle, profile.address, profile.phone].filter(Boolean);
+}
 
 let reportMonthKey = currentMonthKey();
 let reportYear = parseInt(currentMonthKey().slice(0, 4), 10);
@@ -18,11 +25,14 @@ async function generatePdfReport() {
   let y = 20;
   const pageBreakIfNeeded = () => { if (y > 275) { doc.addPage(); y = 20; } };
 
+  const profile = await getSetting('userProfile', {});
   doc.setFontSize(18);
   doc.text('GeoFinance System — Bilan financier', 14, y); y += 8;
   doc.setFontSize(11);
   doc.setTextColor(100);
-  doc.text(`Période : ${formatMonthLabel(reportMonthKey)}`, 14, y); y += 10;
+  doc.text(`Période : ${formatMonthLabel(reportMonthKey)}`, 14, y); y += 6;
+  for (const line of profileHeaderLines(profile)) { doc.text(line, 14, y); y += 5; }
+  y += 4;
   doc.setTextColor(0);
 
   const [{ total, currency }, summary, expensesByCategory, budgetVsActual] = await Promise.all([
@@ -76,11 +86,14 @@ async function generateAnnualPdfReport() {
 
   const monthKeys = Array.from({ length: 12 }, (_, i) => `${reportYear}-${String(i + 1).padStart(2, '0')}`);
 
+  const profile = await getSetting('userProfile', {});
   doc.setFontSize(18);
   doc.text('GeoFinance System — Bilan annuel', 14, y); y += 8;
   doc.setFontSize(11);
   doc.setTextColor(100);
-  doc.text(`Année ${reportYear}`, 14, y); y += 10;
+  doc.text(`Année ${reportYear}`, 14, y); y += 6;
+  for (const line of profileHeaderLines(profile)) { doc.text(line, 14, y); y += 5; }
+  y += 4;
   doc.setTextColor(0);
 
   const monthlySummaries = await Promise.all(monthKeys.map((mk) => computeMonthSummary(mk)));
@@ -178,7 +191,11 @@ export async function renderReports() {
         <button type="button" class="icon-btn" id="rep-next-year" aria-label="Année suivante">›</button>
       </div>
       <button type="button" class="btn btn-primary" id="rep-annual-pdf-btn">Générer le bilan annuel PDF</button>
-    </div>`;
+    </div>
+    ${await healthScorePanelHtml(reportMonthKey)}
+    ${await calendarPanelHtml(reportMonthKey)}`;
+
+  wireCalendarPanel(container, reportMonthKey);
 
   container.querySelector('#rep-prev-month').onclick = () => { reportMonthKey = monthKeyOffset(reportMonthKey, -1); renderReports(); };
   container.querySelector('#rep-next-month').onclick = () => { reportMonthKey = monthKeyOffset(reportMonthKey, 1); renderReports(); };

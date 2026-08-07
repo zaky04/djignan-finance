@@ -6,8 +6,8 @@
    de fin de mois).
    ========================================================================== */
 
-import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit } from '../db.js';
-import { computeCategoryActuals, computeEndOfMonthForecast } from '../ledger.js';
+import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit, getSetting } from '../db.js';
+import { computeCategoryActuals, computeEndOfMonthForecast, computeEnvelopeCarryover, computeAnnualCategoryActuals } from '../ledger.js';
 import {
   uuid, formatCurrency, formatDate, formatMonthLabel, formatPercent, escapeHtml, todayISO, localISODate,
   currentMonthKey, monthKeyOffset, percentage, budgetProgressClass, openModal, confirmDialog, showToast,
@@ -46,17 +46,21 @@ let monthKey = currentMonthKey();
 /* ==========================================================================
    Onglet 1 — Budgets du mois
    ========================================================================== */
-function budgetCategoryCardHtml(cat, actual, limit, currency) {
-  const pct = limit ? percentage(actual, limit) : 0;
+function budgetCategoryCardHtml(cat, actual, limit, currency, carryover = null) {
+  const effectiveLimit = carryover != null ? Math.max(0, (limit || 0) + carryover) : limit;
+  const pct = effectiveLimit ? percentage(actual, effectiveLimit) : 0;
   const cls = budgetProgressClass(pct);
   const color = cat.color || DEFAULT_CATEGORY_COLOR;
   const icon = CATEGORY_ICONS[cat.icon] || CATEGORY_ICONS[DEFAULT_CATEGORY_ICON];
+  const carryLabel = carryover != null
+    ? `<div style="font-size:11.5px;color:${carryover >= 0 ? 'var(--pos)' : 'var(--neg)'};margin-top:4px;">Enveloppe : ${carryover >= 0 ? '+' : ''}${formatCurrency(carryover, currency)} reporté du mois dernier${limit ? ` · budget effectif ${formatCurrency(effectiveLimit, currency)}` : ''}</div>`
+    : '';
   return `
     <div class="summary-card" style="${cat.parentId ? 'margin-left:16px;' : ''}">
       <div class="card-title-row">
         <div style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;">
           <span style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:${color}22;color:${color};flex-shrink:0;">${icon}</span>
-          ${cat.parentId ? '— ' : ''}${escapeHtml(cat.name)}
+          ${cat.parentId ? '— ' : ''}${escapeHtml(cat.name)}${cat.envelopeMode ? ' <span class="badge badge-accent" style="margin-left:4px;">Enveloppe</span>' : ''}
         </div>
         <input type="number" min="0" step="0.01" data-limit-input="${cat.id}" value="${limit || ''}" placeholder="Budget"
           style="width:100px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface-alt);text-align:right;">
@@ -64,8 +68,9 @@ function budgetCategoryCardHtml(cat, actual, limit, currency) {
       <div class="progress-track"><div class="progress-fill ${cls}" style="width:${Math.min(pct, 100)}%"></div></div>
       <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-muted);margin-top:6px;">
         <span>${formatCurrency(actual, currency)}</span>
-        <span>${limit ? formatPercent(pct, 0) : 'Pas de limite'}</span>
+        <span>${effectiveLimit ? formatPercent(pct, 0) : 'Pas de limite'}</span>
       </div>
+      ${carryLabel}
     </div>`;
 }
 
@@ -98,15 +103,16 @@ async function renderMonthlyTab(container) {
     <div class="grid-cards" id="budget-categories-grid"></div>`;
 
   const grid = container.querySelector('#budget-categories-grid');
-  const cards = [];
+  const orderedCats = [];
   for (const root of roots) {
-    const rootActual = actuals.find((a) => a.categoryId === root.id)?.actual || 0;
-    cards.push(budgetCategoryCardHtml(root, rootActual, budgetByCategory[root.id]?.limit, forecast.currency));
-    for (const child of categories.filter((c) => c.parentId === root.id)) {
-      const childActual = actuals.find((a) => a.categoryId === child.id)?.actual || 0;
-      cards.push(budgetCategoryCardHtml(child, childActual, budgetByCategory[child.id]?.limit, forecast.currency));
-    }
+    orderedCats.push(root);
+    orderedCats.push(...categories.filter((c) => c.parentId === root.id));
   }
+  const cards = await Promise.all(orderedCats.map(async (cat) => {
+    const actual = actuals.find((a) => a.categoryId === cat.id)?.actual || 0;
+    const carryover = cat.envelopeMode ? await computeEnvelopeCarryover(cat.id, monthKey) : null;
+    return budgetCategoryCardHtml(cat, actual, budgetByCategory[cat.id]?.limit, forecast.currency, carryover);
+  }));
   grid.innerHTML = cards.join('') || '<div class="empty-state">Aucune catégorie de dépense. Créez-en dans l\'onglet Catégories.</div>';
 
   container.querySelector('#bud-prev-month').onclick = () => { monthKey = monthKeyOffset(monthKey, -1); renderMonthlyTab(container); };
@@ -127,6 +133,62 @@ async function renderMonthlyTab(container) {
       const record = existing ? { ...existing, limit } : { id: uuid(), categoryId, month: monthKey, limit };
       await dbPut(STORES.BUDGETS, record);
       showToast('Budget mis à jour.');
+      notifyDataChanged('budgets');
+    });
+  });
+}
+
+/* ==========================================================================
+   Onglet 1bis — Budgets annuels (postes planifiés à l'année plutôt qu'au mois)
+   ========================================================================== */
+let annualYear = new Date().getFullYear();
+
+async function renderAnnualTab(container) {
+  const [actuals, allBudgets, categories, currency] = await Promise.all([
+    computeAnnualCategoryActuals(annualYear, 'expense'),
+    dbGetAll(STORES.BUDGETS),
+    dbGetAll(STORES.CATEGORIES),
+    getSetting('baseCurrency', 'EUR'),
+  ]);
+  const yearKey = String(annualYear);
+  const yearBudgets = allBudgets.filter((b) => b.period === 'annual' && b.month === yearKey);
+  const budgetByCategory = Object.fromEntries(yearBudgets.map((b) => [b.categoryId, b]));
+  const roots = categories.filter((c) => c.type === 'expense' && !c.parentId);
+  const totalBudget = yearBudgets.reduce((s, b) => s + (b.limit || 0), 0);
+  const totalActual = actuals.filter((a) => budgetByCategory[a.categoryId]).reduce((s, a) => s + a.actual, 0);
+
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;gap:4px;margin-bottom:14px;">
+      <button type="button" class="icon-btn" id="bud-prev-year" aria-label="Année précédente">‹</button>
+      <strong style="min-width:80px;text-align:center;display:inline-block;">${annualYear}</strong>
+      <button type="button" class="icon-btn" id="bud-next-year" aria-label="Année suivante">›</button>
+    </div>
+    ${yearBudgets.length ? `<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">${formatCurrency(totalActual, currency)} dépensé sur ${formatPercent(totalBudget ? percentage(totalActual, totalBudget) : 0, 0)} du budget annuel total attribué (${formatCurrency(totalBudget, currency)}).</p>` : ''}
+    <div class="grid-cards" id="budget-annual-grid"></div>`;
+
+  const grid = container.querySelector('#budget-annual-grid');
+  const orderedCats = [];
+  for (const root of roots) {
+    orderedCats.push(root);
+    orderedCats.push(...categories.filter((c) => c.parentId === root.id));
+  }
+  const cards = orderedCats.map((cat) => {
+    const actual = actuals.find((a) => a.categoryId === cat.id)?.actual || 0;
+    return budgetCategoryCardHtml(cat, actual, budgetByCategory[cat.id]?.limit, currency);
+  });
+  grid.innerHTML = cards.join('') || '<div class="empty-state">Aucune catégorie de dépense. Créez-en dans l\'onglet Catégories.</div>';
+
+  container.querySelector('#bud-prev-year').onclick = () => { annualYear -= 1; renderAnnualTab(container); };
+  container.querySelector('#bud-next-year').onclick = () => { annualYear += 1; renderAnnualTab(container); };
+
+  grid.querySelectorAll('[data-limit-input]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const categoryId = input.dataset.limitInput;
+      const limit = parseFloat(input.value) || 0;
+      const existing = yearBudgets.find((b) => b.categoryId === categoryId);
+      const record = existing ? { ...existing, limit } : { id: uuid(), categoryId, month: yearKey, period: 'annual', limit };
+      await dbPut(STORES.BUDGETS, record);
+      showToast('Budget annuel mis à jour.');
       notifyDataChanged('budgets');
     });
   });
@@ -159,6 +221,12 @@ function categoryFormHtml(category, presetParentId, presetType) {
         </div>
         <input type="hidden" name="color" value="${category?.color || DEFAULT_CATEGORY_COLOR}">
       </div>
+      <div data-field="envelopeRow" ${type !== 'expense' ? 'hidden' : ''}>
+        <label style="display:flex;align-items:center;gap:10px;padding:8px 0 14px;font-size:13.5px;cursor:pointer;">
+          <input type="checkbox" name="envelopeMode" ${category?.envelopeMode ? 'checked' : ''}>
+          Mode enveloppe : reporter le solde non dépensé (ou le dépassement) sur le mois suivant
+        </label>
+      </div>
       ${!presetParentId ? `
       <div class="form-row">
         <label>Type</label>
@@ -186,10 +254,14 @@ function openCategoryModal(category = null, presetParentId = null, presetType = 
   const form = modal.el.querySelector('#category-form');
   const typeSelect = modal.el.querySelector('#category-type-select');
   const parentSelect = modal.el.querySelector('#category-parent-select');
+  const envelopeRow = modal.el.querySelector('[data-field="envelopeRow"]');
 
   if (typeSelect && parentSelect) {
     populateParentSelect(parentSelect, typeSelect.value, category?.id);
-    typeSelect.addEventListener('change', () => populateParentSelect(parentSelect, typeSelect.value, category?.id));
+    typeSelect.addEventListener('change', () => {
+      populateParentSelect(parentSelect, typeSelect.value, category?.id);
+      if (envelopeRow) envelopeRow.hidden = typeSelect.value !== 'expense';
+    });
     if (category?.parentId) parentSelect.value = category.parentId;
   }
 
@@ -217,6 +289,7 @@ function openCategoryModal(category = null, presetParentId = null, presetType = 
       parentId: fd.get('parentId') || null,
       icon: fd.get('icon') || DEFAULT_CATEGORY_ICON,
       color: fd.get('color') || DEFAULT_CATEGORY_COLOR,
+      envelopeMode: fd.get('type') === 'expense' && fd.get('envelopeMode') === 'on',
       createdAt: category?.createdAt || new Date().toISOString(),
     };
     await dbPut(STORES.CATEGORIES, record);
@@ -421,6 +494,67 @@ async function renderRecurringTab(container) {
 }
 
 /* ==========================================================================
+   Onglet — Règles de catégorisation automatique
+   Une règle : si la note d'une transaction contient ce texte, la catégorie
+   est présélectionnée automatiquement en Saisie express (voir transactions.js).
+   ========================================================================== */
+function ruleRowHtml(rule, categories) {
+  const cat = categories.find((c) => c.id === rule.categoryId);
+  return `
+    <div class="tx-row" data-rule-id="${rule.id}">
+      <div class="tx-main">
+        <div class="tx-title">« ${escapeHtml(rule.pattern)} »</div>
+        <div class="tx-sub">→ ${escapeHtml(cat?.name || 'Catégorie supprimée')}</div>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+      </div>
+    </div>`;
+}
+
+async function renderRulesTab(container) {
+  const [rules, categories] = await Promise.all([dbGetAll(STORES.CATEGORIZATION_RULES), dbGetAll(STORES.CATEGORIES)]);
+  const expenseCats = categories.filter((c) => c.type === 'expense');
+  const catOptionsHtml = expenseCats.map((c) => `<option value="${c.id}">${c.parentId ? '— ' : ''}${escapeHtml(c.name)}</option>`).join('');
+
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>Nouvelle règle</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">Quand la note d'une dépense contient ce texte, la catégorie est présélectionnée automatiquement en Saisie express.</p>
+      <form id="rule-form" class="filters-bar" style="align-items:flex-end;">
+        <div class="form-row" style="margin:0;flex:1;min-width:160px;"><label>Texte à repérer</label><input type="text" name="pattern" required maxlength="60" placeholder="Ex: netflix"></div>
+        <div class="form-row" style="margin:0;flex:1;min-width:160px;"><label>Catégorie</label><select name="categoryId" required>${catOptionsHtml}</select></div>
+        <button type="submit" class="btn btn-primary">Ajouter</button>
+      </form>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><h3>Règles actives</h3></div>
+      ${rules.length ? rules.map((r) => ruleRowHtml(r, categories)).join('') : '<div class="empty-state">Aucune règle. Ajoutez-en une ci-dessus pour automatiser la catégorisation.</div>'}
+    </div>`;
+
+  container.querySelector('#rule-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const record = { id: uuid(), pattern: fd.get('pattern').trim().toLowerCase(), categoryId: fd.get('categoryId'), createdAt: new Date().toISOString() };
+    if (!record.pattern) return;
+    await dbAdd(STORES.CATEGORIZATION_RULES, record);
+    showToast('Règle créée.');
+    notifyDataChanged('categorizationRules');
+    renderRulesTab(container);
+  });
+
+  container.querySelectorAll('[data-action="delete"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const ruleId = btn.closest('[data-rule-id]').dataset.ruleId;
+      await dbDelete(STORES.CATEGORIZATION_RULES, ruleId);
+      showToast('Règle supprimée.');
+      notifyDataChanged('categorizationRules');
+      renderRulesTab(container);
+    });
+  });
+}
+
+/* ==========================================================================
    Génération automatique des transactions dues (appelée au démarrage)
    ========================================================================== */
 function advanceDate(dateStr, frequency) {
@@ -467,15 +601,19 @@ export async function renderBudgets() {
   content.innerHTML = `
     <div class="tabs-bar">
       <button type="button" class="tab-btn ${activeTab === 'monthly' ? 'is-active' : ''}" data-tab="monthly">Budgets du mois</button>
+      <button type="button" class="tab-btn ${activeTab === 'annual' ? 'is-active' : ''}" data-tab="annual">Budgets annuels</button>
       <button type="button" class="tab-btn ${activeTab === 'categories' ? 'is-active' : ''}" data-tab="categories">Catégories</button>
       <button type="button" class="tab-btn ${activeTab === 'recurring' ? 'is-active' : ''}" data-tab="recurring">Récurrences</button>
+      <button type="button" class="tab-btn ${activeTab === 'rules' ? 'is-active' : ''}" data-tab="rules">Règles</button>
     </div>
     <div id="budgets-tab-content" style="margin-top:16px;"></div>`;
 
   content.querySelectorAll('.tab-btn').forEach((b) => b.addEventListener('click', () => { activeTab = b.dataset.tab; renderBudgets(); }));
   const tabContent = document.getElementById('budgets-tab-content');
   if (activeTab === 'monthly') await renderMonthlyTab(tabContent);
+  else if (activeTab === 'annual') await renderAnnualTab(tabContent);
   else if (activeTab === 'categories') await renderCategoriesTab(tabContent);
+  else if (activeTab === 'rules') await renderRulesTab(tabContent);
   else await renderRecurringTab(tabContent);
 }
 

@@ -175,6 +175,40 @@ async function renderSecuritySection(container) {
   });
 }
 
+const PROFILE_FIELDS = [
+  { key: 'lastName', label: 'Nom', type: 'text' },
+  { key: 'firstName', label: 'Prénom', type: 'text' },
+  { key: 'phone', label: 'Numéro de téléphone', type: 'tel' },
+  { key: 'address', label: 'Adresse', type: 'text' },
+  { key: 'jobTitle', label: 'Fonction', type: 'text' },
+];
+
+async function renderProfileSection(container) {
+  const profile = await getSetting('userProfile', {});
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>Mon profil</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Informations personnelles utilisées pour personnaliser l'application (salutation sur le tableau de bord, en-tête des rapports PDF). Reste 100% local, jamais transmis.</p>
+      <form id="profile-form">
+        ${PROFILE_FIELDS.map((f) => `
+          <div class="form-row">
+            <label>${escapeHtml(f.label)}</label>
+            <input type="${f.type}" name="${f.key}" maxlength="120" value="${escapeHtml(profile[f.key] || '')}">
+          </div>`).join('')}
+        <button type="submit" class="btn btn-primary">Enregistrer le profil</button>
+      </form>
+    </div>`;
+
+  container.querySelector('#profile-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const updated = Object.fromEntries(PROFILE_FIELDS.map((f) => [f.key, (fd.get(f.key) || '').trim()]));
+    await setSetting('userProfile', updated);
+    showToast('Profil mis à jour.');
+    notifyDataChanged('settings');
+  });
+}
+
 async function renderCurrencySection(container) {
   const baseCurrency = await getSetting('baseCurrency', 'EUR');
   container.innerHTML = `
@@ -484,6 +518,9 @@ const DASHBOARD_PANEL_LABELS = {
   upcomingBills: 'Prochaines échéances',
   charts: 'Graphiques',
   recentTransactions: 'Transactions récentes',
+  safeToSpend: 'Reste à vivre',
+  netWorth: 'Patrimoine net global',
+  debtsBalance: 'Solde créances & dettes',
 };
 
 async function renderDashboardConfigSection(container) {
@@ -513,7 +550,8 @@ async function renderDashboardConfigSection(container) {
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-credit"></div>';
+  container.innerHTML = '<div id="settings-profile"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-credit"></div>';
+  await renderProfileSection(document.getElementById('settings-profile'));
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
   await renderInstallSection(document.getElementById('settings-install'));

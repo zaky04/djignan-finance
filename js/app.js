@@ -22,6 +22,7 @@ import { renderInvestments, initInvestmentsModule } from './modules/investments.
 import { renderDebts, initDebtsModule } from './modules/debts.js';
 import { renderTools, initToolsModule } from './modules/tools.js';
 import { renderReports, initReportsModule } from './modules/reports.js';
+import { renderShared, initSharedModule } from './modules/shared.js';
 import { renderSettings, initSettingsModule } from './modules/settings.js';
 import { initSearchModule } from './modules/search.js';
 
@@ -35,16 +36,17 @@ const VIEW_RENDERERS = {
   debts: renderDebts,
   tools: renderTools,
   reports: renderReports,
+  shared: renderShared,
   settings: renderSettings,
 };
 
 const VIEW_TITLES = {
   dashboard: 'Tableau de bord', wallets: 'Portefeuilles', transactions: 'Transactions', budgets: 'Budgets',
   savings: 'Épargne', investments: 'Investissements', debts: 'Dettes & créances', tools: 'Outils',
-  reports: 'Rapports', settings: 'Paramètres',
+  reports: 'Rapports', shared: 'Partage de dépenses', settings: 'Paramètres',
 };
 
-const MORE_VIEWS = ['wallets', 'savings', 'investments', 'debts', 'tools', 'reports', 'settings'];
+const MORE_VIEWS = ['wallets', 'savings', 'investments', 'debts', 'tools', 'reports', 'shared', 'settings'];
 
 let lockScreenApi = null;
 let lastActivityAt = Date.now();
@@ -188,6 +190,7 @@ async function onUnlocked() {
     initDebtsModule();
     initToolsModule();
     initReportsModule();
+    initSharedModule();
     initSettingsModule();
     initSearchModule();
     wireGlobalChrome();
