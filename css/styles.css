@@ -346,6 +346,8 @@ body[data-privacy="hidden"] .hero-card-value .amount::after { color: #fff; }
 .tx-main { flex: 1; min-width: 0; }
 .tx-title { font-weight: 600; font-size: 14px; }
 .tx-sub { font-size: 12.5px; color: var(--text-muted); }
+.tx-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.tx-tags .badge { padding: 2px 8px; font-size: 10.5px; }
 .tx-amount { font-weight: 700; font-size: 14.5px; }
 .tx-empty { padding: 32px 0; text-align: center; color: var(--text-faint); font-size: 13.5px; }
 

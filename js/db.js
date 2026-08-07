@@ -6,7 +6,7 @@
    ========================================================================== */
 
 export const DB_NAME = 'geofinance-db';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export const STORES = {
   WALLETS: 'wallets',
@@ -20,6 +20,7 @@ export const STORES = {
   DEBTS: 'debts',
   DEBT_PAYMENTS: 'debtPayments',
   EXCHANGE_RATES: 'exchangeRates',
+  EXCHANGE_RATE_HISTORY: 'exchangeRateHistory',
   AUDIT_LOG: 'auditLog',
   SETTINGS: 'settings',
 };
@@ -78,6 +79,11 @@ function upgrade(db) {
   }
   if (!db.objectStoreNames.contains(STORES.EXCHANGE_RATES)) {
     db.createObjectStore(STORES.EXCHANGE_RATES, { keyPath: 'code' });
+  }
+  if (!db.objectStoreNames.contains(STORES.EXCHANGE_RATE_HISTORY)) {
+    const s = db.createObjectStore(STORES.EXCHANGE_RATE_HISTORY, { keyPath: 'id' });
+    s.createIndex('byCode', 'code');
+    s.createIndex('byDate', 'date');
   }
   if (!db.objectStoreNames.contains(STORES.AUDIT_LOG)) {
     const s = db.createObjectStore(STORES.AUDIT_LOG, { keyPath: 'id' });

@@ -40,10 +40,12 @@ async function collectSearchIndex() {
   for (const t of transactions) {
     items.push({
       type: 'transaction',
-      haystack: `${t.note || ''} ${t.category?.name || ''} ${t.wallet?.name || ''}`,
+      haystack: `${t.note || ''} ${t.category?.name || ''} ${t.wallet?.name || ''} ${(t.tags || []).join(' ')}`,
       title: t.category?.name || t.note || 'Transaction',
-      sub: `${t.wallet?.name || ''} · ${formatDate(t.date)}${t.note ? ' · ' + t.note : ''}`,
+      sub: `${t.wallet?.name || ''} · ${formatDate(t.date)}${t.note ? ' · ' + t.note : ''}${t.tags?.length ? ' · #' + t.tags.join(' #') : ''}`,
       amount: formatCurrency(t.amount, t.wallet?.currency || 'EUR'),
+      amountValue: Number(t.amount) || 0,
+      dateValue: t.date || '',
       view: 'transactions',
     });
   }
@@ -111,9 +113,19 @@ export function openGlobalSearch() {
       <div class="search-input-row">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M10 2a8 8 0 1 0 4.9 14.3l5.4 5.4 1.4-1.4-5.4-5.4A8 8 0 0 0 10 2Zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12Z"/></svg>
         <input type="text" id="search-input" placeholder="Rechercher une transaction, un portefeuille, une dette…" autocomplete="off">
+        <button type="button" class="icon-btn" id="search-filters-toggle" aria-label="Filtres avancés" title="Filtres avancés (montant, dates)">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 5h16v2H4V5Zm3 6h10v2H7v-2Zm3 6h4v2h-4v-2Z"/></svg>
+        </button>
         <button type="button" class="icon-btn modal-close" aria-label="Fermer">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6Z"/></svg>
         </button>
+      </div>
+      <div id="search-advanced-filters" class="filters-bar" hidden style="padding:10px 20px;border-bottom:1px solid var(--border);">
+        <input type="number" step="0.01" id="search-amount-min" placeholder="Montant min">
+        <input type="number" step="0.01" id="search-amount-max" placeholder="Montant max">
+        <input type="date" id="search-date-from" title="Du">
+        <input type="date" id="search-date-to" title="Au">
+        <span style="font-size:11.5px;color:var(--text-faint);">S'applique aux transactions uniquement</span>
       </div>
       <div id="search-results" class="search-results">
         <div class="empty-state">Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne et investissements.</div>
@@ -132,7 +144,30 @@ export function openGlobalSearch() {
 
   const input = backdrop.querySelector('#search-input');
   const resultsEl = backdrop.querySelector('#search-results');
+  const filtersBar = backdrop.querySelector('#search-advanced-filters');
+  const amountMinEl = backdrop.querySelector('#search-amount-min');
+  const amountMaxEl = backdrop.querySelector('#search-amount-max');
+  const dateFromEl = backdrop.querySelector('#search-date-from');
+  const dateToEl = backdrop.querySelector('#search-date-to');
   let index = null;
+
+  backdrop.querySelector('#search-filters-toggle').addEventListener('click', () => {
+    filtersBar.hidden = !filtersBar.hidden;
+  });
+
+  function passesAdvancedFilters(item) {
+    const amountMin = amountMinEl.value !== '' ? parseFloat(amountMinEl.value) : null;
+    const amountMax = amountMaxEl.value !== '' ? parseFloat(amountMaxEl.value) : null;
+    const dateFrom = dateFromEl.value || null;
+    const dateTo = dateToEl.value || null;
+    if (amountMin == null && amountMax == null && !dateFrom && !dateTo) return true;
+    if (item.type !== 'transaction') return false;
+    if (amountMin != null && item.amountValue < amountMin) return false;
+    if (amountMax != null && item.amountValue > amountMax) return false;
+    if (dateFrom && item.dateValue < dateFrom) return false;
+    if (dateTo && item.dateValue > dateTo) return false;
+    return true;
+  }
 
   const runSearch = debounce(() => {
     const q = norm(input.value).trim();
@@ -140,13 +175,14 @@ export function openGlobalSearch() {
       resultsEl.innerHTML = '<div class="empty-state">Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d\'épargne et investissements.</div>';
       return;
     }
-    const matches = index.filter((it) => norm(it.haystack).includes(q)).slice(0, 40);
+    const matches = index.filter((it) => norm(it.haystack).includes(q) && passesAdvancedFilters(it)).slice(0, 40);
     resultsEl.innerHTML = matches.length
       ? matches.map(resultRowHtml).join('')
       : '<div class="empty-state">Aucun résultat.</div>';
   }, 120);
 
   input.addEventListener('input', runSearch);
+  [amountMinEl, amountMaxEl, dateFromEl, dateToEl].forEach((el) => el.addEventListener('input', runSearch));
   resultsEl.addEventListener('click', (e) => {
     const btn = e.target.closest('.search-result');
     if (!btn) return;

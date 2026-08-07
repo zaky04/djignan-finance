@@ -15,7 +15,7 @@ import { STORES, dbGetAll, getSetting } from './db.js';
 import { convertAmount, currentMonthKey, localISODate } from './utils.js';
 
 async function ctx() {
-  const [wallets, transactions, categories, budgets, investments, investmentEntries, debts, debtPayments, rates, baseCurrency] = await Promise.all([
+  const [wallets, transactions, categories, budgets, investments, investmentEntries, debts, debtPayments, rates, rateHistory, baseCurrency] = await Promise.all([
     dbGetAll(STORES.WALLETS),
     dbGetAll(STORES.TRANSACTIONS),
     dbGetAll(STORES.CATEGORIES),
@@ -25,13 +25,27 @@ async function ctx() {
     dbGetAll(STORES.DEBTS),
     dbGetAll(STORES.DEBT_PAYMENTS),
     dbGetAll(STORES.EXCHANGE_RATES),
+    dbGetAll(STORES.EXCHANGE_RATE_HISTORY),
     getSetting('baseCurrency', 'EUR'),
   ]);
-  return { wallets, transactions, categories, budgets, investments, investmentEntries, debts, debtPayments, rates, baseCurrency };
+  return { wallets, transactions, categories, budgets, investments, investmentEntries, debts, debtPayments, rates, rateHistory, baseCurrency };
 }
 
 function toBase(amount, currency, rates, baseCurrency) {
   return convertAmount(amount, currency, baseCurrency, rates, baseCurrency);
+}
+
+/** Reconstruit les taux tels qu'ils étaient à une date donnée : pour chaque devise, on prend
+    l'entrée d'historique la plus récente à/avant cutoffDate, ou le taux actuel si aucun
+    historique n'existe encore pour cette devise (compatibilité avec les données existantes). */
+function ratesAsOf(cutoffDate, rates, rateHistory) {
+  if (!cutoffDate) return rates;
+  return rates.map((r) => {
+    const past = rateHistory
+      .filter((h) => h.code === r.code && h.date <= cutoffDate)
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+    return past.length ? { ...r, rateToBase: past[0].rateToBase } : r;
+  });
 }
 
 /** Solde de chaque portefeuille (dans SA propre devise), jusqu'à une date optionnelle incluse. */
@@ -83,22 +97,45 @@ function debtRemainingAsOf(debt, payments, cutoffDate) {
 }
 
 export async function computeNetWorth(cutoffDate = null) {
-  const { wallets, transactions, investments, investmentEntries, debts, debtPayments, rates, baseCurrency } = await ctx();
+  const { wallets, transactions, investments, investmentEntries, debts, debtPayments, rates, rateHistory, baseCurrency } = await ctx();
   const balances = walletBalancesAsOf(wallets, transactions, cutoffDate);
+  const ratesForDate = ratesAsOf(cutoffDate, rates, rateHistory);
 
   let total = 0;
   for (const w of wallets) {
     if (cutoffDate && w.createdAt && w.createdAt.slice(0, 10) > cutoffDate) continue;
-    total += toBase(balances.get(w.id) || 0, w.currency, rates, baseCurrency);
+    total += toBase(balances.get(w.id) || 0, w.currency, ratesForDate, baseCurrency);
   }
   for (const inv of investments) {
-    total += toBase(investmentValueAsOf(inv, investmentEntries, cutoffDate), inv.currency, rates, baseCurrency);
+    total += toBase(investmentValueAsOf(inv, investmentEntries, cutoffDate), inv.currency, ratesForDate, baseCurrency);
   }
   for (const d of debts) {
     const remaining = debtRemainingAsOf(d, debtPayments, cutoffDate);
-    total += (d.type === 'receivable' ? 1 : -1) * toBase(remaining, d.currency, rates, baseCurrency);
+    total += (d.type === 'receivable' ? 1 : -1) * toBase(remaining, d.currency, ratesForDate, baseCurrency);
   }
   return { total, currency: baseCurrency };
+}
+
+/** Répartition du patrimoine net (liquidités / investissements / dettes) à une date donnée, pour le donut de composition. */
+export async function computeNetWorthComposition(cutoffDate = null) {
+  const { wallets, transactions, investments, investmentEntries, debts, debtPayments, rates, rateHistory, baseCurrency } = await ctx();
+  const balances = walletBalancesAsOf(wallets, transactions, cutoffDate);
+  const ratesForDate = ratesAsOf(cutoffDate, rates, rateHistory);
+
+  let liquid = 0, invested = 0, receivables = 0, debtTotal = 0;
+  for (const w of wallets) {
+    if (cutoffDate && w.createdAt && w.createdAt.slice(0, 10) > cutoffDate) continue;
+    liquid += toBase(balances.get(w.id) || 0, w.currency, ratesForDate, baseCurrency);
+  }
+  for (const inv of investments) {
+    invested += toBase(investmentValueAsOf(inv, investmentEntries, cutoffDate), inv.currency, ratesForDate, baseCurrency);
+  }
+  for (const d of debts) {
+    const remaining = toBase(debtRemainingAsOf(d, debtPayments, cutoffDate), d.currency, ratesForDate, baseCurrency);
+    if (d.type === 'receivable') receivables += remaining;
+    else debtTotal += remaining;
+  }
+  return { liquid, invested, receivables, debts: debtTotal, currency: baseCurrency };
 }
 
 /** Historique du patrimoine net sur N mois (fin de chaque mois), pour le graphique de tendance. */
@@ -116,16 +153,17 @@ export async function computeNetWorthHistory(months = 6) {
 
 /** Historique de la valeur totale des investissements sur N mois (fin de chaque mois). */
 export async function computeInvestmentValueHistory(months = 6) {
-  const { investments, investmentEntries, rates, baseCurrency } = await ctx();
+  const { investments, investmentEntries, rates, rateHistory, baseCurrency } = await ctx();
   const points = [];
   const now = new Date();
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
     const cutoff = localISODate(d);
+    const ratesForDate = ratesAsOf(cutoff, rates, rateHistory);
     let total = 0;
     for (const inv of investments) {
       if (inv.createdAt && inv.createdAt.slice(0, 10) > cutoff) continue;
-      total += toBase(investmentValueAsOf(inv, investmentEntries, cutoff), inv.currency, rates, baseCurrency);
+      total += toBase(investmentValueAsOf(inv, investmentEntries, cutoff), inv.currency, ratesForDate, baseCurrency);
     }
     points.push({ label: d.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), value: Math.round(total * 100) / 100 });
   }
@@ -134,16 +172,17 @@ export async function computeInvestmentValueHistory(months = 6) {
 
 /** Historique du total des dettes restant dues sur N mois (fin de chaque mois) — tendance de désendettement. */
 export async function computeDebtHistory(months = 6) {
-  const { debts, debtPayments, rates, baseCurrency } = await ctx();
+  const { debts, debtPayments, rates, rateHistory, baseCurrency } = await ctx();
   const activeDebts = debts.filter((d) => d.type === 'debt');
   const points = [];
   const now = new Date();
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
     const cutoff = localISODate(d);
+    const ratesForDate = ratesAsOf(cutoff, rates, rateHistory);
     let total = 0;
     for (const debt of activeDebts) {
-      total += toBase(debtRemainingAsOf(debt, debtPayments, cutoff), debt.currency, rates, baseCurrency);
+      total += toBase(debtRemainingAsOf(debt, debtPayments, cutoff), debt.currency, ratesForDate, baseCurrency);
     }
     points.push({ label: d.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), value: Math.round(total * 100) / 100 });
   }

@@ -15,6 +15,10 @@ const TX_ICONS = {
   expense: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v14M6 12l6 6 6-6"/></svg>',
   transfer: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M7 7h11l-3-3M17 17H6l3 3"/></svg>',
 };
+function parseTags(raw) {
+  return [...new Set((raw || '').split(',').map((t) => t.trim()).filter(Boolean))].slice(0, 10);
+}
+
 const CHECK_CIRCLE = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1.2 14.5-4.3-4.3 1.4-1.4 2.9 2.9 6.1-6.1 1.4 1.4-7.5 7.5Z"/></svg>';
 const EMPTY_CIRCLE = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="1.6" d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z"/></svg>';
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
@@ -172,6 +176,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     form.elements.date.value = editTransaction?.date || todayISO();
     form.elements.amount.value = editTransaction?.amount ?? '';
     form.elements.note.value = editTransaction?.note || '';
+    form.elements.tags.value = (editTransaction?.tags || []).join(', ');
     if (editTransaction) {
       walletSelect.value = editTransaction.walletId;
       if (editTransaction.type === 'transfer') targetWalletSelect.value = editTransaction.targetWalletId;
@@ -202,10 +207,11 @@ export function openQuickAdd({ editTransaction = null } = {}) {
       const splitGroupId = uuid();
       const date = fd.get('date');
       const note = (fd.get('note') || '').trim().slice(0, 140);
+      const tags = parseTags(fd.get('tags'));
       for (const r of rows) {
         const splitRecord = {
           id: uuid(), type, walletId, targetWalletId: null,
-          categoryId: r.categoryId || null, amount: r.amount, date, note,
+          categoryId: r.categoryId || null, amount: r.amount, date, note, tags,
           reconciled: false, splitGroupId, createdAt: new Date().toISOString(),
         };
         await dbAdd(STORES.TRANSACTIONS, splitRecord);
@@ -226,6 +232,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
       amount: parseFloat(fd.get('amount')) || 0,
       date: fd.get('date'),
       note: (fd.get('note') || '').trim().slice(0, 140),
+      tags: parseTags(fd.get('tags')),
       reconciled: editTransaction?.reconciled || false,
       createdAt: editTransaction?.createdAt || new Date().toISOString(),
     };
@@ -236,6 +243,120 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     showToast(editTransaction ? 'Transaction modifiée.' : 'Transaction enregistrée.');
     notifyDataChanged('transactions');
   });
+}
+
+/* ==========================================================================
+   Rapprochement bancaire assisté
+   L'utilisateur saisit le solde de clôture de son relevé ; l'app compare ce
+   solde au solde des transactions déjà pointées et met en évidence les
+   transactions non pointées de la période pour aider à résorber l'écart,
+   plutôt que de pointer une par une sans repère.
+   ========================================================================== */
+async function reconciledBalanceAsOf(walletId, cutoffDate) {
+  const [wallets, allTx] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.TRANSACTIONS)]);
+  const wallet = wallets.find((w) => w.id === walletId);
+  let balance = wallet?.initialBalance || 0;
+  for (const t of allTx) {
+    if (!t.reconciled) continue;
+    if (cutoffDate && t.date > cutoffDate) continue;
+    const amt = Number(t.amount) || 0;
+    if (t.walletId === walletId) {
+      if (t.type === 'income') balance += amt;
+      else if (t.type === 'expense' || t.type === 'transfer') balance -= amt;
+    }
+    if (t.type === 'transfer' && t.targetWalletId === walletId) balance += amt;
+  }
+  return balance;
+}
+
+function reconTxRowHtml(t, currency) {
+  const isTransfer = t.type === 'transfer';
+  const title = isTransfer ? `${t.wallet?.name || '—'} → ${t.targetWallet?.name || '—'}` : (t.category?.name || 'Sans catégorie');
+  const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
+  const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
+  return `
+    <div class="tx-row" data-tx-id="${t.id}">
+      <div class="tx-main">
+        <div class="tx-title">${escapeHtml(title)}</div>
+        <div class="tx-sub">${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
+      </div>
+      <div class="tx-amount amount ${cls}">${sign}${formatCurrency(t.amount, currency)}</div>
+      <button type="button" class="btn btn-ghost" data-recon-tx="${t.id}" style="padding:4px 10px;font-size:12.5px;">Pointer</button>
+    </div>`;
+}
+
+function openReconciliationModal() {
+  const modal = openModal(`
+    <div class="form-row">
+      <label>Portefeuille</label>
+      <select id="recon-wallet"></select>
+    </div>
+    <div class="form-row">
+      <label>Date du relevé</label>
+      <input type="date" id="recon-date" value="${todayISO()}">
+    </div>
+    <div class="form-row">
+      <label>Solde de clôture du relevé</label>
+      <input type="number" step="0.01" id="recon-balance" inputmode="decimal" placeholder="0.00">
+    </div>
+    <button type="button" class="btn btn-primary btn-block" id="recon-calc">Calculer l'écart</button>
+    <div id="recon-result" style="margin-top:16px;"></div>
+  `, { title: 'Rapprochement bancaire' });
+
+  const walletSelect = modal.el.querySelector('#recon-wallet');
+  const dateInput = modal.el.querySelector('#recon-date');
+  const balanceInput = modal.el.querySelector('#recon-balance');
+  const resultEl = modal.el.querySelector('#recon-result');
+
+  async function renderResult() {
+    const walletId = walletSelect.value;
+    const cutoff = dateInput.value;
+    const statementBalance = parseFloat(balanceInput.value);
+    if (!walletId || !cutoff || Number.isNaN(statementBalance)) { resultEl.innerHTML = ''; return; }
+
+    const wallets = await dbGetAll(STORES.WALLETS);
+    const wallet = wallets.find((w) => w.id === walletId);
+    const reconciled = await reconciledBalanceAsOf(walletId, cutoff);
+    const diff = Math.round((statementBalance - reconciled) * 100) / 100;
+    const isBalanced = Math.abs(diff) < 0.005;
+    const unreconciled = (await getEnrichedTransactions({ walletId })).filter((t) => !t.reconciled && t.date <= cutoff);
+
+    resultEl.innerHTML = `
+      <div class="panel" style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px;"><span>Solde pointé (app)</span><strong>${formatCurrency(reconciled, wallet.currency)}</strong></div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px;"><span>Solde du relevé</span><strong>${formatCurrency(statementBalance, wallet.currency)}</strong></div>
+        <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:${isBalanced ? 'var(--pos)' : 'var(--neg)'};"><span>Écart</span><strong>${formatCurrency(diff, wallet.currency)}</strong></div>
+      </div>
+      ${isBalanced
+        ? '<p class="empty-state" style="padding:8px 0;">✓ Rapprochement exact, aucun écart.</p>'
+        : unreconciled.length
+          ? `<p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">${unreconciled.length} transaction(s) non pointée(s) jusqu'à cette date — pointez celles qui apparaissent sur le relevé pour résorber l'écart :</p>
+             <div id="recon-tx-list">${unreconciled.map((t) => reconTxRowHtml(t, wallet.currency)).join('')}</div>`
+          : '<p class="empty-state" style="padding:8px 0;">Aucune transaction non pointée sur cette période — l\'écart provient peut-être d\'une transaction manquante ou d\'une date de relevé incorrecte.</p>'
+      }`;
+
+    resultEl.querySelectorAll('[data-recon-tx]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const txId = btn.dataset.reconTx;
+        const all = await dbGetAll(STORES.TRANSACTIONS);
+        const t = all.find((x) => x.id === txId);
+        if (!t) return;
+        const before = { ...t };
+        t.reconciled = true;
+        await dbPut(STORES.TRANSACTIONS, t);
+        await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: 'Pointée (rapprochement assisté)' });
+        notifyDataChanged('transactions');
+        renderResult();
+      });
+    });
+  }
+
+  (async () => {
+    const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
+    walletSelect.innerHTML = wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
+  })();
+
+  modal.el.querySelector('#recon-calc').addEventListener('click', renderResult);
 }
 
 /* ==========================================================================
@@ -250,6 +371,7 @@ function txRowHtml(t) {
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   const currency = t.wallet?.currency || 'EUR';
+  const tagsHtml = t.tags?.length ? `<div class="tx-tags">${t.tags.map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`).join('')}</div>` : '';
 
   return `
     <div class="tx-row" data-tx-id="${t.id}">
@@ -257,6 +379,7 @@ function txRowHtml(t) {
       <div class="tx-main">
         <div class="tx-title">${escapeHtml(title)}</div>
         <div class="tx-sub">${sub}</div>
+        ${tagsHtml}
       </div>
       <div class="tx-amount amount ${cls}" data-value="${t.amount}">${sign}${formatCurrency(t.amount, currency)}</div>
       <div class="card-actions">
@@ -324,6 +447,7 @@ export async function renderTransactions() {
 
 export function initTransactionsModule() {
   document.getElementById('transaction-add-btn')?.addEventListener('click', () => openQuickAdd());
+  document.getElementById('transaction-reconcile-btn')?.addEventListener('click', () => openReconciliationModal());
 
   document.getElementById('transactions-list')?.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');

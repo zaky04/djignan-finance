@@ -62,6 +62,7 @@ function txRowHtml(t) {
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   const currency = t.wallet?.currency || 'EUR';
+  const tagsHtml = t.tags?.length ? `<div class="tx-tags">${t.tags.map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`).join('')}</div>` : '';
 
   return `
     <div class="tx-row">
@@ -69,6 +70,7 @@ function txRowHtml(t) {
       <div class="tx-main">
         <div class="tx-title">${escapeHtml(title)}</div>
         <div class="tx-sub">${sub}</div>
+        ${tagsHtml}
       </div>
       <div class="tx-amount amount ${cls}" data-value="${t.amount}">${sign}${formatCurrency(t.amount, currency)}</div>
     </div>`;

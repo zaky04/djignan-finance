@@ -2,10 +2,11 @@
    GeoFinance System — Module Portefeuilles & Devises
    ========================================================================== */
 
-import { STORES, dbGetAll, dbPut, dbDelete, dbGetAllByIndex, logAudit, getSetting, setSetting } from '../db.js';
-import { getAllWalletBalances, computeNetWorth, computeNetWorthHistory, computeMonthlyBudgetSummary, computeEndOfMonthForecast } from '../ledger.js';
+import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, dbGetAllByIndex, logAudit, getSetting, setSetting } from '../db.js';
+import { getAllWalletBalances, computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthlyBudgetSummary, computeEndOfMonthForecast } from '../ledger.js';
 import { uuid, formatCurrency, escapeHtml, todayISO, currentMonthKey, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { renderExpensesByCategoryChart } from '../charts.js';
 
 function setAmount(el, value, currency) {
   if (!el) return;
@@ -14,12 +15,21 @@ function setAmount(el, value, currency) {
 }
 
 async function renderWealthHero() {
-  const [{ total, currency }, netWorthHistory, monthlyBudget, forecast] = await Promise.all([
+  const [{ total, currency }, netWorthHistory, monthlyBudget, forecast, composition] = await Promise.all([
     computeNetWorth(),
     computeNetWorthHistory(6),
     computeMonthlyBudgetSummary(currentMonthKey()),
     computeEndOfMonthForecast(),
+    computeNetWorthComposition(),
   ]);
+
+  const compositionRows = [
+    { label: 'Liquidités', value: composition.liquid, color: '#4f5bff' },
+    { label: 'Investissements', value: composition.invested, color: '#16a34a' },
+    { label: 'Créances', value: composition.receivables, color: '#0891b2' },
+    { label: 'Dettes', value: composition.debts, color: '#e11d48' },
+  ].filter((r) => r.value > 0);
+  renderExpensesByCategoryChart('chart-net-worth-composition', compositionRows, composition.currency);
 
   setAmount(document.getElementById('net-worth-value'), total, currency);
   const trendEl = document.getElementById('net-worth-trend');
@@ -178,6 +188,10 @@ async function renderRatesPanel() {
       const code = input.dataset.rateCode;
       const value = parseFloat(input.value) || 0;
       await dbPut(STORES.EXCHANGE_RATES, { code, rateToBase: value });
+      // On archive le taux du jour dans l'historique AVANT d'appliquer le nouveau,
+      // pour que les calculs de patrimoine passés restent basés sur le taux qui
+      // était réellement en vigueur à chaque date (voir ledger.js ratesAsOf()).
+      await dbAdd(STORES.EXCHANGE_RATE_HISTORY, { id: uuid(), code, date: todayISO(), rateToBase: value });
       showToast(`Taux de ${code} mis à jour.`);
       notifyDataChanged('rates');
     });

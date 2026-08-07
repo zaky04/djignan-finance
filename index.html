@@ -252,6 +252,11 @@
           </div>
         </div>
 
+        <div class="chart-card" style="margin-bottom:18px;">
+          <h3>Composition du patrimoine</h3>
+          <div class="chart-canvas-wrap"><canvas id="chart-net-worth-composition"></canvas></div>
+        </div>
+
         <div class="view-header">
           <h2>Portefeuilles</h2>
           <button id="wallet-add-btn" class="btn btn-primary">+ Nouveau portefeuille</button>
@@ -263,7 +268,10 @@
       <section id="view-transactions" class="view" data-view="transactions" hidden>
         <div class="view-header">
           <h2>Transactions</h2>
-          <button id="transaction-add-btn" class="btn btn-primary">+ Nouvelle transaction</button>
+          <div style="display:flex;gap:8px;">
+            <button id="transaction-reconcile-btn" class="btn btn-ghost">Rapprochement</button>
+            <button id="transaction-add-btn" class="btn btn-primary">+ Nouvelle transaction</button>
+          </div>
         </div>
         <div id="transactions-filters" class="filters-bar"></div>
         <div id="transactions-list" class="tx-list"></div>
@@ -411,6 +419,10 @@
         <div class="form-row">
           <label>Note (optionnel)</label>
           <input type="text" name="note" maxlength="140" placeholder="Ex: Courses supermarché">
+        </div>
+        <div class="form-row">
+          <label>Étiquettes (optionnel, séparées par des virgules)</label>
+          <input type="text" name="tags" maxlength="140" placeholder="Ex: pro, remboursable">
         </div>
         <button type="submit" class="btn btn-primary btn-block">Enregistrer</button>
       </form>
