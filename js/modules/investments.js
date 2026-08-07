@@ -20,6 +20,13 @@ const ASSET_CLASSES = {
   autre: 'Autre',
 };
 
+// Immobilier et véhicules sont des biens physiques valorisés périodiquement (pas de
+// marché liquide), à distinguer visuellement des actifs financiers dans la liste —
+// mais ils restent suivis avec exactement le même mécanisme (mêmes stores/calculs),
+// pas de duplication de données.
+const PHYSICAL_ASSET_CLASSES = ['immobilier', 'flotte'];
+let assetFilter = 'all'; // 'all' | 'physical' | 'financial'
+
 const ENTRY_TYPE_LABELS = { contribution: 'Apport', withdrawal: 'Retrait', dividend: 'Dividende', valuation: 'Valorisation' };
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
@@ -208,10 +215,20 @@ export async function renderInvestments() {
     return;
   }
 
-  const rows = investments.map((inv) => ({ inv, metrics: computeMetrics(inv, entries) }));
+  const allRows = investments.map((inv) => ({ inv, metrics: computeMetrics(inv, entries) }));
+  const rows = allRows.filter((r) => {
+    if (assetFilter === 'physical') return PHYSICAL_ASSET_CLASSES.includes(r.inv.assetClass);
+    if (assetFilter === 'financial') return !PHYSICAL_ASSET_CLASSES.includes(r.inv.assetClass);
+    return true;
+  });
 
   container.innerHTML = `
-    <div class="grid-cards" style="margin-bottom:18px;">${rows.map((r) => investmentCardHtml(r.inv, r.metrics)).join('')}</div>
+    <div class="tabs-bar" style="margin-bottom:16px;">
+      <button type="button" class="tab-btn ${assetFilter === 'all' ? 'is-active' : ''}" data-asset-filter="all">Tous</button>
+      <button type="button" class="tab-btn ${assetFilter === 'financial' ? 'is-active' : ''}" data-asset-filter="financial">Actifs financiers</button>
+      <button type="button" class="tab-btn ${assetFilter === 'physical' ? 'is-active' : ''}" data-asset-filter="physical">Biens physiques</button>
+    </div>
+    <div class="grid-cards" style="margin-bottom:18px;">${rows.length ? rows.map((r) => investmentCardHtml(r.inv, r.metrics)).join('') : '<div class="empty-state">Aucun actif dans cette catégorie.</div>'}</div>
     <div class="chart-card" style="margin-bottom:18px;">
       <h3>Évolution de la valeur du portefeuille</h3>
       <div class="chart-canvas-wrap"><canvas id="chart-investments-trend"></canvas></div>
@@ -220,6 +237,10 @@ export async function renderInvestments() {
       <div class="panel-header"><h3>Comparatif de rendement par classe d'actif</h3></div>
       ${renderYieldTable(rows, baseCurrency, rates)}
     </div>`;
+
+  container.querySelectorAll('[data-asset-filter]').forEach((btn) => {
+    btn.addEventListener('click', () => { assetFilter = btn.dataset.assetFilter; renderInvestments(); });
+  });
 
   const history = await computeInvestmentValueHistory(6);
   renderNetWorthTrendChart('chart-investments-trend', history, baseCurrency, 'Valeur du portefeuille');

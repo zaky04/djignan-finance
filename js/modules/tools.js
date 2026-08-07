@@ -124,6 +124,81 @@ async function renderEmergencyFundTool() {
   return { html, wire: () => { document.getElementById('tool-emergency-fund').addEventListener('input', compute); compute(); } };
 }
 
+/* ---------- 3bis. Simulateur d'impact d'un achat important ---------- */
+function monthlyPaymentFor(principal, months, annualRatePct) {
+  if (months <= 0) return principal;
+  const r = (annualRatePct || 0) / 100 / 12;
+  if (r === 0) return principal / months;
+  return (principal * r) / (1 - Math.pow(1 + r, -months));
+}
+
+async function renderPurchaseImpactTool() {
+  const avgExpenses = await averageMonthlyExpenses(3);
+  const { total: liquid, currency } = await computeLiquidBalance();
+  const summary = await computeMonthSummary(currentMonthKey());
+
+  const body = `
+    <div class="filters-bar" style="margin-bottom:14px;">
+      <div class="form-row" style="margin:0;"><label>Montant de l'achat (${escapeHtml(currency)})</label><input type="number" id="pi-amount" value="1000" step="10" min="0"></div>
+      <div class="form-row" style="margin:0;"><label>Mode de financement</label>
+        <select id="pi-mode">
+          <option value="cash">Comptant (sur liquidités)</option>
+          <option value="credit">Crédit / paiement échelonné</option>
+        </select>
+      </div>
+      <div class="form-row" id="pi-duration-row" style="margin:0;display:none;"><label>Durée (mois)</label><input type="number" id="pi-duration" value="12" min="1" step="1"></div>
+      <div class="form-row" id="pi-rate-row" style="margin:0;display:none;"><label>Taux d'intérêt annuel % (optionnel)</label><input type="number" id="pi-rate" value="0" min="0" step="0.1"></div>
+    </div>
+    <div id="pi-results"></div>`;
+  const html = panel("Simulateur d'impact d'un achat important", body, 'tool-purchase-impact');
+
+  function compute() {
+    const el = document.getElementById('tool-purchase-impact');
+    if (!el) return;
+    const amount = parseFloat(el.querySelector('#pi-amount').value) || 0;
+    const mode = el.querySelector('#pi-mode').value;
+    el.querySelector('#pi-duration-row').style.display = mode === 'credit' ? 'block' : 'none';
+    el.querySelector('#pi-rate-row').style.display = mode === 'credit' ? 'block' : 'none';
+
+    let resultsHtml;
+    if (mode === 'cash') {
+      const newLiquid = liquid - amount;
+      const currentAutonomy = avgExpenses ? liquid / avgExpenses : 0;
+      const newAutonomy = avgExpenses ? newLiquid / avgExpenses : 0;
+      resultsHtml = `
+        <div class="stat-row"><span class="stat-row-label">Liquidités actuelles</span><span>${formatCurrency(liquid, currency)}</span></div>
+        <div class="stat-row"><span class="stat-row-label">Liquidités après achat</span><span class="badge ${newLiquid >= 0 ? 'badge-pos' : 'badge-neg'}">${formatCurrency(newLiquid, currency)}</span></div>
+        <div class="stat-row"><span class="stat-row-label">Autonomie du fonds d'urgence</span><span>${currentAutonomy.toFixed(1)} mois → <span class="badge ${newAutonomy >= 3 ? 'badge-pos' : 'badge-neg'}">${newAutonomy.toFixed(1)} mois</span></span></div>
+        ${newLiquid < 0
+          ? '<div class="alert alert-danger" style="margin-top:8px;">Cet achat dépasserait vos liquidités actuelles.</div>'
+          : (newAutonomy < 3 ? '<div class="alert alert-warn" style="margin-top:8px;">Votre fonds d\'urgence passerait sous 3 mois de couverture.</div>' : '')}`;
+    } else {
+      const months = parseFloat(el.querySelector('#pi-duration').value) || 1;
+      const rate = parseFloat(el.querySelector('#pi-rate').value) || 0;
+      const payment = monthlyPaymentFor(amount, months, rate);
+      const totalCost = payment * months;
+      const totalInterest = totalCost - amount;
+      const newNetSavings = summary.netSavings - payment;
+      resultsHtml = `
+        <div class="stat-row"><span class="stat-row-label">Mensualité</span><span>${formatCurrency(payment, currency)}</span></div>
+        <div class="stat-row"><span class="stat-row-label">Coût total</span><span>${formatCurrency(totalCost, currency)}${totalInterest > 0.5 ? ` (dont ${formatCurrency(totalInterest, currency)} d'intérêts)` : ''}</span></div>
+        <div class="stat-row"><span class="stat-row-label">Épargne nette mensuelle actuelle</span><span>${formatCurrency(summary.netSavings, currency)}</span></div>
+        <div class="stat-row"><span class="stat-row-label">Épargne nette mensuelle après mensualité</span><span class="badge ${newNetSavings >= 0 ? 'badge-pos' : 'badge-neg'}">${formatCurrency(newNetSavings, currency)}</span></div>
+        ${newNetSavings < 0 ? '<div class="alert alert-danger" style="margin-top:8px;">Cette mensualité dépasserait votre épargne nette actuelle : vos dépenses excéderaient vos revenus.</div>' : ''}`;
+    }
+    el.querySelector('#pi-results').innerHTML = resultsHtml;
+  }
+  return {
+    html,
+    wire: () => {
+      const el = document.getElementById('tool-purchase-impact');
+      el.addEventListener('input', compute);
+      el.addEventListener('change', compute);
+      compute();
+    },
+  };
+}
+
 /* ---------- 4. Budgets par enveloppes (50/30/20 personnalisable) ---------- */
 async function renderEnvelopeTool() {
   const summary = await computeMonthSummary(currentMonthKey());
@@ -253,6 +328,7 @@ export async function renderTools() {
     renderWealthTrajectoryTool(),
     renderInflationTool(),
     renderEmergencyFundTool(),
+    renderPurchaseImpactTool(),
     renderEnvelopeTool(),
     renderSubscriptionsTool(),
     renderAnomalyTool(),
