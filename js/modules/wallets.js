@@ -80,6 +80,10 @@ function walletFormHtml(wallet, defaultCurrency) {
         <label>${isEdit ? 'Solde initial' : 'Solde de départ'}</label>
         <input type="number" step="0.01" name="initialBalance" value="${wallet?.initialBalance ?? 0}">
       </div>
+      <div class="form-row">
+        <label>Seuil d'alerte de solde bas (optionnel)</label>
+        <input type="number" min="0" step="0.01" name="lowBalanceThreshold" value="${wallet?.lowBalanceThreshold ?? ''}" placeholder="Ex: 50">
+      </div>
       <button type="submit" class="btn btn-primary btn-block">${isEdit ? 'Enregistrer' : 'Créer le portefeuille'}</button>
     </form>`;
 }
@@ -99,6 +103,7 @@ async function openWalletModal(wallet = null) {
       type: fd.get('type'),
       currency,
       initialBalance: parseFloat(fd.get('initialBalance')) || 0,
+      lowBalanceThreshold: parseFloat(fd.get('lowBalanceThreshold')) || 0,
       archived: wallet?.archived || false,
       createdAt: wallet?.createdAt || new Date().toISOString(),
     };

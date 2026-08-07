@@ -166,24 +166,29 @@ export async function computeMonthSummary(monthKey = currentMonthKey()) {
   return { income, expenses, netSavings, cashFlow: netSavings, currency: baseCurrency };
 }
 
-/** Dépenses du mois groupées par catégorie (top 7 + "Autres"). */
+/** Dépenses du mois groupées par catégorie (top 7 + "Autres"). Chaque ligne porte la couleur
+    personnalisée de la catégorie (color, si définie) pour que le graphique et la liste utilisent
+    la même teinte — null pour "Sans catégorie"/"Autres" (couleur de repli côté graphique). */
 export async function computeExpensesByCategory(monthKey = currentMonthKey()) {
   const { wallets, transactions, categories, rates, baseCurrency } = await ctx();
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
-  const catName = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+  const catById = Object.fromEntries(categories.map((c) => [c.id, c]));
   const totals = new Map();
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
-    const label = catName[t.categoryId] || 'Sans catégorie';
-    totals.set(label, (totals.get(label) || 0) + amt);
+    const cat = catById[t.categoryId];
+    const key = cat?.id || 'none';
+    const existing = totals.get(key);
+    if (existing) existing.value += amt;
+    else totals.set(key, { label: cat?.name || 'Sans catégorie', value: amt, color: cat?.color || null });
   }
-  const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([label, value]) => ({ label, value }));
+  const sorted = [...totals.values()].sort((a, b) => b.value - a.value);
   if (sorted.length <= 8) return sorted;
   const top = sorted.slice(0, 7);
   const autres = sorted.slice(7).reduce((s, r) => s + r.value, 0);
-  top.push({ label: 'Autres', value: autres });
+  top.push({ label: 'Autres', value: autres, color: null });
   return top;
 }
 

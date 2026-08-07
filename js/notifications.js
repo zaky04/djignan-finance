@@ -8,7 +8,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, getSetting, setSetting } from './db.js';
-import { computeBudgetVsActual } from './ledger.js';
+import { computeBudgetVsActual, getAllWalletBalances } from './ledger.js';
 import { formatCurrency, formatDate, currentMonthKey, percentage, todayISO } from './utils.js';
 
 export function isNotificationSupported() {
@@ -53,9 +53,11 @@ export async function checkAndNotify() {
   const notifiedRecurring = await getSetting('notifiedRecurringDates', {});
   const notifiedBudgets = await getSetting('notifiedBudgetTiers', {});
   const notifiedDebts = await getSetting('notifiedDebtDates', {});
+  const notifiedLowBalance = await getSetting('notifiedLowBalanceWallets', {});
   let recurringChanged = false;
   let budgetsChanged = false;
   let debtsChanged = false;
+  let lowBalanceChanged = false;
 
   // ---- Échéances récurrentes dans les 3 prochains jours ----
   const today = todayISO();
@@ -98,13 +100,33 @@ export async function checkAndNotify() {
     if (ok) { notifiedDebts[key] = true; debtsChanged = true; }
   }
 
-  // ---- Budgets à 70%/90% du mois en cours ----
+  // ---- Portefeuilles sous leur seuil d'alerte de solde bas ----
+  // Dé-duplication par hystérésis : on ne re-notifie que si le solde est repassé
+  // au-dessus du seuil entre-temps (sinon on répéterait la même alerte à chaque vérification).
+  const walletBalances = await getAllWalletBalances();
+  for (const w of walletBalances) {
+    if (w.archived || !w.lowBalanceThreshold) continue;
+    if (w.balance < w.lowBalanceThreshold) {
+      if (notifiedLowBalance[w.id]) continue;
+      const ok = await fireNotification('Solde bas', {
+        body: `${w.name} est passé sous ${formatCurrency(w.lowBalanceThreshold, w.currency)} (solde actuel : ${formatCurrency(w.balance, w.currency)}).`,
+        tag: `low-balance-${w.id}`,
+      });
+      if (ok) { notifiedLowBalance[w.id] = true; lowBalanceChanged = true; }
+    } else if (notifiedLowBalance[w.id]) {
+      delete notifiedLowBalance[w.id];
+      lowBalanceChanged = true;
+    }
+  }
+
+  // ---- Budgets au-delà des seuils d'alerte (réglables dans Paramètres) ----
+  const thresholds = await getSetting('budgetAlertThresholds', { warn: 70, danger: 90 });
   const monthKey = currentMonthKey();
   const budgetRows = await computeBudgetVsActual(monthKey);
   for (const row of budgetRows) {
     if (!row.budget) continue;
     const pct = percentage(row.actual, row.budget);
-    const tier = pct >= 90 ? 90 : pct >= 70 ? 70 : 0;
+    const tier = pct >= thresholds.danger ? thresholds.danger : pct >= thresholds.warn ? thresholds.warn : 0;
     if (!tier) continue;
     const key = `${row.categoryId}:${monthKey}`;
     if ((notifiedBudgets[key] || 0) >= tier) continue;
@@ -119,4 +141,5 @@ export async function checkAndNotify() {
   if (recurringChanged) await setSetting('notifiedRecurringDates', notifiedRecurring);
   if (budgetsChanged) await setSetting('notifiedBudgetTiers', notifiedBudgets);
   if (debtsChanged) await setSetting('notifiedDebtDates', notifiedDebts);
+  if (lowBalanceChanged) await setSetting('notifiedLowBalanceWallets', notifiedLowBalance);
 }

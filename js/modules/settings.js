@@ -6,10 +6,14 @@
 
 import { STORES, dbGetAll, dbBulkPut, getSetting, setSetting, wipeAllData } from '../db.js';
 import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric } from '../auth.js';
-import { exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup, analyzeTransactionsCsv, importGeoFinanceCsvRows, importGenericCsvRows, exportTransactionsCsv } from '../backup.js';
+import {
+  exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup,
+  analyzeTransactionsCsv, importGeoFinanceCsvRows, importGenericCsvRows, exportTransactionsCsv,
+  isFileSystemAccessSupported, chooseAutoBackupDirectory, getAutoBackupDirectory, clearAutoBackupDirectory,
+} from '../backup.js';
 import { isNotificationSupported, getNotificationPermission, requestNotificationPermission, checkAndNotify } from '../notifications.js';
 import { isStandalone, isIOS, isSafari, isAndroid, hasDeferredPrompt, triggerInstall, resetInstallPromptSnooze } from '../install-prompt.js';
-import { DASHBOARD_PANEL_DEFAULTS } from './dashboard.js';
+import { DASHBOARD_PANEL_DEFAULTS, BUDGET_ALERT_THRESHOLD_DEFAULTS } from './dashboard.js';
 import { escapeHtml, formatDate, CURRENCIES, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 
@@ -82,9 +86,9 @@ function openCsvMappingModal(analysis) {
       creditCol: parseInt(fd.get('creditCol'), 10),
     };
     try {
-      const count = await importGenericCsvRows(rows, mapping);
+      const { imported, skipped } = await importGenericCsvRows(rows, mapping);
       modal.close();
-      showToast(`${count} transaction(s) importée(s).`);
+      showToast(`${imported} transaction(s) importée(s).${skipped ? ` ${skipped} doublon(s) ignoré(s).` : ''}`);
     } catch (err) {
       showToast('Erreur : ' + (err.message || 'import impossible.'));
     }
@@ -202,12 +206,26 @@ async function renderBackupSection(container) {
   const snoozedLabel = backupSnoozedUntil && Date.now() < new Date(backupSnoozedUntil).getTime()
     ? ` · rappel mis en pause jusqu'au ${formatDate(backupSnoozedUntil)}`
     : '';
+  const autoBackupDir = await getAutoBackupDirectory();
+
+  let autoBackupHtml;
+  if (!isFileSystemAccessSupported()) {
+    autoBackupHtml = '<span class="badge">Non disponible sur ce navigateur (Chrome/Edge sur ordinateur uniquement)</span>';
+  } else if (autoBackupDir) {
+    autoBackupHtml = `
+      <span class="badge badge-pos">Dossier : ${escapeHtml(autoBackupDir.name)}</span>
+      <button type="button" class="btn btn-ghost" id="auto-backup-disable-btn" style="margin-left:8px;">Désactiver</button>`;
+  } else {
+    autoBackupHtml = '<button type="button" class="btn btn-ghost" id="auto-backup-choose-btn">Choisir un dossier</button>';
+  }
 
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>Sauvegarde &amp; restauration</h3></div>
       <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Toutes vos données restent locales. Exportez régulièrement une copie (JSON complet ou CSV) pour éviter toute perte. Un rappel s'affiche automatiquement si aucune sauvegarde n'a été faite depuis 7 jours.</p>
       <div class="stat-row"><span class="stat-row-label">Dernière sauvegarde</span><span>${lastBackupLabel}${snoozedLabel}</span></div>
+      <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">Sauvegarde automatique hebdomadaire</span><span>${autoBackupHtml}</span></div>
+      <p style="font-size:12px;color:var(--text-faint);margin:6px 0 0;">Si un dossier est choisi, GeoFinance y écrit un export JSON automatiquement à chaque rappel hebdomadaire, sans action de votre part.</p>
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
         <button type="button" class="btn btn-primary" id="export-json-btn">Exporter (JSON)</button>
         <button type="button" class="btn btn-ghost" id="import-json-btn">Importer (JSON)</button>
@@ -221,6 +239,21 @@ async function renderBackupSection(container) {
       <div class="panel-header"><h3 style="color:var(--neg);">Zone dangereuse</h3></div>
       <button type="button" class="btn btn-danger" id="wipe-data-btn">Réinitialiser toutes les données</button>
     </div>`;
+
+  container.querySelector('#auto-backup-choose-btn')?.addEventListener('click', async () => {
+    try {
+      await chooseAutoBackupDirectory();
+      showToast('Dossier de sauvegarde automatique configuré.');
+      renderBackupSection(container);
+    } catch (err) {
+      if (err.name !== 'AbortError') showToast('Erreur : ' + (err.message || 'sélection impossible.'));
+    }
+  });
+  container.querySelector('#auto-backup-disable-btn')?.addEventListener('click', async () => {
+    await clearAutoBackupDirectory();
+    showToast('Sauvegarde automatique désactivée.');
+    renderBackupSection(container);
+  });
 
   container.querySelector('#export-json-btn').addEventListener('click', async () => { await exportJsonBackup(); showToast('Sauvegarde JSON exportée.'); renderBackupSection(container); });
 
@@ -264,8 +297,8 @@ async function renderBackupSection(container) {
       try {
         const analysis = await analyzeTransactionsCsv(file);
         if (analysis.format === 'geofinance') {
-          const count = await importGeoFinanceCsvRows(analysis.rows);
-          showToast(`${count} transaction(s) importée(s).`);
+          const { imported, skipped } = await importGeoFinanceCsvRows(analysis.rows);
+          showToast(`${imported} transaction(s) importée(s).${skipped ? ` ${skipped} doublon(s) ignoré(s).` : ''}`);
         } else {
           openCsvMappingModal(analysis);
         }
@@ -287,6 +320,7 @@ async function renderBackupSection(container) {
 async function renderNotificationsSection(container) {
   const supported = isNotificationSupported();
   const permission = getNotificationPermission();
+  const thresholds = { ...BUDGET_ALERT_THRESHOLD_DEFAULTS, ...(await getSetting('budgetAlertThresholds', {})) };
 
   let statusHtml;
   if (!supported) {
@@ -302,9 +336,16 @@ async function renderNotificationsSection(container) {
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>Notifications</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Rappels locaux pour vos échéances récurrentes proches (3 jours), vos dettes/créances arrivant à échéance (3 jours) et vos budgets qui approchent leur limite (70%/90%). Ces rappels s'affichent quand l'application est ouverte ou récemment réactivée — un envoi en arrière-plan app totalement fermée nécessiterait un serveur distant, ce qui irait à l'encontre du principe 100% local de GeoFinance.</p>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Rappels locaux pour vos échéances récurrentes proches (3 jours), vos dettes/créances arrivant à échéance (3 jours), vos budgets qui approchent leur limite et vos portefeuilles passant sous leur seuil d'alerte (réglable sur chaque portefeuille). Ces rappels s'affichent quand l'application est ouverte ou récemment réactivée — un envoi en arrière-plan app totalement fermée nécessiterait un serveur distant, ce qui irait à l'encontre du principe 100% local de GeoFinance.</p>
       <div class="stat-row"><span class="stat-row-label">Statut</span><span>${statusHtml}</span></div>
       ${permission === 'denied' ? '<p style="font-size:12px;color:var(--text-faint);margin-top:8px;">Vous avez bloqué les notifications pour ce site. Autorisez-les dans les paramètres de votre navigateur pour les réactiver.</p>' : ''}
+      <div class="stat-row" style="margin-top:10px;align-items:center;">
+        <span class="stat-row-label">Seuils d'alerte budget</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <input type="number" min="1" max="100" id="threshold-warn" value="${thresholds.warn}" style="width:60px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface-alt);text-align:right;"> % avertissement
+          <input type="number" min="1" max="100" id="threshold-danger" value="${thresholds.danger}" style="width:60px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface-alt);text-align:right;"> % dépassement
+        </span>
+      </div>
     </div>`;
 
   container.querySelector('#notif-enable-btn')?.addEventListener('click', async () => {
@@ -320,6 +361,16 @@ async function renderNotificationsSection(container) {
     if (reg?.showNotification) await reg.showNotification('GeoFinance', opts);
     else new Notification('GeoFinance', opts);
   });
+
+  const saveThresholds = async () => {
+    const warn = parseInt(container.querySelector('#threshold-warn').value, 10) || BUDGET_ALERT_THRESHOLD_DEFAULTS.warn;
+    const danger = parseInt(container.querySelector('#threshold-danger').value, 10) || BUDGET_ALERT_THRESHOLD_DEFAULTS.danger;
+    if (warn >= danger) { showToast("Le seuil d'avertissement doit être inférieur au seuil de dépassement."); return; }
+    await setSetting('budgetAlertThresholds', { warn, danger });
+    showToast('Seuils mis à jour.');
+  };
+  container.querySelector('#threshold-warn')?.addEventListener('change', saveThresholds);
+  container.querySelector('#threshold-danger')?.addEventListener('change', saveThresholds);
 }
 
 async function renderInstallSection(container) {

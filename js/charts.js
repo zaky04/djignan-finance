@@ -59,7 +59,7 @@ export function renderExpensesByCategoryChart(canvasId, rows, currency = 'EUR') 
       labels: rows.map((r) => r.label),
       datasets: [{
         data: rows.map((r) => r.value),
-        backgroundColor: rows.map((_, i) => PALETTE[i % PALETTE.length]),
+        backgroundColor: rows.map((r, i) => r.color || PALETTE[i % PALETTE.length]),
         borderColor: cssVar('--surface') || '#fff',
         borderWidth: 2,
       }],

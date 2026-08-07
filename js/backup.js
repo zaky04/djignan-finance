@@ -143,10 +143,23 @@ export async function analyzeTransactionsCsv(file) {
   return { format: isGeoFinanceFormat ? 'geofinance' : 'generic', headerCells, rows, delimiter };
 }
 
-/** Importe des lignes déjà parsées au format GeoFinance (Date;Type;Portefeuille;...). Crée les portefeuilles/catégories manquants. */
+/** Détecte un doublon probable : même portefeuille, même date, montant quasi identique et même
+    type — cas typique d'un relevé réimporté sur une période qui chevauche un import précédent. */
+function isDuplicateTransaction(existingTransactions, candidate) {
+  return existingTransactions.some((t) =>
+    t.walletId === candidate.walletId
+    && t.date === candidate.date
+    && t.type === candidate.type
+    && Math.abs((t.amount || 0) - candidate.amount) < 0.005
+  );
+}
+
+/** Importe des lignes déjà parsées au format GeoFinance (Date;Type;Portefeuille;...). Crée les portefeuilles/catégories manquants.
+    Retourne { imported, skipped } — skipped compte les lignes ignorées car déjà présentes. */
 export async function importGeoFinanceCsvRows(rows) {
   const wallets = await dbGetAll(STORES.WALLETS);
   const categories = await dbGetAll(STORES.CATEGORIES);
+  const existingTransactions = await dbGetAll(STORES.TRANSACTIONS);
   let walletsChanged = false, categoriesChanged = false;
 
   function findOrCreateWallet(name, currency) {
@@ -168,7 +181,7 @@ export async function importGeoFinanceCsvRows(rows) {
     return c;
   }
 
-  let imported = 0;
+  let imported = 0, skipped = 0;
   for (const cols of rows) {
     const [date, type, walletName, targetWalletName, categoryName, amountStr, currency, note, reconciledStr] = cols;
     if (!['income', 'expense', 'transfer'].includes(type)) continue;
@@ -182,13 +195,15 @@ export async function importGeoFinanceCsvRows(rows) {
       note: note || '', reconciled: (reconciledStr || '').toLowerCase().startsWith('oui'),
       createdAt: new Date().toISOString(),
     };
+    if (isDuplicateTransaction(existingTransactions, tx)) { skipped++; continue; }
     await dbAdd(STORES.TRANSACTIONS, tx);
+    existingTransactions.push(tx);
     imported++;
   }
   if (walletsChanged) await dbBulkPut(STORES.WALLETS, wallets);
   if (categoriesChanged) await dbBulkPut(STORES.CATEGORIES, categories);
   notifyDataChanged('all');
-  return imported;
+  return { imported, skipped };
 }
 
 function parseFlexibleNumber(raw) {
@@ -216,7 +231,10 @@ function parseFlexibleDate(raw) {
 /** Importe des lignes de relevé bancaire générique selon un mapping de colonnes choisi par
     l'utilisateur. mapping: { walletId, dateCol, noteCol, amountMode: 'single'|'debitCredit',
     amountCol, invertSign, debitCol, creditCol }. La catégorie est devinée par ressemblance avec
-    des transactions déjà catégorisées (même logique que la Saisie express), sinon laissée vide. */
+    des transactions déjà catégorisées (même logique que la Saisie express), sinon laissée vide.
+    Retourne { imported, skipped } — skipped compte les lignes ignorées car déjà présentes
+    (même portefeuille, date, montant et type — cas d'un relevé réimporté sur une période
+    qui chevauche un import précédent). */
 export async function importGenericCsvRows(rows, mapping) {
   const wallets = await dbGetAll(STORES.WALLETS);
   const wallet = wallets.find((w) => w.id === mapping.walletId);
@@ -235,7 +253,7 @@ export async function importGenericCsvRows(rows, mapping) {
     return match?.t.categoryId || null;
   }
 
-  let imported = 0;
+  let imported = 0, skipped = 0;
   for (const cols of rows) {
     const date = parseFlexibleDate(cols[mapping.dateCol]);
     if (!date) continue;
@@ -261,11 +279,65 @@ export async function importGenericCsvRows(rows, mapping) {
       categoryId: guessCategory(note, type), amount, date, note,
       reconciled: false, createdAt: new Date().toISOString(),
     };
+    if (isDuplicateTransaction(allTransactions, tx)) { skipped++; continue; }
     await dbAdd(STORES.TRANSACTIONS, tx);
+    allTransactions.push(tx);
     imported++;
   }
   notifyDataChanged('all');
-  return imported;
+  return { imported, skipped };
+}
+
+/* ---------- Sauvegarde automatique locale (File System Access API) ----------
+   Optionnelle : l'utilisateur choisit un dossier une fois, GeoFinance y écrit
+   ensuite un export JSON automatiquement au moment du rappel hebdomadaire,
+   sans qu'il ait à cliquer sur "Exporter" à chaque fois. Uniquement supporté
+   par les navigateurs basés Chromium sur ordinateur ; repli gracieux sinon
+   sur le rappel manuel existant. */
+export function isFileSystemAccessSupported() {
+  return 'showDirectoryPicker' in window;
+}
+
+export async function chooseAutoBackupDirectory() {
+  if (!isFileSystemAccessSupported()) throw new Error("Votre navigateur ne permet pas cette fonctionnalité (Chrome/Edge sur ordinateur uniquement).");
+  const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+  await setSetting('autoBackupDirHandle', handle);
+  return handle;
+}
+
+export async function getAutoBackupDirectory() {
+  return getSetting('autoBackupDirHandle', null);
+}
+
+export async function clearAutoBackupDirectory() {
+  await setSetting('autoBackupDirHandle', null);
+}
+
+async function ensureAutoBackupPermission(handle) {
+  const opts = { mode: 'readwrite' };
+  if ((await handle.queryPermission(opts)) === 'granted') return true;
+  if ((await handle.requestPermission(opts)) === 'granted') return true;
+  return false;
+}
+
+/** Écrit un export JSON dans le dossier de sauvegarde automatique choisi, si configuré et
+    autorisé. Retourne true si l'écriture a réussi (auquel cas lastBackupAt est mis à jour). */
+export async function runAutoBackupIfConfigured() {
+  const handle = await getAutoBackupDirectory();
+  if (!handle) return false;
+  try {
+    if (!(await ensureAutoBackupPermission(handle))) return false;
+    const data = await exportAllData();
+    const fileHandle = await handle.getFileHandle(`geofinance-backup-${todayISO()}.json`, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(data, null, 2));
+    await writable.close();
+    await setSetting('lastBackupAt', new Date().toISOString());
+    return true;
+  } catch (err) {
+    console.warn('[backup] Sauvegarde automatique échouée :', err);
+    return false;
+  }
 }
 
 /* ---------- Rappel hebdomadaire ---------- */
@@ -277,6 +349,9 @@ export async function checkWeeklyBackupReminder() {
   const lastMs = last ? new Date(last).getTime() : 0;
   const sevenDaysMs = 7 * 24 * 3600 * 1000;
   if (now - lastMs < sevenDaysMs) return;
+
+  if (await runAutoBackupIfConfigured()) { showToast('Sauvegarde automatique effectuée.'); return; }
+
   showBackupReminderModal();
 }
 
