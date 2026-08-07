@@ -47,6 +47,27 @@ const VIEW_TITLES = {
 const MORE_VIEWS = ['wallets', 'savings', 'investments', 'debts', 'tools', 'reports', 'settings'];
 
 let lockScreenApi = null;
+let lastActivityAt = Date.now();
+
+function markActivity() { lastActivityAt = Date.now(); }
+
+async function lockNow() {
+  document.getElementById('app').hidden = true;
+  if (lockScreenApi) {
+    await lockScreenApi.lock();
+    lockScreenApi.show();
+  }
+}
+
+async function checkAutoLock() {
+  const appEl = document.getElementById('app');
+  if (!appEl || appEl.hidden) return; // déjà verrouillé
+  const minutes = await getSetting('autoLockMinutes', 0);
+  if (!minutes) return;
+  if (Date.now() - lastActivityAt >= minutes * 60 * 1000) {
+    await lockNow();
+  }
+}
 
 function navigateTo(view) {
   if (!VIEW_RENDERERS[view]) return;
@@ -112,13 +133,12 @@ function wireGlobalChrome() {
     VIEW_RENDERERS[appState.currentView]?.();
   });
 
-  document.getElementById('lock-now-btn')?.addEventListener('click', async () => {
-    document.getElementById('app').hidden = true;
-    if (lockScreenApi) {
-      await lockScreenApi.lock();
-      lockScreenApi.show();
-    }
+  document.getElementById('lock-now-btn')?.addEventListener('click', lockNow);
+
+  ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll'].forEach((ev) => {
+    document.addEventListener(ev, markActivity, { passive: true });
   });
+  setInterval(checkAutoLock, 15000);
 
   bus.on(EVENTS.DATA_CHANGED, () => { VIEW_RENDERERS[appState.currentView]?.(); });
 }
@@ -148,6 +168,7 @@ async function seedDefaultsIfNeeded() {
 async function onUnlocked() {
   document.getElementById('lock-screen').hidden = true;
   document.getElementById('app').hidden = false;
+  markActivity();
   await generateDueRecurring();
   navigateTo('dashboard');
   maybeShowInstallPrompt();

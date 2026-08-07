@@ -187,15 +187,15 @@
           </div>
         </div>
 
-        <div class="dashboard-panels-grid">
-          <div class="panel">
+        <div class="dashboard-panels-grid" id="dashboard-panels-grid">
+          <div class="panel" id="panel-watch-categories">
             <div class="panel-header">
               <h3>Catégories à surveiller</h3>
               <button class="link-btn" data-view-target="budgets">Voir tout</button>
             </div>
             <div id="dashboard-watch-categories"></div>
           </div>
-          <div class="panel">
+          <div class="panel" id="panel-upcoming-bills">
             <div class="panel-header">
               <h3>Prochaines échéances</h3>
               <button class="link-btn" data-view-target="budgets">Voir tout</button>
@@ -204,7 +204,7 @@
           </div>
         </div>
 
-        <div class="charts-grid">
+        <div class="charts-grid" id="dashboard-charts-grid">
           <div class="chart-card">
             <h3>Dépenses par catégorie</h3>
             <div class="chart-canvas-wrap"><canvas id="chart-expenses-category"></canvas></div>
@@ -219,7 +219,7 @@
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel" id="panel-recent-transactions">
           <div class="panel-header">
             <h3>Transactions récentes</h3>
             <button class="link-btn" data-view-target="transactions">Voir tout</button>
@@ -376,7 +376,7 @@
           <button type="button" class="segmented-btn" data-value="income">Recette</button>
           <button type="button" class="segmented-btn" data-value="transfer">Transfert</button>
         </div>
-        <div class="form-row">
+        <div class="form-row" data-field="amountRow">
           <label>Montant</label>
           <input type="number" step="0.01" min="0" name="amount" required inputmode="decimal" placeholder="0.00">
         </div>
@@ -391,6 +391,14 @@
         <div class="form-row" data-field="categoryRow">
           <label>Catégorie</label>
           <select name="categoryId" required></select>
+        </div>
+        <div class="form-row" data-field="splitToggleRow">
+          <button type="button" id="qa-split-toggle" class="link-btn" style="font-size:13px;">Diviser en plusieurs catégories</button>
+        </div>
+        <div data-field="splitRows" hidden>
+          <div id="qa-split-list"></div>
+          <button type="button" id="qa-split-add" class="btn btn-ghost" style="margin:4px 0 10px;">+ Ajouter une catégorie</button>
+          <div id="qa-split-total" style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Total : 0.00</div>
         </div>
         <div class="form-row">
           <label>Date</label>

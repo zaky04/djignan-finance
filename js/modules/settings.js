@@ -6,9 +6,10 @@
 
 import { STORES, dbGetAll, dbBulkPut, getSetting, setSetting, wipeAllData } from '../db.js';
 import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric } from '../auth.js';
-import { exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup, importTransactionsCsv, exportTransactionsCsv } from '../backup.js';
+import { exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup, analyzeTransactionsCsv, importGeoFinanceCsvRows, importGenericCsvRows, exportTransactionsCsv } from '../backup.js';
 import { isNotificationSupported, getNotificationPermission, requestNotificationPermission, checkAndNotify } from '../notifications.js';
 import { isStandalone, isIOS, isSafari, isAndroid, hasDeferredPrompt, triggerInstall, resetInstallPromptSnooze } from '../install-prompt.js';
+import { DASHBOARD_PANEL_DEFAULTS } from './dashboard.js';
 import { escapeHtml, formatDate, CURRENCIES, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 
@@ -20,6 +21,74 @@ function hiddenFileInput(accept, onFile) {
   input.addEventListener('change', () => { if (input.files[0]) onFile(input.files[0]); input.value = ''; });
   document.body.appendChild(input);
   return input;
+}
+
+function openCsvMappingModal(analysis) {
+  const { headerCells, rows } = analysis;
+  const colOptions = headerCells.map((h, i) => `<option value="${i}">${escapeHtml(h)} (colonne ${i + 1})</option>`).join('');
+
+  const modal = openModal(`
+    <form id="csv-mapping-form">
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Ce fichier ne correspond pas au format d'export GeoFinance. Indiquez à quoi correspond chaque colonne pour l'importer quand même (${rows.length} ligne(s) détectée(s)).</p>
+      <div class="form-row"><label>Portefeuille de destination</label><select name="walletId" id="csv-map-wallet" required></select></div>
+      <div class="form-row"><label>Colonne Date</label><select name="dateCol">${colOptions}</select></div>
+      <div class="form-row"><label>Colonne Description / libellé (optionnel)</label><select name="noteCol"><option value="">Aucune</option>${colOptions}</select></div>
+      <div class="form-row"><label>Format du montant</label>
+        <select name="amountMode" id="csv-map-amount-mode">
+          <option value="single">Une seule colonne (montant signé : + recette / − dépense)</option>
+          <option value="debitCredit">Deux colonnes séparées (Débit / Crédit)</option>
+        </select>
+      </div>
+      <div id="csv-map-single-fields">
+        <div class="form-row"><label>Colonne Montant</label><select name="amountCol">${colOptions}</select></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;"><input type="checkbox" name="invertSign"> Inverser le signe (si les dépenses sont positives dans ce fichier)</label>
+      </div>
+      <div id="csv-map-debit-credit-fields" hidden>
+        <div class="form-row"><label>Colonne Débit (dépenses)</label><select name="debitCol">${colOptions}</select></div>
+        <div class="form-row"><label>Colonne Crédit (recettes)</label><select name="creditCol">${colOptions}</select></div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Importer</button>
+    </form>`, { title: 'Associer les colonnes du CSV' });
+
+  (async () => {
+    const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
+    const walletSelect = modal.el.querySelector('#csv-map-wallet');
+    walletSelect.innerHTML = wallets.length
+      ? wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
+      : '<option value="">Créez un portefeuille d\'abord</option>';
+  })();
+
+  const modeSelect = modal.el.querySelector('#csv-map-amount-mode');
+  const singleFields = modal.el.querySelector('#csv-map-single-fields');
+  const debitCreditFields = modal.el.querySelector('#csv-map-debit-credit-fields');
+  modeSelect.addEventListener('change', () => {
+    const isDebitCredit = modeSelect.value === 'debitCredit';
+    singleFields.hidden = isDebitCredit;
+    debitCreditFields.hidden = !isDebitCredit;
+  });
+
+  modal.el.querySelector('#csv-mapping-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    if (!fd.get('walletId')) { showToast('Créez au moins un portefeuille avant d\'importer.'); return; }
+    const mapping = {
+      walletId: fd.get('walletId'),
+      dateCol: parseInt(fd.get('dateCol'), 10),
+      noteCol: fd.get('noteCol') !== '' ? parseInt(fd.get('noteCol'), 10) : null,
+      amountMode: fd.get('amountMode'),
+      amountCol: parseInt(fd.get('amountCol'), 10),
+      invertSign: fd.get('invertSign') === 'on',
+      debitCol: parseInt(fd.get('debitCol'), 10),
+      creditCol: parseInt(fd.get('creditCol'), 10),
+    };
+    try {
+      const count = await importGenericCsvRows(rows, mapping);
+      modal.close();
+      showToast(`${count} transaction(s) importée(s).`);
+    } catch (err) {
+      showToast('Erreur : ' + (err.message || 'import impossible.'));
+    }
+  });
 }
 
 function promptPassphrase(title) {
@@ -41,6 +110,8 @@ function promptPassphrase(title) {
 async function renderSecuritySection(container) {
   const bioSupported = await isBiometricAvailable();
   const bioConfigured = await isBiometricConfigured();
+  const autoLockMinutes = await getSetting('autoLockMinutes', 0);
+  const AUTO_LOCK_OPTIONS = [[0, 'Jamais'], [1, '1 minute'], [5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes']];
 
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
@@ -60,7 +131,16 @@ async function renderSecuritySection(container) {
           `}
         </span>
       </div>
+      <div class="stat-row" style="margin-top:10px;">
+        <span class="stat-row-label">Verrouillage automatique après inactivité</span>
+        <select id="auto-lock-select">${AUTO_LOCK_OPTIONS.map(([v, l]) => `<option value="${v}" ${v === autoLockMinutes ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      </div>
     </div>`;
+
+  container.querySelector('#auto-lock-select').addEventListener('change', async (e) => {
+    await setSetting('autoLockMinutes', parseInt(e.target.value, 10) || 0);
+    showToast('Verrouillage automatique mis à jour.');
+  });
 
   container.querySelector('#pin-change-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -182,8 +262,13 @@ async function renderBackupSection(container) {
   container.querySelector('#import-csv-btn').addEventListener('click', () => {
     hiddenFileInput('.csv,text/csv', async (file) => {
       try {
-        const count = await importTransactionsCsv(file);
-        showToast(`${count} transaction(s) importée(s).`);
+        const analysis = await analyzeTransactionsCsv(file);
+        if (analysis.format === 'geofinance') {
+          const count = await importGeoFinanceCsvRows(analysis.rows);
+          showToast(`${count} transaction(s) importée(s).`);
+        } else {
+          openCsvMappingModal(analysis);
+        }
       } catch (err) { showToast('Erreur : ' + (err.message || 'fichier invalide.')); }
     }).click();
   });
@@ -217,7 +302,7 @@ async function renderNotificationsSection(container) {
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>Notifications</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Rappels locaux pour vos échéances récurrentes proches (3 jours) et vos budgets qui approchent leur limite (70%/90%). Ces rappels s'affichent quand l'application est ouverte ou récemment réactivée — un envoi en arrière-plan app totalement fermée nécessiterait un serveur distant, ce qui irait à l'encontre du principe 100% local de GeoFinance.</p>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Rappels locaux pour vos échéances récurrentes proches (3 jours), vos dettes/créances arrivant à échéance (3 jours) et vos budgets qui approchent leur limite (70%/90%). Ces rappels s'affichent quand l'application est ouverte ou récemment réactivée — un envoi en arrière-plan app totalement fermée nécessiterait un serveur distant, ce qui irait à l'encontre du principe 100% local de GeoFinance.</p>
       <div class="stat-row"><span class="stat-row-label">Statut</span><span>${statusHtml}</span></div>
       ${permission === 'denied' ? '<p style="font-size:12px;color:var(--text-faint);margin-top:8px;">Vous avez bloqué les notifications pour ce site. Autorisez-les dans les paramètres de votre navigateur pour les réactiver.</p>' : ''}
     </div>`;
@@ -343,14 +428,46 @@ async function renderUpdateSection(container) {
   });
 }
 
+const DASHBOARD_PANEL_LABELS = {
+  watchCategories: 'Catégories à surveiller',
+  upcomingBills: 'Prochaines échéances',
+  charts: 'Graphiques',
+  recentTransactions: 'Transactions récentes',
+};
+
+async function renderDashboardConfigSection(container) {
+  const panels = { ...DASHBOARD_PANEL_DEFAULTS, ...(await getSetting('dashboardPanels', {})) };
+
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>Tableau de bord</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Choisissez les panneaux affichés sur le tableau de bord (la carte « Budget mensuel alloué » et les 4 chiffres du mois restent toujours visibles).</p>
+      ${Object.entries(DASHBOARD_PANEL_LABELS).map(([key, label]) => `
+        <label style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;cursor:pointer;">
+          <input type="checkbox" data-panel-key="${key}" ${panels[key] ? 'checked' : ''}>
+          ${escapeHtml(label)}
+        </label>`).join('')}
+    </div>`;
+
+  container.querySelectorAll('[data-panel-key]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const current = { ...DASHBOARD_PANEL_DEFAULTS, ...(await getSetting('dashboardPanels', {})) };
+      current[input.dataset.panelKey] = input.checked;
+      await setSetting('dashboardPanels', current);
+      showToast('Tableau de bord mis à jour.');
+    });
+  });
+}
+
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-credit"></div>';
+  container.innerHTML = '<div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-credit"></div>';
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
   await renderInstallSection(document.getElementById('settings-install'));
   await renderUpdateSection(document.getElementById('settings-update'));
+  await renderDashboardConfigSection(document.getElementById('settings-dashboard'));
   await renderCurrencySection(document.getElementById('settings-currency'));
   await renderBackupSection(document.getElementById('settings-backup'));
   document.getElementById('settings-credit').innerHTML =

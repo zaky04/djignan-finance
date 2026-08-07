@@ -5,7 +5,7 @@
    rapprochement bancaire ("check-in").
    ========================================================================== */
 
-import { STORES, dbGetAll, dbPut, dbDelete, logAudit } from '../db.js';
+import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, logAudit } from '../db.js';
 import { getEnrichedTransactions } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
@@ -43,12 +43,59 @@ export function openQuickAdd({ editTransaction = null } = {}) {
   const segButtons = backdrop.querySelectorAll('.segmented-btn');
   const targetWalletRow = backdrop.querySelector('[data-field="targetWalletRow"]');
   const categoryRow = backdrop.querySelector('[data-field="categoryRow"]');
+  const amountRow = backdrop.querySelector('[data-field="amountRow"]');
+  const splitToggleRow = backdrop.querySelector('[data-field="splitToggleRow"]');
+  const splitToggleBtn = backdrop.querySelector('#qa-split-toggle');
+  const splitRowsWrap = backdrop.querySelector('[data-field="splitRows"]');
+  const splitList = backdrop.querySelector('#qa-split-list');
+  const splitAddBtn = backdrop.querySelector('#qa-split-add');
+  const splitTotalEl = backdrop.querySelector('#qa-split-total');
   const titleEl = backdrop.querySelector('#qa-title');
   const walletSelect = form.elements.walletId;
   const targetWalletSelect = form.elements.targetWalletId;
   const categorySelect = form.elements.categoryId;
 
   let currentType = editTransaction?.type || 'expense';
+  let splitMode = false;
+
+  function updateSplitTotal() {
+    const rows = [...splitList.querySelectorAll('[data-split-row]')];
+    const sum = rows.reduce((s, row) => s + (parseFloat(row.querySelector('.split-amount').value) || 0), 0);
+    splitTotalEl.textContent = `Total : ${sum.toFixed(2)}`;
+  }
+
+  function addSplitRow(categoryId = '') {
+    const row = document.createElement('div');
+    row.dataset.splitRow = '1';
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;';
+    row.innerHTML = `
+      <select class="split-category" style="flex:2;"></select>
+      <input type="number" step="0.01" min="0" class="split-amount" placeholder="0.00" style="flex:1;">
+      <button type="button" class="icon-btn split-remove" aria-label="Retirer">${DELETE_ICON}</button>`;
+    splitList.appendChild(row);
+    row.querySelector('.split-category').innerHTML = categorySelect.innerHTML;
+    if (categoryId) row.querySelector('.split-category').value = categoryId;
+    row.querySelector('.split-amount').addEventListener('input', updateSplitTotal);
+    row.querySelector('.split-remove').addEventListener('click', () => { row.remove(); updateSplitTotal(); });
+  }
+
+  function setSplitMode(on) {
+    splitMode = on && currentType !== 'transfer';
+    amountRow.hidden = splitMode;
+    categoryRow.hidden = splitMode || currentType === 'transfer';
+    splitRowsWrap.hidden = !splitMode;
+    splitToggleBtn.textContent = splitMode ? 'Revenir à une seule catégorie' : 'Diviser en plusieurs catégories';
+    form.elements.amount.required = !splitMode;
+    categorySelect.required = !splitMode && currentType !== 'transfer';
+    if (splitMode && !splitList.children.length) {
+      addSplitRow();
+      addSplitRow();
+      updateSplitTotal();
+    }
+  }
+
+  splitToggleBtn.addEventListener('click', () => setSplitMode(!splitMode));
+  splitAddBtn.addEventListener('click', () => { addSplitRow(); updateSplitTotal(); });
 
   async function populateWallets() {
     const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
@@ -72,13 +119,23 @@ export function openQuickAdd({ editTransaction = null } = {}) {
 
   function setType(type) {
     currentType = type;
+    if (type === 'transfer' && splitMode) setSplitMode(false);
     segButtons.forEach((b) => b.classList.toggle('is-active', b.dataset.value === type));
     targetWalletRow.hidden = type !== 'transfer';
-    categoryRow.hidden = type === 'transfer';
+    categoryRow.hidden = type === 'transfer' || splitMode;
+    splitToggleRow.hidden = type === 'transfer';
     targetWalletSelect.required = type === 'transfer';
-    categorySelect.required = type !== 'transfer';
+    categorySelect.required = type !== 'transfer' && !splitMode;
     titleEl.textContent = editTransaction ? 'Modifier la transaction' : (type === 'transfer' ? 'Transfert entre portefeuilles' : 'Saisie express');
-    if (type !== 'transfer') populateCategories();
+    if (type !== 'transfer') {
+      populateCategories().then(() => {
+        splitList.querySelectorAll('.split-category').forEach((sel) => {
+          const prevVal = sel.value;
+          sel.innerHTML = categorySelect.innerHTML;
+          sel.value = prevVal;
+        });
+      });
+    }
   }
 
   segButtons.forEach((b) => b.addEventListener('click', () => setType(b.dataset.value)));
@@ -119,6 +176,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
       walletSelect.value = editTransaction.walletId;
       if (editTransaction.type === 'transfer') targetWalletSelect.value = editTransaction.targetWalletId;
       else categorySelect.value = editTransaction.categoryId || '';
+      splitToggleRow.hidden = true;
     }
   })();
 
@@ -131,6 +189,33 @@ export function openQuickAdd({ editTransaction = null } = {}) {
 
     if (!walletId) { showToast('Créez au moins un portefeuille avant de saisir une transaction.'); return; }
     if (type === 'transfer' && walletId === targetWalletId) { showToast('Choisissez deux portefeuilles différents.'); return; }
+
+    if (splitMode && type !== 'transfer') {
+      const rows = [...splitList.querySelectorAll('[data-split-row]')]
+        .map((row) => ({
+          categoryId: row.querySelector('.split-category').value,
+          amount: parseFloat(row.querySelector('.split-amount').value) || 0,
+        }))
+        .filter((r) => r.amount > 0);
+      if (rows.length < 2) { showToast('Ajoutez au moins deux lignes avec un montant.'); return; }
+
+      const splitGroupId = uuid();
+      const date = fd.get('date');
+      const note = (fd.get('note') || '').trim().slice(0, 140);
+      for (const r of rows) {
+        const splitRecord = {
+          id: uuid(), type, walletId, targetWalletId: null,
+          categoryId: r.categoryId || null, amount: r.amount, date, note,
+          reconciled: false, splitGroupId, createdAt: new Date().toISOString(),
+        };
+        await dbAdd(STORES.TRANSACTIONS, splitRecord);
+        await logAudit({ entityType: 'transaction', entityId: splitRecord.id, action: 'create', after: splitRecord, note: 'Transaction scindée' });
+      }
+      close();
+      showToast(`${rows.length} transactions créées (scindées).`);
+      notifyDataChanged('transactions');
+      return;
+    }
 
     const record = {
       id: editTransaction?.id || uuid(),
@@ -161,7 +246,7 @@ const filters = { monthKey: currentMonthKey(), walletId: '', categoryId: '', typ
 function txRowHtml(t) {
   const isTransfer = t.type === 'transfer';
   const title = isTransfer ? `${t.wallet?.name || '—'} → ${t.targetWallet?.name || '—'}` : (t.category?.name || 'Sans catégorie');
-  const sub = `${escapeHtml(t.wallet?.name || '')} · ${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}`;
+  const sub = `${escapeHtml(t.wallet?.name || '')} · ${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}${t.splitGroupId ? ' · Scindée' : ''}`;
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   const currency = t.wallet?.currency || 'EUR';

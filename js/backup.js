@@ -117,13 +117,34 @@ function parseCsvLine(line, delimiter = ';') {
   return out;
 }
 
-/** Importe des transactions depuis un CSV (format généré par le module Rapports). Crée les portefeuilles/catégories manquants. */
-export async function importTransactionsCsv(file) {
+const GEOFINANCE_CSV_HEADER = ['Date', 'Type', 'Portefeuille', 'Vers portefeuille', 'Catégorie', 'Montant', 'Devise', 'Note', 'Pointée'];
+
+function detectDelimiter(headerLine) {
+  let best = ';', bestCount = 0;
+  for (const d of [';', ',', '\t']) {
+    const count = parseCsvLine(headerLine, d).length;
+    if (count > bestCount) { bestCount = count; best = d; }
+  }
+  return best;
+}
+
+/** Lit et analyse un CSV de transactions : détecte le délimiteur et si le format correspond
+    exactement à l'export GeoFinance (import direct possible) ou non (relevé bancaire générique,
+    nécessite un mapping manuel des colonnes par l'utilisateur avant import). */
+export async function analyzeTransactionsCsv(file) {
   const text = await readFileAsText(file);
   const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim().length);
   if (lines.length < 2) throw new Error('Fichier CSV vide.');
-  const rows = lines.slice(1).map((l) => parseCsvLine(l));
+  const delimiter = detectDelimiter(lines[0]);
+  const headerCells = parseCsvLine(lines[0], delimiter).map((h) => h.trim());
+  const rows = lines.slice(1).map((l) => parseCsvLine(l, delimiter));
+  const isGeoFinanceFormat = headerCells.length === GEOFINANCE_CSV_HEADER.length
+    && headerCells.every((h, i) => h.toLowerCase() === GEOFINANCE_CSV_HEADER[i].toLowerCase());
+  return { format: isGeoFinanceFormat ? 'geofinance' : 'generic', headerCells, rows, delimiter };
+}
 
+/** Importe des lignes déjà parsées au format GeoFinance (Date;Type;Portefeuille;...). Crée les portefeuilles/catégories manquants. */
+export async function importGeoFinanceCsvRows(rows) {
   const wallets = await dbGetAll(STORES.WALLETS);
   const categories = await dbGetAll(STORES.CATEGORIES);
   let walletsChanged = false, categoriesChanged = false;
@@ -166,6 +187,83 @@ export async function importTransactionsCsv(file) {
   }
   if (walletsChanged) await dbBulkPut(STORES.WALLETS, wallets);
   if (categoriesChanged) await dbBulkPut(STORES.CATEGORIES, categories);
+  notifyDataChanged('all');
+  return imported;
+}
+
+function parseFlexibleNumber(raw) {
+  if (raw == null) return 0;
+  let s = String(raw).trim().replace(/[^\d,.\-]/g, '');
+  if (!s) return 0;
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+  s = lastComma > lastDot ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+/** Accepte YYYY-MM-DD ou JJ/MM/AAAA (avec /, . ou - comme séparateur) — format usuel des relevés bancaires européens. */
+function parseFlexibleDate(raw) {
+  if (!raw) return null;
+  const s = raw.trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  return null;
+}
+
+/** Importe des lignes de relevé bancaire générique selon un mapping de colonnes choisi par
+    l'utilisateur. mapping: { walletId, dateCol, noteCol, amountMode: 'single'|'debitCredit',
+    amountCol, invertSign, debitCol, creditCol }. La catégorie est devinée par ressemblance avec
+    des transactions déjà catégorisées (même logique que la Saisie express), sinon laissée vide. */
+export async function importGenericCsvRows(rows, mapping) {
+  const wallets = await dbGetAll(STORES.WALLETS);
+  const wallet = wallets.find((w) => w.id === mapping.walletId);
+  if (!wallet) throw new Error('Portefeuille introuvable.');
+
+  const allTransactions = await dbGetAll(STORES.TRANSACTIONS);
+  const norm = (s) => (s || '').trim().toLowerCase();
+  function guessCategory(note, type) {
+    if (!note) return null;
+    const n = norm(note);
+    const match = allTransactions
+      .filter((t) => t.type === type && t.categoryId && t.note)
+      .map((t) => ({ t, n: norm(t.note) }))
+      .filter(({ n: tn }) => tn === n || tn.includes(n) || n.includes(tn))
+      .sort((a, b) => (b.t.date || '').localeCompare(a.t.date || ''))[0];
+    return match?.t.categoryId || null;
+  }
+
+  let imported = 0;
+  for (const cols of rows) {
+    const date = parseFlexibleDate(cols[mapping.dateCol]);
+    if (!date) continue;
+    const note = mapping.noteCol != null ? (cols[mapping.noteCol] || '').trim().slice(0, 140) : '';
+
+    let amount, type;
+    if (mapping.amountMode === 'debitCredit') {
+      const debit = parseFlexibleNumber(cols[mapping.debitCol]);
+      const credit = parseFlexibleNumber(cols[mapping.creditCol]);
+      if (debit > 0) { amount = debit; type = 'expense'; }
+      else if (credit > 0) { amount = credit; type = 'income'; }
+      else continue;
+    } else {
+      let raw = parseFlexibleNumber(cols[mapping.amountCol]);
+      if (mapping.invertSign) raw = -raw;
+      if (!raw) continue;
+      amount = Math.abs(raw);
+      type = raw < 0 ? 'expense' : 'income';
+    }
+
+    const tx = {
+      id: uuid(), type, walletId: wallet.id, targetWalletId: null,
+      categoryId: guessCategory(note, type), amount, date, note,
+      reconciled: false, createdAt: new Date().toISOString(),
+    };
+    await dbAdd(STORES.TRANSACTIONS, tx);
+    imported++;
+  }
   notifyDataChanged('all');
   return imported;
 }

@@ -5,6 +5,9 @@
 import { formatCurrency, formatDate, formatPercent, escapeHtml, currentMonthKey, percentage, budgetProgressClass } from '../utils.js';
 import { computeNetWorthHistory, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart } from '../charts.js';
+import { getSetting } from '../db.js';
+
+export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true };
 
 const TX_ICONS = {
   income: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 20V6M6 12l6-6 6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -43,7 +46,7 @@ function txRowHtml(t) {
   const title = isTransfer
     ? `${t.wallet?.name || '—'} → ${t.targetWallet?.name || '—'}`
     : (t.category?.name || 'Sans catégorie');
-  const sub = `${escapeHtml(t.wallet?.name || '')} · ${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}`;
+  const sub = `${escapeHtml(t.wallet?.name || '')} · ${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}${t.splitGroupId ? ' · Scindée' : ''}`;
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   const currency = t.wallet?.currency || 'EUR';
@@ -118,6 +121,18 @@ function renderUpcomingBills(upcoming, currency) {
 
 export async function renderDashboard() {
   const monthKey = currentMonthKey();
+  const panels = { ...DASHBOARD_PANEL_DEFAULTS, ...(await getSetting('dashboardPanels', {})) };
+
+  const watchEl = document.getElementById('panel-watch-categories');
+  const billsEl = document.getElementById('panel-upcoming-bills');
+  if (watchEl) watchEl.hidden = !panels.watchCategories;
+  if (billsEl) billsEl.hidden = !panels.upcomingBills;
+  const panelsGridEl = document.getElementById('dashboard-panels-grid');
+  if (panelsGridEl) panelsGridEl.hidden = !panels.watchCategories && !panels.upcomingBills;
+  const chartsEl = document.getElementById('dashboard-charts-grid');
+  if (chartsEl) chartsEl.hidden = !panels.charts;
+  const recentEl = document.getElementById('panel-recent-transactions');
+  if (recentEl) recentEl.hidden = !panels.recentTransactions;
 
   const [summary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, forecast, recentTx] = await Promise.all([
     computeMonthSummary(monthKey),
@@ -158,12 +173,14 @@ export async function renderDashboard() {
   setAmount(summaryEls[2], summary.netSavings, summary.currency);
   setAmount(summaryEls[3], summary.cashFlow, summary.currency);
 
-  renderExpensesByCategoryChart('chart-expenses-category', expensesByCategory, currency);
-  renderNetWorthTrendChart('chart-net-worth-trend', netWorthHistory, currency);
-  renderBudgetVsActualChart('chart-budget-vs-actual', budgetVsActual, currency);
+  if (panels.charts) {
+    renderExpensesByCategoryChart('chart-expenses-category', expensesByCategory, currency);
+    renderNetWorthTrendChart('chart-net-worth-trend', netWorthHistory, currency);
+    renderBudgetVsActualChart('chart-budget-vs-actual', budgetVsActual, currency);
+  }
 
   renderAlerts(budgetVsActual);
-  renderRecentTransactions(recentTx);
-  renderWatchCategories(budgetVsActual);
-  renderUpcomingBills(forecast.upcoming, forecast.currency);
+  if (panels.recentTransactions) renderRecentTransactions(recentTx);
+  if (panels.watchCategories) renderWatchCategories(budgetVsActual);
+  if (panels.upcomingBills) renderUpcomingBills(forecast.upcoming, forecast.currency);
 }

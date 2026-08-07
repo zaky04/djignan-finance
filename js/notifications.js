@@ -52,8 +52,10 @@ export async function checkAndNotify() {
 
   const notifiedRecurring = await getSetting('notifiedRecurringDates', {});
   const notifiedBudgets = await getSetting('notifiedBudgetTiers', {});
+  const notifiedDebts = await getSetting('notifiedDebtDates', {});
   let recurringChanged = false;
   let budgetsChanged = false;
+  let debtsChanged = false;
 
   // ---- Échéances récurrentes dans les 3 prochains jours ----
   const today = todayISO();
@@ -78,6 +80,24 @@ export async function checkAndNotify() {
     if (ok) { notifiedRecurring[key] = true; recurringChanged = true; }
   }
 
+  // ---- Échéances de dettes/créances dans les 3 prochains jours ----
+  const [debts, debtPayments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
+  for (const d of debts) {
+    if (d.status === 'paid' || !d.dueDate) continue;
+    if (d.dueDate < today || d.dueDate > horizonStr) continue;
+    const key = `${d.id}:${d.dueDate}`;
+    if (notifiedDebts[key]) continue;
+
+    const paid = debtPayments.filter((p) => p.debtId === d.id).reduce((s, p) => s + p.amount, 0);
+    const remaining = Math.max(0, (d.principal || 0) - paid);
+    const label = d.type === 'debt' ? 'Dette à échéance' : 'Créance à échéance';
+    const ok = await fireNotification(label, {
+      body: `${d.personName} — ${formatCurrency(remaining, d.currency)} restant le ${formatDate(d.dueDate)}`,
+      tag: `debt-${key}`,
+    });
+    if (ok) { notifiedDebts[key] = true; debtsChanged = true; }
+  }
+
   // ---- Budgets à 70%/90% du mois en cours ----
   const monthKey = currentMonthKey();
   const budgetRows = await computeBudgetVsActual(monthKey);
@@ -98,4 +118,5 @@ export async function checkAndNotify() {
 
   if (recurringChanged) await setSetting('notifiedRecurringDates', notifiedRecurring);
   if (budgetsChanged) await setSetting('notifiedBudgetTiers', notifiedBudgets);
+  if (debtsChanged) await setSetting('notifiedDebtDates', notifiedDebts);
 }

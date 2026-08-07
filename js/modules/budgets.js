@@ -54,6 +54,9 @@ async function renderMonthlyTab(container) {
   ]);
   const monthBudgets = allBudgets.filter((b) => b.month === monthKey);
   const budgetByCategory = Object.fromEntries(monthBudgets.map((b) => [b.categoryId, b]));
+  const prevMonthKey = monthKeyOffset(monthKey, -1);
+  const prevMonthBudgets = allBudgets.filter((b) => b.month === prevMonthKey && b.limit > 0);
+  const canCopyPrevious = monthBudgets.length === 0 && prevMonthBudgets.length > 0;
   const categories = await dbGetAll(STORES.CATEGORIES);
   const roots = categories.filter((c) => c.type === 'expense' && !c.parentId);
 
@@ -62,6 +65,7 @@ async function renderMonthlyTab(container) {
       <button type="button" class="icon-btn" id="bud-prev-month" aria-label="Mois précédent">‹</button>
       <strong style="min-width:130px;text-align:center;display:inline-block;">${formatMonthLabel(monthKey)}</strong>
       <button type="button" class="icon-btn" id="bud-next-month" aria-label="Mois suivant">›</button>
+      ${canCopyPrevious ? '<button type="button" class="btn btn-ghost" id="bud-copy-prev" style="margin-left:auto;">Reprendre les budgets du mois dernier</button>' : ''}
     </div>
     <div class="hero-card" style="margin-bottom:18px;">
       <div class="hero-card-label">Solde prévisionnel de fin de mois</div>
@@ -84,6 +88,13 @@ async function renderMonthlyTab(container) {
 
   container.querySelector('#bud-prev-month').onclick = () => { monthKey = monthKeyOffset(monthKey, -1); renderMonthlyTab(container); };
   container.querySelector('#bud-next-month').onclick = () => { monthKey = monthKeyOffset(monthKey, 1); renderMonthlyTab(container); };
+  container.querySelector('#bud-copy-prev')?.addEventListener('click', async () => {
+    for (const b of prevMonthBudgets) {
+      await dbPut(STORES.BUDGETS, { id: uuid(), categoryId: b.categoryId, month: monthKey, limit: b.limit });
+    }
+    showToast(`${prevMonthBudgets.length} budget(s) repris du mois dernier.`);
+    notifyDataChanged('budgets');
+  });
 
   grid.querySelectorAll('[data-limit-input]').forEach((input) => {
     input.addEventListener('change', async () => {
