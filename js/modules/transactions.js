@@ -6,7 +6,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, logAudit } from '../db.js';
-import { getEnrichedTransactions } from '../ledger.js';
+import { getEnrichedTransactions, guessCategoryId } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { extractAmountFromImage } from '../ocr.js';
@@ -198,31 +198,12 @@ export function openQuickAdd({ editTransaction = null } = {}) {
   let categoryTouchedByUser = !!editTransaction;
   categorySelect.addEventListener('change', () => { categoryTouchedByUser = true; });
 
-  const norm = (s) => (s || '').trim().toLowerCase();
   async function suggestCategoryFromNote() {
     if (categoryTouchedByUser || currentType === 'transfer') return;
-    const note = norm(form.elements.note.value);
-    if (note.length < 3) return;
-
-    // Priorité aux règles explicites de l'utilisateur (Budgets > Règles) sur la
-    // suggestion implicite par similarité de note, plus fiable pour l'utilisateur.
-    if (currentType === 'expense') {
-      const rules = await dbGetAll(STORES.CATEGORIZATION_RULES);
-      const ruleMatch = rules.find((r) => r.pattern && note.includes(r.pattern));
-      if (ruleMatch && categorySelect.querySelector(`option[value="${ruleMatch.categoryId}"]`)) {
-        categorySelect.value = ruleMatch.categoryId;
-        return;
-      }
-    }
-
-    const all = await dbGetAll(STORES.TRANSACTIONS);
-    const match = all
-      .filter((t) => t.type === currentType && t.categoryId && t.note)
-      .map((t) => ({ t, n: norm(t.note) }))
-      .filter(({ n }) => n === note || n.includes(note) || note.includes(n))
-      .sort((a, b) => (b.t.date || '').localeCompare(a.t.date || ''))[0]?.t;
-    if (match && categorySelect.querySelector(`option[value="${match.categoryId}"]`)) {
-      categorySelect.value = match.categoryId;
+    const note = form.elements.note.value;
+    const categoryId = await guessCategoryId(note, currentType);
+    if (categoryId && categorySelect.querySelector(`option[value="${categoryId}"]`)) {
+      categorySelect.value = categoryId;
     }
   }
   let suggestDebounce = null;

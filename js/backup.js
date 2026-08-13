@@ -5,7 +5,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbAdd, dbBulkPut, exportAllData, importAllData, getSetting, setSetting } from './db.js';
-import { getEnrichedTransactions } from './ledger.js';
+import { getEnrichedTransactions, guessCategoryId } from './ledger.js';
 import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast, safeNumber } from './utils.js';
 import { notifyDataChanged } from './state.js';
 
@@ -281,8 +281,9 @@ function parseFlexibleDate(raw) {
 
 /** Importe des lignes de relevé bancaire générique selon un mapping de colonnes choisi par
     l'utilisateur. mapping: { walletId, dateCol, noteCol, amountMode: 'single'|'debitCredit',
-    amountCol, invertSign, debitCol, creditCol }. La catégorie est devinée par ressemblance avec
-    des transactions déjà catégorisées (même logique que la Saisie express), sinon laissée vide.
+    amountCol, invertSign, debitCol, creditCol }. La catégorie est devinée via guessCategoryId()
+    (ledger.js — règles explicites de Budgets > Règles puis ressemblance avec des transactions
+    déjà catégorisées, partagé avec la Saisie express), sinon laissée vide.
     Retourne { imported, skipped } — skipped compte les lignes ignorées car déjà présentes
     (même portefeuille, date, montant et type — cas d'un relevé réimporté sur une période
     qui chevauche un import précédent). */
@@ -292,17 +293,6 @@ export async function importGenericCsvRows(rows, mapping) {
   if (!wallet) throw new Error('Portefeuille introuvable.');
 
   const allTransactions = await dbGetAll(STORES.TRANSACTIONS);
-  const norm = (s) => (s || '').trim().toLowerCase();
-  function guessCategory(note, type) {
-    if (!note) return null;
-    const n = norm(note);
-    const match = allTransactions
-      .filter((t) => t.type === type && t.categoryId && t.note)
-      .map((t) => ({ t, n: norm(t.note) }))
-      .filter(({ n: tn }) => tn === n || tn.includes(n) || n.includes(tn))
-      .sort((a, b) => (b.t.date || '').localeCompare(a.t.date || ''))[0];
-    return match?.t.categoryId || null;
-  }
 
   let imported = 0, skipped = 0;
   for (const cols of rows) {
@@ -327,7 +317,7 @@ export async function importGenericCsvRows(rows, mapping) {
 
     const tx = {
       id: uuid(), type, walletId: wallet.id, targetWalletId: null,
-      categoryId: guessCategory(note, type), amount, date, note,
+      categoryId: await guessCategoryId(note, type), amount, date, note,
       reconciled: false, createdAt: new Date().toISOString(),
     };
     if (isDuplicateTransaction(allTransactions, tx)) { skipped++; continue; }

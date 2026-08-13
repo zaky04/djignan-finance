@@ -307,6 +307,54 @@ toujours fonctionnelle. Le rappel de sauvegarde hebdomadaire (modal indépendant
 apparaître par-dessus l'assistant sur un tout premier lancement — comportement de pile de modales déjà toléré
 ailleurs dans l'app, pas une régression.
 
+### 13 août 2026 (suite) — Tentative de sync cloud Firebase, ajoutée puis annulée (hors session Claude)
+
+Deux commits sont apparus entre deux sessions, faits en dehors de cette conversation (probablement une autre
+session/outil sur ce même dossier local) : `feat: ajout synchronisation cloud Firebase (Firestore + Google
+Auth)` puis son revert complet juste après (35 min plus tard). Résultat net : **aucun changement de code**
+(diff vide entre avant/après les deux commits). Personne n'a expliqué le pourquoi de l'annulation dans cette
+conversation — si la sync multi-appareil est reprise un jour (voir §7), redemander le contexte de cette
+tentative avant de relancer, plutôt que de repartir de zéro à l'aveugle.
+
+### 13 août 2026 (suite) — Historique de commits réécrit pour corriger l'identité auteur
+
+Les commits faits sur ce projet depuis `7f5943b` (toute cette série de sessions, y compris la tentative
+Firebase ci-dessus) portaient l'identité `GeoFinance <karidja810@gmail.com>` (config git locale à ce dépôt,
+distincte de la config globale de la machine) au lieu de `zaky04` (auteur de tous les commits précédents et
+propriétaire du dépôt GitHub). Réécrit via `git filter-branch --env-filter` sur la plage `3ae34a2..HEAD` (7
+commits, contenu strictement identique — seuls auteur/committer/hash ont changé) vers
+`zaky04 <zaky04@users.noreply.github.com>` (même format que l'historique existant), puis
+`git push --force-with-lease`. **Tous les hash de commits ont donc changé** — un `git log` gardé d'avant
+cette date ne correspondra plus. La config git locale du dépôt n'a PAS été touchée (hors de portée d'une
+session Claude) : sans correction manuelle par l'utilisateur (`git config user.name/user.email` dans ce
+dossier), le PROCHAIN commit repartira avec la mauvaise identité.
+
+### 13 août 2026 (suite) — Recherche globale + catégorisation automatique (commit à venir)
+
+1. **Recherche globale n'indexait pas Comptes gardés ni Partage de dépenses** (`search.js`) — oubli mécanique,
+   ces deux modules sont arrivés après l'écriture du module de recherche. Ajouté (comptes gardés seulement si
+   `keptAccountsEnabled`, cohérent avec le fait que la nav elle-même reste masquée sinon).
+
+2. **Catégorisation automatique unifiée et améliorée** — deux implémentations quasi-identiques dupliquées
+   existaient : `suggestCategoryFromNote()` (`transactions.js`, Saisie express) et `guessCategory()`
+   (`backup.js`, import CSV générique). Cette dernière **ne consultait jamais** `STORES.CATEGORIZATION_RULES`
+   (les règles définies dans Budgets > Règles) — un import CSV de plusieurs dizaines de lignes de relevé
+   bancaire ignorait donc silencieusement les règles que l'utilisateur avait pourtant configurées, alors que
+   c'est exactement le scénario où l'auto-catégorisation compte le plus.
+   → Nouvelle fonction partagée `guessCategoryId(note, type)` dans `ledger.js` (précédent explicite d'un tel
+   partage : `detectRecurringCandidates()` dans le même fichier). Garde le même prédicat de correspondance
+   qu'avant (égalité ou inclusion dans un sens ou l'autre — pas de régression sur ce qui matchait déjà), mais
+   **choisit la catégorie la plus fréquente parmi les correspondances plutôt que celle de la transaction la
+   plus récente** — une catégorisation ponctuellement erronée sur un achat récurrent ne fausse plus toutes
+   les suggestions suivantes. Étend aussi la vérification des règles aux notes de type `income` (limitée à
+   `expense` auparavant, sans raison technique).
+   Vérifié par test réaliste : 2 transactions "Boulangerie du coin" catégorisées Alimentation + 1 plus
+   récente catégorisée par erreur Autres dépenses → la suggestion renvoie bien Alimentation (majorité), pas
+   la plus récente. Règle explicite "essence" → Transport testée sur l'import CSV générique → catégorie
+   correctement appliquée (ne l'aurait jamais été avant ce fix).
+
+`CACHE_VERSION` : `v31` → `v32`.
+
 `CACHE_VERSION` : `v30` → `v31`.
 
 ## 7. Pistes prioritaires non traitées

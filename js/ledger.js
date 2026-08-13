@@ -486,3 +486,36 @@ export async function computeFinancialHealthScore(monthKey = currentMonthKey()) 
   const score = Math.round(savingsScore * 0.4 + debtScore * 0.3 + budgetScore * 0.3);
   return { score, savingsRate, debtRatio, budgetAdherencePct, currency: summary.currency };
 }
+
+/** Devine la catégorie la plus probable pour une note libre de transaction (Saisie express,
+    import CSV générique). Priorité aux règles explicites de l'utilisateur (Budgets > Règles,
+    STORES.CATEGORIZATION_RULES) ; à défaut, ressemblance textuelle (même prédicat de
+    correspondance qu'avant : égalité ou inclusion dans un sens ou l'autre) avec les transactions
+    déjà catégorisées du même type — mais on retient la catégorie la plus FRÉQUENTE parmi les
+    correspondances plutôt que celle de la transaction correspondante la plus récente, pour qu'une
+    catégorisation ponctuellement erronée sur un achat récurrent ne fausse pas toutes les
+    suggestions suivantes. Renvoie null si rien de probant.
+    Partagée entre transactions.js et backup.js, qui dupliquaient chacun une version de cette
+    logique — celle de backup.js (import CSV générique) ne consultait jamais les règles. */
+export async function guessCategoryId(note, type) {
+  const norm = (s) => (s || '').trim().toLowerCase();
+  const n = norm(note);
+  if (n.length < 3) return null;
+
+  if (type === 'expense' || type === 'income') {
+    const rules = await dbGetAll(STORES.CATEGORIZATION_RULES);
+    const ruleMatch = rules.find((r) => r.pattern && n.includes(r.pattern.toLowerCase()));
+    if (ruleMatch) return ruleMatch.categoryId;
+  }
+
+  const transactions = await dbGetAll(STORES.TRANSACTIONS);
+  const scores = new Map(); // categoryId -> nombre de correspondances
+  for (const t of transactions) {
+    if (t.type !== type || !t.categoryId || !t.note) continue;
+    const tn = norm(t.note);
+    if (tn !== n && !tn.includes(n) && !n.includes(tn)) continue;
+    scores.set(t.categoryId, (scores.get(t.categoryId) || 0) + 1);
+  }
+  if (!scores.size) return null;
+  return [...scores.entries()].sort((a, b) => b[1] - a[1])[0][0];
+}

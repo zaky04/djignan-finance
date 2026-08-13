@@ -1,11 +1,12 @@
 /* ==========================================================================
    GeoFinance System — Recherche globale
    Cherche en mémoire (jeu de données personnel, donc petit) parmi
-   transactions, portefeuilles, dettes/créances, objectifs d'épargne et
-   investissements. Ouverture via l'icône loupe ou Ctrl/Cmd+K.
+   transactions, portefeuilles, dettes/créances, objectifs d'épargne,
+   investissements, comptes gardés et dépenses partagées. Ouverture via
+   l'icône loupe ou Ctrl/Cmd+K.
    ========================================================================== */
 
-import { STORES, dbGetAll } from '../db.js';
+import { STORES, dbGetAll, getSetting } from '../db.js';
 import { getEnrichedTransactions } from '../ledger.js';
 import { formatCurrency, formatDate, escapeHtml, debounce } from '../utils.js';
 
@@ -16,6 +17,8 @@ const TYPE_LABELS = {
   receivable: 'Créance',
   savings: 'Épargne',
   investment: 'Investissement',
+  keptAccount: 'Compte gardé',
+  sharedExpense: 'Dépense partagée',
 };
 
 function goToView(view) {
@@ -27,12 +30,16 @@ function norm(s) {
 }
 
 async function collectSearchIndex() {
-  const [transactions, wallets, debts, savingsGoals, investments] = await Promise.all([
+  const keptAccountsEnabled = await getSetting('keptAccountsEnabled', false);
+  const [transactions, wallets, debts, savingsGoals, investments, sharedExpenses, participants, keptAccounts] = await Promise.all([
     getEnrichedTransactions({ limit: 500 }),
     dbGetAll(STORES.WALLETS),
     dbGetAll(STORES.DEBTS),
     dbGetAll(STORES.SAVINGS_GOALS),
     dbGetAll(STORES.INVESTMENTS),
+    dbGetAll(STORES.SHARED_EXPENSES),
+    dbGetAll(STORES.PARTICIPANTS),
+    keptAccountsEnabled ? dbGetAll(STORES.KEPT_ACCOUNTS) : Promise.resolve([]),
   ]);
 
   const items = [];
@@ -85,6 +92,26 @@ async function collectSearchIndex() {
       view: 'investments',
     });
   }
+  for (const acc of keptAccounts.filter((a) => !a.archived)) {
+    items.push({
+      type: 'keptAccount',
+      haystack: `${acc.ownerName} ${acc.note || ''}`,
+      title: acc.ownerName,
+      sub: acc.currency,
+      view: 'keptAccounts',
+    });
+  }
+  for (const exp of sharedExpenses) {
+    const payer = participants.find((p) => p.id === exp.paidBy);
+    items.push({
+      type: 'sharedExpense',
+      haystack: `${exp.description} ${payer?.name || ''}`,
+      title: exp.description,
+      sub: `Payé par ${payer?.name || '?'} · ${formatDate(exp.date)}`,
+      amount: formatCurrency(exp.amount, exp.currency),
+      view: 'shared',
+    });
+  }
 
   return items;
 }
@@ -128,7 +155,7 @@ export function openGlobalSearch() {
         <span style="font-size:11.5px;color:var(--text-faint);">S'applique aux transactions uniquement</span>
       </div>
       <div id="search-results" class="search-results">
-        <div class="empty-state">Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne et investissements.</div>
+        <div class="empty-state">Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.</div>
       </div>
     </div>`;
   root.appendChild(backdrop);
@@ -172,7 +199,7 @@ export function openGlobalSearch() {
   const runSearch = debounce(() => {
     const q = norm(input.value).trim();
     if (!q) {
-      resultsEl.innerHTML = '<div class="empty-state">Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d\'épargne et investissements.</div>';
+      resultsEl.innerHTML = '<div class="empty-state">Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d\'épargne, investissements, comptes gardés et dépenses partagées.</div>';
       return;
     }
     const matches = index.filter((it) => norm(it.haystack).includes(q) && passesAdvancedFilters(it)).slice(0, 40);
