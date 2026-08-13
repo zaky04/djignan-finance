@@ -98,9 +98,9 @@ function walletFormHtml(wallet, defaultCurrency) {
     </form>`;
 }
 
-async function openWalletModal(wallet = null) {
+async function openWalletModal(wallet = null, { onDone = null } = {}) {
   const defaultCurrency = wallet ? wallet.currency : await getSetting('baseCurrency', 'EUR');
-  const modal = openModal(walletFormHtml(wallet, defaultCurrency), { title: wallet ? 'Modifier le portefeuille' : 'Nouveau portefeuille' });
+  const modal = openModal(walletFormHtml(wallet, defaultCurrency), { title: wallet ? 'Modifier le portefeuille' : 'Nouveau portefeuille', onClose: onDone });
   wireCurrencySelect(modal.el);
   modal.el.querySelector('#wallet-form').addEventListener('submit', async (e) => {
     e.preventDefault();

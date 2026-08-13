@@ -111,11 +111,12 @@ function promptPassphrase(title) {
   });
 }
 
+export const AUTO_LOCK_OPTIONS = [[0, 'Jamais'], [1, '1 minute'], [5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes']];
+
 async function renderSecuritySection(container) {
   const bioSupported = await isBiometricAvailable();
   const bioConfigured = await isBiometricConfigured();
   const autoLockMinutes = await getSetting('autoLockMinutes', 0);
-  const AUTO_LOCK_OPTIONS = [[0, 'Jamais'], [1, '1 minute'], [5, '5 minutes'], [15, '15 minutes'], [30, '30 minutes']];
 
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
@@ -175,7 +176,7 @@ async function renderSecuritySection(container) {
   });
 }
 
-const PROFILE_FIELDS = [
+export const PROFILE_FIELDS = [
   { key: 'lastName', label: 'Nom', type: 'text' },
   { key: 'firstName', label: 'Prénom', type: 'text' },
   { key: 'phone', label: 'Numéro de téléphone', type: 'tel' },
@@ -513,7 +514,7 @@ async function renderUpdateSection(container) {
   });
 }
 
-const DASHBOARD_PANEL_LABELS = {
+export const DASHBOARD_PANEL_LABELS = {
   watchCategories: 'Catégories à surveiller',
   upcomingBills: 'Prochaines échéances',
   charts: 'Graphiques',
@@ -523,23 +524,47 @@ const DASHBOARD_PANEL_LABELS = {
   debtsBalance: 'Solde créances & dettes',
 };
 
+/** Modules optionnels de l'app : masqués par défaut, activables ici ou pendant l'onboarding
+    (app.js). Liste volontairement conçue pour grandir — ajouter un module futur ne demande
+    qu'une entrée ici, ni renderFeaturesSection() ni le pas "modules" de l'onboarding n'ont à
+    changer. navId est optionnel (bouton de nav à masquer/afficher quand le module n'en a pas). */
+export const OPTIONAL_MODULES = [
+  {
+    key: 'keptAccountsEnabled',
+    label: 'Comptes gardés',
+    description: "Ajoute un onglet dédié pour suivre l'argent d'un proche que vous gérez (petit frère, conjointe, mère…), totalement séparé de vos portefeuilles et de votre patrimoine net.",
+    navId: 'nav-kept-accounts',
+    view: 'keptAccounts',
+  },
+];
+
+export async function applyOptionalModuleVisibility() {
+  for (const mod of OPTIONAL_MODULES) {
+    if (!mod.navId) continue;
+    const navBtn = document.getElementById(mod.navId);
+    if (navBtn) navBtn.hidden = !(await getSetting(mod.key, false));
+  }
+}
+
 async function renderFeaturesSection(container) {
-  const enabled = await getSetting('keptAccountsEnabled', false);
+  const states = await Promise.all(OPTIONAL_MODULES.map((mod) => getSetting(mod.key, false)));
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>Fonctionnalités optionnelles</h3></div>
-      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;cursor:pointer;">
-        <input type="checkbox" id="kept-accounts-toggle" ${enabled ? 'checked' : ''}>
-        Comptes gardés (argent de tiers : famille, proches…)
-      </label>
-      <p style="font-size:12.5px;color:var(--text-muted);margin:2px 0 0;">Ajoute un onglet dédié pour suivre l'argent d'un proche que vous gérez (petit frère, conjointe, mère…), totalement séparé de vos portefeuilles et de votre patrimoine net.</p>
+      ${OPTIONAL_MODULES.map((mod, i) => `
+        <label style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;cursor:pointer;">
+          <input type="checkbox" data-module-key="${mod.key}" ${states[i] ? 'checked' : ''}>
+          ${escapeHtml(mod.label)}
+        </label>
+        <p style="font-size:12.5px;color:var(--text-muted);margin:2px 0 10px;">${escapeHtml(mod.description)}</p>`).join('')}
     </div>`;
 
-  container.querySelector('#kept-accounts-toggle').addEventListener('change', async (e) => {
-    await setSetting('keptAccountsEnabled', e.target.checked);
-    const navBtn = document.getElementById('nav-kept-accounts');
-    if (navBtn) navBtn.hidden = !e.target.checked;
-    showToast(e.target.checked ? 'Comptes gardés activés.' : 'Comptes gardés désactivés.');
+  container.querySelectorAll('[data-module-key]').forEach((input) => {
+    input.addEventListener('change', async (e) => {
+      await setSetting(input.dataset.moduleKey, e.target.checked);
+      await applyOptionalModuleVisibility();
+      showToast('Fonctionnalité mise à jour.');
+    });
   });
 }
 

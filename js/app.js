@@ -6,14 +6,14 @@
    ========================================================================== */
 
 import { STORES, dbAdd, dbGetAll, getSetting, setSetting } from './db.js';
-import { initLockScreen } from './auth.js';
+import { initLockScreen, isBiometricAvailable, registerBiometric } from './auth.js';
 import { bus, EVENTS, appState } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder } from './backup.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
-import { checkAndNotify } from './notifications.js';
+import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
 
-import { renderDashboard } from './modules/dashboard.js';
+import { renderDashboard, DASHBOARD_PANEL_DEFAULTS } from './modules/dashboard.js';
 import { renderWallets, initWalletsModule, openWalletModal } from './modules/wallets.js';
 import { renderTransactions, initTransactionsModule, openQuickAdd } from './modules/transactions.js';
 import { renderBudgets, initBudgetsModule, generateDueRecurring } from './modules/budgets.js';
@@ -24,7 +24,10 @@ import { renderTools, initToolsModule } from './modules/tools.js';
 import { renderReports, initReportsModule } from './modules/reports.js';
 import { renderShared, initSharedModule } from './modules/shared.js';
 import { renderKeptAccounts, initKeptAccountsModule } from './modules/kept-accounts.js';
-import { renderSettings, initSettingsModule } from './modules/settings.js';
+import {
+  renderSettings, initSettingsModule, PROFILE_FIELDS, AUTO_LOCK_OPTIONS,
+  OPTIONAL_MODULES, applyOptionalModuleVisibility, DASHBOARD_PANEL_LABELS,
+} from './modules/settings.js';
 import { initSearchModule } from './modules/search.js';
 
 const VIEW_RENDERERS = {
@@ -93,8 +96,9 @@ function navigateTo(view) {
 }
 
 async function openMoreSheet() {
-  const keptAccountsEnabled = await getSetting('keptAccountsEnabled', false);
-  const views = MORE_VIEWS.filter((v) => v !== 'keptAccounts' || keptAccountsEnabled);
+  const moduleStates = await Promise.all(OPTIONAL_MODULES.map(async (m) => [m.view, await getSetting(m.key, false)]));
+  const disabledViews = new Set(moduleStates.filter(([, enabled]) => !enabled).map(([view]) => view));
+  const views = MORE_VIEWS.filter((v) => !disabledViews.has(v));
   const modal = openModal(
     views.map((v) => `<button type="button" class="nav-item" style="width:100%;" data-view-target="${v}">${escapeHtml(VIEW_TITLES[v])}</button>`).join(''),
     { title: 'Plus' }
@@ -102,15 +106,6 @@ async function openMoreSheet() {
   modal.el.querySelectorAll('[data-view-target]').forEach((btn) => {
     btn.addEventListener('click', () => { navigateTo(btn.dataset.viewTarget); modal.close(); });
   });
-}
-
-/** Bascule la visibilité du bouton de nav "Comptes gardés" (masqué par défaut, fonctionnalité
-    optionnelle activée dans Paramètres). Appelée au boot et depuis settings.js au changement. */
-export async function applyKeptAccountsVisibility() {
-  const enabled = await getSetting('keptAccountsEnabled', false);
-  const navBtn = document.getElementById('nav-kept-accounts');
-  if (navBtn) navBtn.hidden = !enabled;
-  if (!enabled && appState.currentView === 'keptAccounts') navigateTo('dashboard');
 }
 
 function applyTheme(theme) {
@@ -192,10 +187,18 @@ function applyShortcutParams() {
   if (view || action) window.history.replaceState({}, '', window.location.pathname);
 }
 
-/** Mini-parcours de bienvenue affiché une seule fois, à la toute première utilisation
-    (flag onboardingCompleted). Devise principale d'abord (la changer plus tard réinitialise
-    les taux de change existants — autant bien la choisir avant qu'il y ait quoi que ce soit
-    à réinitialiser), puis enchaîne directement sur la création du premier portefeuille. */
+/** Bouton "Passer cette étape" commun à (presque) toutes les étapes de l'onboarding : avance
+    sans rien enregistrer, laissant les valeurs par défaut déjà seedées (seedDefaultsIfNeeded)
+    ou les réglages par défaut de chaque module en place. */
+function skipStepButtonHtml() {
+  return '<button type="button" class="btn btn-ghost btn-block" id="ob-skip" style="margin-top:8px;">Passer cette étape</button>';
+}
+
+/** Assistant de configuration multi-étapes affiché une seule fois, à la toute première
+    utilisation (flag onboardingCompleted), juste après la création du code PIN. Chaque étape
+    est individuellement passable ("Passer cette étape") — rien n'est obligatoire au-delà de la
+    création du PIN lui-même, pour ne pas décourager un premier lancement trop long ; tout reste
+    modifiable ensuite dans Paramètres. */
 async function maybeShowOnboarding() {
   if (await getSetting('onboardingCompleted', false)) return;
   // Garde supplémentaire au-delà du flag : une install existante qui met à jour vers cette
@@ -205,26 +208,186 @@ async function maybeShowOnboarding() {
   await setSetting('onboardingCompleted', true); // marqué avant affichage : fermer sans agir ne doit pas re-harceler à chaque déverrouillage
   if (hasWallets) return;
 
-  const modal = openModal(`
-    <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Bienvenue ! Choisissez d'abord la devise dans laquelle suivre votre argent au quotidien — vous pourrez quand même créer des portefeuilles dans d'autres devises ensuite.</p>
-    <form id="onboarding-form">
-      <div class="form-row">
-        <label>Devise principale</label>
-        <select name="baseCurrency">${CURRENCIES.map((c) => `<option value="${c}" ${c === 'EUR' ? 'selected' : ''}>${c}</option>`).join('')}</select>
-      </div>
-      <button type="submit" class="btn btn-primary btn-block">Continuer</button>
-    </form>
-    <button type="button" class="btn btn-ghost btn-block" id="onboarding-skip" style="margin-top:8px;">Passer, je configurerai plus tard</button>
-  `, { title: 'Bienvenue sur GeoFinance' });
+  const steps = [
+    {
+      title: 'Bienvenue sur GeoFinance',
+      async render(el, { next }) {
+        el.innerHTML = `
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Choisissez d'abord la devise dans laquelle suivre votre argent au quotidien — vous pourrez quand même créer des portefeuilles dans d'autres devises ensuite.</p>
+          <form id="ob-currency-form">
+            <div class="form-row">
+              <label>Devise principale</label>
+              <select name="baseCurrency">${CURRENCIES.map((c) => `<option value="${c}" ${c === 'EUR' ? 'selected' : ''}>${c}</option>`).join('')}</select>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Continuer</button>
+          </form>
+          ${skipStepButtonHtml()}`;
+        el.querySelector('#ob-currency-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          await setSetting('baseCurrency', new FormData(e.target).get('baseCurrency'));
+          next();
+        });
+        el.querySelector('#ob-skip').addEventListener('click', () => next());
+      },
+    },
+    {
+      title: 'Votre premier portefeuille',
+      async render(el, { next }) {
+        el.innerHTML = `
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Créez votre premier portefeuille (compte bancaire, mobile money, espèces…) pour commencer à suivre vos finances.</p>
+          <button type="button" class="btn btn-primary btn-block" id="ob-wallet-create">Créer un portefeuille</button>
+          ${skipStepButtonHtml()}`;
+        el.querySelector('#ob-wallet-create').addEventListener('click', () => {
+          // Le formulaire de portefeuille est une modale à part entière (réutilisée telle
+          // quelle depuis wallets.js) : on masque celle de l'assistant pendant ce temps plutôt
+          // que de la fermer, pour pouvoir la ré-afficher et enchaîner sur l'étape suivante
+          // une fois celle-ci refermée (créée ou annulée, peu importe — voir "tout passable").
+          modal.el.style.display = 'none';
+          openWalletModal(null, { onDone: () => { modal.el.style.display = ''; next(); } });
+        });
+        el.querySelector('#ob-skip').addEventListener('click', () => next());
+      },
+    },
+    {
+      title: 'Votre profil',
+      async render(el, { next }) {
+        el.innerHTML = `
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Utilisé pour la salutation sur le tableau de bord et l'en-tête des rapports PDF. Reste 100% local, jamais transmis.</p>
+          <form id="ob-profile-form">
+            ${PROFILE_FIELDS.map((f) => `
+              <div class="form-row">
+                <label>${escapeHtml(f.label)}</label>
+                <input type="${f.type}" name="${f.key}" maxlength="120">
+              </div>`).join('')}
+            <button type="submit" class="btn btn-primary btn-block">Continuer</button>
+          </form>
+          ${skipStepButtonHtml()}`;
+        el.querySelector('#ob-profile-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const fd = new FormData(e.target);
+          await setSetting('userProfile', Object.fromEntries(PROFILE_FIELDS.map((f) => [f.key, (fd.get(f.key) || '').trim()])));
+          next();
+        });
+        el.querySelector('#ob-skip').addEventListener('click', () => next());
+      },
+    },
+    {
+      title: 'Personnalisez votre tableau de bord',
+      async render(el, { next }) {
+        el.innerHTML = `
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Choisissez les panneaux affichés sur le tableau de bord (modifiable à tout moment dans Paramètres).</p>
+          <form id="ob-dashboard-form">
+            ${Object.entries(DASHBOARD_PANEL_LABELS).map(([key, label]) => `
+              <label style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px;cursor:pointer;">
+                <input type="checkbox" name="${key}" ${DASHBOARD_PANEL_DEFAULTS[key] ? 'checked' : ''}>
+                ${escapeHtml(label)}
+              </label>`).join('')}
+            <button type="submit" class="btn btn-primary btn-block" style="margin-top:10px;">Continuer</button>
+          </form>
+          ${skipStepButtonHtml()}`;
+        el.querySelector('#ob-dashboard-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const fd = new FormData(e.target);
+          const panels = Object.fromEntries(Object.keys(DASHBOARD_PANEL_LABELS).map((key) => [key, fd.get(key) === 'on']));
+          await setSetting('dashboardPanels', { ...DASHBOARD_PANEL_DEFAULTS, ...panels });
+          next();
+        });
+        el.querySelector('#ob-skip').addEventListener('click', () => next());
+      },
+    },
+    {
+      title: 'Modules optionnels',
+      async render(el, { next }) {
+        el.innerHTML = `
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Activez ce qui s'applique à votre usage (modifiable à tout moment dans Paramètres).</p>
+          <form id="ob-modules-form">
+            ${OPTIONAL_MODULES.map((mod) => `
+              <label style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px;cursor:pointer;">
+                <input type="checkbox" name="${mod.key}">
+                ${escapeHtml(mod.label)}
+              </label>
+              <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">${escapeHtml(mod.description)}</p>`).join('')}
+            <button type="submit" class="btn btn-primary btn-block">Continuer</button>
+          </form>
+          ${skipStepButtonHtml()}`;
+        el.querySelector('#ob-modules-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const fd = new FormData(e.target);
+          for (const mod of OPTIONAL_MODULES) await setSetting(mod.key, fd.get(mod.key) === 'on');
+          await applyOptionalModuleVisibility();
+          next();
+        });
+        el.querySelector('#ob-skip').addEventListener('click', () => next());
+      },
+    },
+    {
+      title: 'Sécurité',
+      async render(el, { next }) {
+        const bioAvailable = await isBiometricAvailable();
+        el.innerHTML = `
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Réglez le verrouillage automatique après inactivité${bioAvailable ? ' et activez le déverrouillage biométrique' : ''}.</p>
+          <div class="form-row">
+            <label>Verrouillage automatique après inactivité</label>
+            <select id="ob-auto-lock">${AUTO_LOCK_OPTIONS.map(([v, l]) => `<option value="${v}">${escapeHtml(l)}</option>`).join('')}</select>
+          </div>
+          ${bioAvailable ? '<button type="button" class="btn btn-ghost btn-block" id="ob-bio-enable" style="margin-bottom:10px;">Activer le déverrouillage biométrique</button>' : ''}
+          <button type="button" class="btn btn-primary btn-block" id="ob-continue">Continuer</button>
+          ${skipStepButtonHtml()}`;
+        el.querySelector('#ob-bio-enable')?.addEventListener('click', async (e) => {
+          try {
+            await registerBiometric();
+            showToast('Biométrie activée.');
+            e.target.textContent = 'Biométrie activée ✓';
+            e.target.disabled = true;
+          } catch (err) {
+            showToast(err.message || "Échec de l'activation biométrique.");
+          }
+        });
+        el.querySelector('#ob-continue').addEventListener('click', async () => {
+          await setSetting('autoLockMinutes', parseInt(el.querySelector('#ob-auto-lock').value, 10) || 0);
+          next();
+        });
+        el.querySelector('#ob-skip').addEventListener('click', () => next());
+      },
+    },
+    {
+      title: 'Notifications',
+      async render(el, { next }) {
+        const supported = isNotificationSupported();
+        el.innerHTML = `
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Rappels locaux pour vos budgets qui approchent leur limite, vos échéances proches et vos soldes bas.</p>
+          ${supported
+            ? '<button type="button" class="btn btn-primary btn-block" id="ob-notif-enable">Activer les notifications</button>'
+            : '<p class="empty-state" style="padding:8px 0;">Non supportées par ce navigateur.</p>'}
+          <button type="button" class="btn btn-ghost btn-block" id="ob-finish" style="margin-top:10px;">${supported ? 'Passer, terminer' : 'Terminer'}</button>`;
+        el.querySelector('#ob-notif-enable')?.addEventListener('click', async () => {
+          const perm = await requestNotificationPermission();
+          if (perm === 'granted') { showToast('Notifications activées.'); await checkAndNotify(); }
+          next();
+        });
+        el.querySelector('#ob-finish').addEventListener('click', () => next());
+      },
+    },
+  ];
 
-  modal.el.querySelector('#onboarding-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    await setSetting('baseCurrency', new FormData(e.target).get('baseCurrency'));
-    modal.close();
-    VIEW_RENDERERS[appState.currentView]?.();
-    openWalletModal();
-  });
-  modal.el.querySelector('#onboarding-skip').addEventListener('click', () => modal.close());
+  let index = 0;
+  const modal = openModal('<div id="ob-step-content"></div>', { title: steps[0].title });
+  const titleEl = modal.el.querySelector('.modal-header h3');
+
+  async function renderStep() {
+    const step = steps[index];
+    if (titleEl) titleEl.textContent = step.title;
+    const body = modal.el.querySelector('.modal-body');
+    body.innerHTML = `<p style="font-size:11px;color:var(--text-faint);margin:0 0 12px;text-transform:uppercase;letter-spacing:.04em;">Étape ${index + 1} / ${steps.length}</p><div id="ob-step-content"></div>`;
+    await step.render(body.querySelector('#ob-step-content'), { next });
+  }
+  async function next() {
+    index++;
+    if (index >= steps.length) { modal.close(); return; }
+    await renderStep();
+  }
+
+  await renderStep();
 }
 
 async function onUnlocked() {
@@ -267,7 +430,7 @@ async function onUnlocked() {
     applyTheme(appState.theme);
     appState.privacyHidden = await getSetting('privacyHidden', false);
     applyPrivacy(appState.privacyHidden);
-    await applyKeptAccountsVisibility();
+    await applyOptionalModuleVisibility();
 
     lockScreenApi = initLockScreen({ onUnlock: onUnlocked });
   } catch (err) {

@@ -274,6 +274,41 @@ PIN d'origine toujours fonctionnel après reload.
 
 `CACHE_VERSION` : `v29` → `v30`. Nouveau fichier `js/sw-register.js` ajouté au précache de `sw.js`.
 
+### 13 août 2026 (suite) — Assistant de configuration multi-étapes (commit à venir)
+
+À la demande de l'utilisateur : après le code PIN, avant le tableau de bord, un assistant en **7 étapes**
+guide la première configuration au lieu du mini-flow à 2 étapes précédent (devise + portefeuille). Chaque
+étape a un bouton "Passer cette étape" — rien n'est obligatoire au-delà du PIN lui-même (validé avec
+l'utilisateur : décourager un premier lancement trop long serait pire que l'inverse), tout reste modifiable
+ensuite dans Paramètres. Étapes, dans l'ordre : devise principale → premier portefeuille → profil → panneaux
+du tableau de bord → modules optionnels → sécurité (verrouillage auto + biométrie) → notifications.
+
+**Réutilisation plutôt que duplication** (`app.js` importe directement de `settings.js`/`dashboard.js`/
+`auth.js`/`notifications.js`, aucune logique redéfinie) :
+- `PROFILE_FIELDS`, `AUTO_LOCK_OPTIONS`, `DASHBOARD_PANEL_LABELS` exportés depuis `settings.js` (n'étaient
+  que des consts locales avant).
+- **`OPTIONAL_MODULES`** (`settings.js`) : la case "Comptes gardés" isolée est devenue une liste
+  `[{key, label, description, navId, view}]` — actuellement un seul élément, mais l'ajout d'un futur module
+  optionnel ne demandera qu'une entrée ici (ni `renderFeaturesSection()`, ni l'étape "Modules" de
+  l'onboarding, ni `openMoreSheet()` dans `app.js` n'ont à changer). `applyOptionalModuleVisibility()`
+  (exportée, remplace l'ancienne `applyKeptAccountsVisibility()` propre aux comptes gardés) boucle sur cette
+  liste pour afficher/masquer les boutons de nav correspondants.
+- `openWalletModal()` (`wallets.js`) accepte désormais `{ onDone }`, threadé vers le `onClose` déjà supporté
+  par `openModal()` — l'étape "portefeuille" masque la modale de l'assistant (`style.display='none'`) pendant
+  que la modale de création de portefeuille (réutilisée telle quelle) est ouverte par-dessus, puis la
+  réaffiche et avance à l'étape suivante quand celle-ci se ferme (créée ou annulée, peu importe).
+
+Testé en conditions réelles, deux fois : parcours complet en remplissant chaque étape (devise XOF, portefeuille
+créé avec la bonne devise pré-sélectionnée, profil, panneaux dashboard, module Comptes gardés activé — nav
+visible immédiatement en cours de parcours —, verrouillage auto, notifications) puis vérification en base que
+tout est bien enregistré ; et parcours complet en appuyant sur "Passer" à chaque étape (aucune erreur, aucun
+portefeuille créé, fermeture propre). La page Paramètres elle-même re-testée après le refactor des exports —
+toujours fonctionnelle. Le rappel de sauvegarde hebdomadaire (modal indépendant, 4s après déverrouillage) peut
+apparaître par-dessus l'assistant sur un tout premier lancement — comportement de pile de modales déjà toléré
+ailleurs dans l'app, pas une régression.
+
+`CACHE_VERSION` : `v30` → `v31`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

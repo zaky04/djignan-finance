@@ -4,7 +4,7 @@
    (petit frère, conjointe, mère…). Totalement autonome des portefeuilles
    personnels : stores dédiés (KEPT_ACCOUNTS/KEPT_ACCOUNT_ENTRIES), jamais lus
    par ledger.js, jamais comptés dans le patrimoine net. Activable/désactivable
-   depuis Paramètres (voir app.js applyKeptAccountsVisibility()).
+   depuis Paramètres (voir settings.js applyOptionalModuleVisibility()).
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit } from '../db.js';
