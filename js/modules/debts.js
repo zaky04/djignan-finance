@@ -18,18 +18,23 @@ function remaining(debt, payments) {
   return Math.max(0, (debt.principal || 0) - paid);
 }
 
-const DEBT_CATEGORY_NAME = 'Prêt et créance';
+export const DEBT_CATEGORY_NAMES = { debt: 'Prêt', receivable: 'Créance' };
+/** Ancien nom unique (avant que "Prêt" et "Créance" soient distingués) — gardé pour que la
+    migration dans app.js puisse repérer et corriger les transactions déjà catégorisées avec. */
+export const LEGACY_DEBT_CATEGORY_NAME = 'Prêt et créance';
 
-/** Retrouve (ou crée) la catégorie "Prêt et créance" pour le type donné (income/expense — les
-    catégories sont scindées par type dans ce store, donc il en existe potentiellement une pour
-    chaque). Utilisée pour que les mouvements de dette/créance (ouverture + remboursement)
-    n'apparaissent jamais "Sans catégorie" dans la liste des transactions, tout en restant exclus
-    des agrégats budgétaires (voir ledger.js, filtré via le champ debtId, pas via la catégorie). */
-export async function ensureDebtCategoryId(type) {
+/** Retrouve (ou crée) la catégorie "Prêt" (dette) ou "Créance" selon debtType, pour le type de
+    transaction donné (income/expense — les catégories sont scindées par type dans ce store, donc
+    il existe potentiellement une catégorie "Prêt" ET une "Créance" par type, jusqu'à 4 au total).
+    Utilisée pour que les mouvements de dette/créance (ouverture + remboursement) n'apparaissent
+    jamais "Sans catégorie" dans la liste des transactions, tout en restant exclus des agrégats
+    budgétaires (voir ledger.js, filtré via le champ debtId, pas via la catégorie). */
+export async function ensureDebtCategoryId(debtType, txType) {
+  const name = DEBT_CATEGORY_NAMES[debtType] || DEBT_CATEGORY_NAMES.debt;
   const categories = await dbGetAll(STORES.CATEGORIES);
-  const existing = categories.find((c) => c.type === type && c.name === DEBT_CATEGORY_NAME);
+  const existing = categories.find((c) => c.type === txType && c.name === name);
   if (existing) return existing.id;
-  const category = { id: uuid(), name: DEBT_CATEGORY_NAME, type, parentId: null, createdAt: new Date().toISOString() };
+  const category = { id: uuid(), name, type: txType, parentId: null, createdAt: new Date().toISOString() };
   await dbAdd(STORES.CATEGORIES, category);
   return category.id;
 }
@@ -186,7 +191,7 @@ async function openDebtModal(d = null) {
         type: txType,
         walletId: walletSelect.value,
         targetWalletId: null,
-        categoryId: await ensureDebtCategoryId(txType),
+        categoryId: await ensureDebtCategoryId(currentType, txType),
         amount: record.principal,
         date: record.startDate,
         note: currentType === 'debt' ? `Prêt reçu de ${record.personName}` : `Prêt accordé à ${record.personName}`,
@@ -234,7 +239,7 @@ async function openPaymentModal(d) {
       type: paymentTxType,
       walletId,
       targetWalletId: null,
-      categoryId: await ensureDebtCategoryId(paymentTxType),
+      categoryId: await ensureDebtCategoryId(d.type, paymentTxType),
       amount: payment.amount,
       date: payment.date,
       note: `Remboursement — ${d.personName}`,

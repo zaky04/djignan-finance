@@ -376,6 +376,27 @@ reload ; nouvelle dette créée → catégorisée immédiatement ; "Entrées (mo
 
 `CACHE_VERSION` : `v32` → `v33`.
 
+### 13 août 2026 (suite) — "Prêt et créance" scindé en "Prêt" et "Créance" (commit à venir)
+
+Retour utilisateur juste après le fix précédent : catégorie unique pas assez précise, voulait "Prêt" pour les
+dettes et "Créance" pour les créances, distincts.
+→ `debts.js` : `DEBT_CATEGORY_NAMES = { debt: 'Prêt', receivable: 'Créance' }` (exporté), `LEGACY_DEBT_CATEGORY_NAME
+= 'Prêt et créance'` (exporté, gardé pour la migration). `ensureDebtCategoryId(debtType, txType)` prend
+maintenant le type de la DETTE (`debt`/`receivable`) en plus du type de transaction (`income`/`expense`) — le
+nom dépend du sens de la dette, pas du sens du mouvement d'argent, donc une dette (Prêt) garde "Prêt" aussi
+bien à l'ouverture (income) qu'au remboursement (expense).
+`app.js` `migrateDebtTransactionCategories()` étendue pour rattraper aussi les transactions déjà catégorisées
+"Prêt et créance" (pas seulement `categoryId` null) en retrouvant la dette liée via `debtId` pour déterminer
+Prêt vs Créance, **puis supprime les catégories "Prêt et créance" orphelines** (plus référencées ni par une
+transaction ni par un budget) pour ne pas laisser de catégorie morte dans Budgets > Catégories.
+Vérifié en conditions réelles : dette (Sali) + son remboursement → "Prêt" dans les deux cas ; créance (Awa) +
+son remboursement → "Créance" dans les deux cas ; exclusion budgétaire toujours intacte ("Entrées/Sorties du
+mois" à 0 malgré ~650€ de mouvements catégorisés) ; une transaction orpheline (debtId sans dette réelle
+correspondante, artefact d'un test précédent) correctement laissée de côté par la migration plutôt que de
+deviner — comportement défensif voulu, pas un bug.
+
+`CACHE_VERSION` : `v33` → `v34`.
+
 `CACHE_VERSION` : `v30` → `v31`.
 
 ## 7. Pistes prioritaires non traitées

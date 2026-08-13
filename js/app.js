@@ -5,7 +5,7 @@
    de données (bus d'événements).
    ========================================================================== */
 
-import { STORES, dbAdd, dbPut, dbGetAll, getSetting, setSetting } from './db.js';
+import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting } from './db.js';
 import { initLockScreen, isBiometricAvailable, registerBiometric } from './auth.js';
 import { bus, EVENTS, appState } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, CURRENCIES } from './utils.js';
@@ -19,7 +19,7 @@ import { renderTransactions, initTransactionsModule, openQuickAdd } from './modu
 import { renderBudgets, initBudgetsModule, generateDueRecurring } from './modules/budgets.js';
 import { renderSavings, initSavingsModule } from './modules/savings.js';
 import { renderInvestments, initInvestmentsModule } from './modules/investments.js';
-import { renderDebts, initDebtsModule, ensureDebtCategoryId } from './modules/debts.js';
+import { renderDebts, initDebtsModule, ensureDebtCategoryId, LEGACY_DEBT_CATEGORY_NAME } from './modules/debts.js';
 import { renderTools, initToolsModule } from './modules/tools.js';
 import { renderReports, initReportsModule } from './modules/reports.js';
 import { renderShared, initSharedModule } from './modules/shared.js';
@@ -175,19 +175,41 @@ async function seedDefaultsIfNeeded() {
   if (!base) await setSetting('baseCurrency', 'EUR');
 }
 
-/** Rattrape les transactions de dette/créance créées avant l'introduction de la catégorie dédiée
-    "Prêt et créance" (identifiables par le champ debtId sans categoryId — voir debts.js). Coût
-    négligeable une fois la migration faite (plus aucune ligne à traiter ensuite), donc appelée à
-    chaque boot plutôt que gardée par un flag one-shot : plus robuste si de futures transactions
-    sans catégorie apparaissaient pour une autre raison. Pas besoin de notifier/re-render ici :
-    ceci tourne avant le déverrouillage, et onUnlocked() fait de toute façon un rendu complet et
-    frais du tableau de bord juste après.*/
+/** Rattrape les transactions de dette/créance dont la catégorie n'est pas (ou plus) à jour :
+    - debtId sans categoryId (créées avant l'introduction de la catégorie dédiée) ;
+    - categoryId pointant vers l'ancienne catégorie unique "Prêt et créance" (avant qu'elle soit
+      scindée en "Prêt"/"Créance" selon le sens — voir debts.js DEBT_CATEGORY_NAMES).
+    Nettoie ensuite les catégories "Prêt et créance" orphelines (plus aucune transaction NI budget
+    ne les référence) pour ne pas laisser de catégories mortes dans Budgets > Catégories.
+    Coût négligeable une fois la migration faite, donc appelée à chaque boot plutôt que gardée par
+    un flag one-shot : plus robuste si de nouvelles transactions mal catégorisées apparaissaient
+    pour une autre raison. Pas besoin de notifier/re-render ici : ceci tourne avant le
+    déverrouillage, et onUnlocked() fait de toute façon un rendu complet et frais juste après. */
 async function migrateDebtTransactionCategories() {
-  const transactions = await dbGetAll(STORES.TRANSACTIONS);
-  const toFix = transactions.filter((t) => t.debtId && !t.categoryId);
-  for (const t of toFix) {
-    t.categoryId = await ensureDebtCategoryId(t.type);
-    await dbPut(STORES.TRANSACTIONS, t);
+  const [transactions, categories, debts] = await Promise.all([
+    dbGetAll(STORES.TRANSACTIONS),
+    dbGetAll(STORES.CATEGORIES),
+    dbGetAll(STORES.DEBTS),
+  ]);
+  const legacyCategoryIds = new Set(categories.filter((c) => c.name === LEGACY_DEBT_CATEGORY_NAME).map((c) => c.id));
+  const toFix = transactions.filter((t) => t.debtId && (!t.categoryId || legacyCategoryIds.has(t.categoryId)));
+
+  if (toFix.length) {
+    const debtById = Object.fromEntries(debts.map((d) => [d.id, d]));
+    for (const t of toFix) {
+      const debt = debtById[t.debtId];
+      if (!debt) continue; // dette supprimée entre-temps (ses transactions auraient dû l'être aussi) : rien de fiable à déduire, on laisse tel quel
+      t.categoryId = await ensureDebtCategoryId(debt.type, t.type);
+      await dbPut(STORES.TRANSACTIONS, t);
+    }
+  }
+
+  if (legacyCategoryIds.size) {
+    const [freshTransactions, budgets] = await Promise.all([dbGetAll(STORES.TRANSACTIONS), dbGetAll(STORES.BUDGETS)]);
+    const stillReferenced = new Set([...freshTransactions.map((t) => t.categoryId), ...budgets.map((b) => b.categoryId)]);
+    for (const id of legacyCategoryIds) {
+      if (!stillReferenced.has(id)) await dbDelete(STORES.CATEGORIES, id);
+    }
   }
 }
 
