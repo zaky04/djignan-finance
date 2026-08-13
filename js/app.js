@@ -8,13 +8,13 @@
 import { STORES, dbAdd, dbGetAll, getSetting, setSetting } from './db.js';
 import { initLockScreen } from './auth.js';
 import { bus, EVENTS, appState } from './state.js';
-import { uuid, escapeHtml, openModal, showToast } from './utils.js';
+import { uuid, escapeHtml, openModal, showToast, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder } from './backup.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify } from './notifications.js';
 
 import { renderDashboard } from './modules/dashboard.js';
-import { renderWallets, initWalletsModule } from './modules/wallets.js';
+import { renderWallets, initWalletsModule, openWalletModal } from './modules/wallets.js';
 import { renderTransactions, initTransactionsModule, openQuickAdd } from './modules/transactions.js';
 import { renderBudgets, initBudgetsModule, generateDueRecurring } from './modules/budgets.js';
 import { renderSavings, initSavingsModule } from './modules/savings.js';
@@ -180,12 +180,61 @@ async function seedDefaultsIfNeeded() {
   if (!base) await setSetting('baseCurrency', 'EUR');
 }
 
+/** Applique ?view=X ou ?action=quick-add (raccourcis PWA déclarés dans manifest.json — appui
+    long sur l'icône de l'app) une fois déverrouillé, puis nettoie l'URL pour ne pas rejouer
+    l'action à chaque re-déverrouillage dans la même session. */
+function applyShortcutParams() {
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get('view');
+  const action = params.get('action');
+  if (view && VIEW_RENDERERS[view]) navigateTo(view);
+  if (action === 'quick-add') openQuickAdd();
+  if (view || action) window.history.replaceState({}, '', window.location.pathname);
+}
+
+/** Mini-parcours de bienvenue affiché une seule fois, à la toute première utilisation
+    (flag onboardingCompleted). Devise principale d'abord (la changer plus tard réinitialise
+    les taux de change existants — autant bien la choisir avant qu'il y ait quoi que ce soit
+    à réinitialiser), puis enchaîne directement sur la création du premier portefeuille. */
+async function maybeShowOnboarding() {
+  if (await getSetting('onboardingCompleted', false)) return;
+  // Garde supplémentaire au-delà du flag : une install existante qui met à jour vers cette
+  // version a déjà des portefeuilles, donc n'est pas "nouvelle" même sans le flag posé —
+  // ne jamais lui montrer l'onboarding a posteriori, seulement le marquer fait silencieusement.
+  const hasWallets = (await dbGetAll(STORES.WALLETS)).length > 0;
+  await setSetting('onboardingCompleted', true); // marqué avant affichage : fermer sans agir ne doit pas re-harceler à chaque déverrouillage
+  if (hasWallets) return;
+
+  const modal = openModal(`
+    <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Bienvenue ! Choisissez d'abord la devise dans laquelle suivre votre argent au quotidien — vous pourrez quand même créer des portefeuilles dans d'autres devises ensuite.</p>
+    <form id="onboarding-form">
+      <div class="form-row">
+        <label>Devise principale</label>
+        <select name="baseCurrency">${CURRENCIES.map((c) => `<option value="${c}" ${c === 'EUR' ? 'selected' : ''}>${c}</option>`).join('')}</select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Continuer</button>
+    </form>
+    <button type="button" class="btn btn-ghost btn-block" id="onboarding-skip" style="margin-top:8px;">Passer, je configurerai plus tard</button>
+  `, { title: 'Bienvenue sur GeoFinance' });
+
+  modal.el.querySelector('#onboarding-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await setSetting('baseCurrency', new FormData(e.target).get('baseCurrency'));
+    modal.close();
+    VIEW_RENDERERS[appState.currentView]?.();
+    openWalletModal();
+  });
+  modal.el.querySelector('#onboarding-skip').addEventListener('click', () => modal.close());
+}
+
 async function onUnlocked() {
   document.getElementById('lock-screen').hidden = true;
   document.getElementById('app').hidden = false;
   markActivity();
   await generateDueRecurring();
   navigateTo('dashboard');
+  applyShortcutParams();
+  await maybeShowOnboarding();
   maybeShowInstallPrompt();
   checkAndNotify();
   setTimeout(() => checkWeeklyBackupReminder(), 4000); // décalé pour ne pas superposer les deux invites
@@ -193,6 +242,11 @@ async function onUnlocked() {
 
 (async function boot() {
   try {
+    // Réduit le risque que le navigateur évince l'IndexedDB sous pression de stockage
+    // (silencieux sinon : la demande peut être refusée sans avertissement, mais ça ne
+    // coûte rien de la faire — c'est le principal facteur de perte de données sur mobile).
+    if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+
     await seedDefaultsIfNeeded();
 
     initWalletsModule();

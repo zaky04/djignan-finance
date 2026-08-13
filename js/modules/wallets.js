@@ -163,6 +163,19 @@ function walletCardHtml(w) {
     </div>`;
 }
 
+/** Récupère les taux du jour depuis un service public gratuit, sans clé d'API (open.er-api.com).
+    Renvoie { code: unités de `code` pour 1 unité de `base` } — c'est l'inverse de notre
+    convention rateToBase (voir convertAmount() dans utils.js), à inverser à l'usage. Best-effort :
+    l'app doit rester 100% utilisable sans ça, donc tout échec (hors-ligne, service indisponible,
+    devise absente de la réponse) se dégrade en simple message, jamais en blocage. */
+async function fetchLiveRates(base) {
+  const res = await fetch(`https://open.er-api.com/v6/latest/${encodeURIComponent(base)}`);
+  if (!res.ok) throw new Error('Requête réseau échouée');
+  const data = await res.json();
+  if (data.result !== 'success' || !data.rates) throw new Error('Réponse inattendue du service');
+  return data.rates;
+}
+
 async function renderRatesPanel() {
   const panel = document.getElementById('wallets-rates-panel');
   if (!panel) return;
@@ -175,7 +188,10 @@ async function renderRatesPanel() {
   const unconfirmedCount = rates.filter((r) => r.confirmed === false).length;
   panel.innerHTML = `
     <div class="panel">
-      <div class="panel-header"><h3>Taux de change (devise de base : ${escapeHtml(base)})</h3></div>
+      <div class="panel-header">
+        <h3>Taux de change (devise de base : ${escapeHtml(base)})</h3>
+        <button type="button" class="btn btn-ghost" id="rates-fetch-live-btn">Actualiser via internet</button>
+      </div>
       ${unconfirmedCount ? `<p class="alert alert-warn" style="margin-bottom:10px;">⚠ ${unconfirmedCount > 1 ? `${unconfirmedCount} taux ne sont` : 'Un taux n\'est'} pas encore confirmé (valeur 1:1 par défaut, presque certainement fausse). Corrigez-les ci-dessous pour un patrimoine net exact.</p>` : ''}
       <div class="filters-bar" style="flex-direction:column;align-items:stretch;gap:10px;">
         ${rates.map((r) => `
@@ -188,6 +204,34 @@ async function renderRatesPanel() {
           </div>`).join('')}
       </div>
     </div>`;
+
+  panel.querySelector('#rates-fetch-live-btn').addEventListener('click', async () => {
+    const btn = panel.querySelector('#rates-fetch-live-btn');
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Récupération…';
+    try {
+      const live = await fetchLiveRates(base);
+      let updated = 0;
+      const missing = [];
+      for (const r of rates) {
+        const unitsPerBase = live[r.code];
+        if (!unitsPerBase) { missing.push(r.code); continue; }
+        const rateToBase = 1 / unitsPerBase;
+        await dbPut(STORES.EXCHANGE_RATES, { code: r.code, rateToBase, confirmed: true });
+        await dbAdd(STORES.EXCHANGE_RATE_HISTORY, { id: uuid(), code: r.code, date: todayISO(), rateToBase });
+        updated++;
+      }
+      showToast(updated
+        ? `${updated} taux mis à jour.${missing.length ? ` Introuvables : ${missing.join(', ')} (à saisir manuellement).` : ''}`
+        : `Aucun taux trouvé pour vos devises (${missing.join(', ')}) — saisissez-les manuellement.`);
+      notifyDataChanged('rates');
+    } catch {
+      showToast('Récupération impossible (hors-ligne ou service indisponible). Vous pouvez toujours saisir les taux manuellement.');
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  });
 
   panel.querySelectorAll('[data-rate-code]').forEach((input) => {
     input.addEventListener('change', async () => {
@@ -263,4 +307,4 @@ export function initWalletsModule() {
   });
 }
 
-export { WALLET_TYPES };
+export { WALLET_TYPES, openWalletModal };

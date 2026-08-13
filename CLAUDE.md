@@ -174,6 +174,35 @@ Les 3 fonctionnalités ont été testées de bout en bout dans le navigateur (de
 portefeuille + remboursement, dépense partagée avec transaction liée + suppression en cascade, activation/
 usage/désactivation des comptes gardés) — aucune erreur console à aucune étape.
 
+### 13 août 2026 (suite) — 4 améliorations issues d'une analyse concurrentielle (commit à venir)
+
+1. **Raccourcis PWA cassés, corrigés** (`app.js`) — `manifest.json` déclare `?action=quick-add` et
+   `?view=X` (appui long sur l'icône) depuis le début, mais rien ne lisait jamais `location.search`. Ajout de
+   `applyShortcutParams()`, appelée après déverrouillage, qui nettoie l'URL ensuite (`history.replaceState`)
+   pour ne pas rejouer l'action à chaque re-déverrouillage.
+2. **`navigator.storage.persist()`** (`app.js`, au boot) — réduit le risque d'éviction de l'IndexedDB par le
+   navigateur sous pression de stockage (best-effort, silencieux si refusé — dépend de l'heuristique du
+   navigateur, ex: PWA installée + usage engagé favorisent l'octroi).
+3. **Taux de change en un clic, optionnel** (`wallets.js`) — bouton "Actualiser via internet" dans le panneau
+   Portefeuilles, `open.er-api.com` (gratuit, sans clé). Best-effort explicite : tout échec (hors-ligne,
+   devise absente de la réponse) se dégrade en toast, jamais en blocage — la saisie manuelle reste toujours
+   possible. Marque les taux `confirmed: true` à la récupération (résout l'alerte §6.1).
+4. **Onboarding au premier lancement** (`app.js`, `openWalletModal` exporté de `wallets.js`) — juste après la
+   création du PIN sur une installation neuve : choix de la devise principale (à faire AVANT tout taux de
+   change existant, la changer plus tard les réinitialise) puis enchaîne directement sur la création du
+   premier portefeuille. Garde double (`onboardingCompleted` ET aucun portefeuille existant) pour ne jamais
+   se déclencher sur une install déjà en usage qui met à jour vers cette version.
+
+`CACHE_VERSION` : `v27` → `v28`.
+
+Testé en conditions réelles : raccourcis `?view=` et `?action=quick-add` fonctionnels, taux USD/XOF récupéré
+en ligne (568,83, cohérent avec un vrai taux de marché) et alerte "non confirmé" levée automatiquement,
+onboarding déclenché sur base de données neuve et absent sur une base existante avec portefeuilles.
+
+**Note** : la piste "capture SMS mobile money via Web Share Target" (évoquée dans la même analyse) a été
+volontairement laissée de côté à la demande de l'auteur — elle reste une bonne idée mais nécessite son
+propre cadrage (`manifest.json` share_target, nouveau parseur, `sw.js`) avant d'être attaquée.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
