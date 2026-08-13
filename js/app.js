@@ -12,6 +12,7 @@ import { uuid, escapeHtml, openModal, showToast, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder } from './backup.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
+import { initFirebaseSync } from './firebase-sync.js';
 
 import { renderDashboard, DASHBOARD_PANEL_DEFAULTS } from './modules/dashboard.js';
 import { renderWallets, initWalletsModule, openWalletModal } from './modules/wallets.js';
@@ -406,9 +407,13 @@ async function onUnlocked() {
 (async function boot() {
   try {
     // Réduit le risque que le navigateur évince l'IndexedDB sous pression de stockage
-    // (silencieux sinon : la demande peut être refusée sans avertissement, mais ça ne
-    // coûte rien de la faire — c'est le principal facteur de perte de données sur mobile).
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+
+    // Initialisation Firebase (silencieuse — ne bloque pas le démarrage)
+    initFirebaseSync((user) => {
+      // Callback optionnel si l'état d'auth change (ex: token expiré puis renouvelé)
+      // Rien à faire ici pour l'instant, la sync s'active/désactive automatiquement
+    }).catch(() => {}); // Firebase indisponible → mode local, aucun crash
 
     await seedDefaultsIfNeeded();
 
