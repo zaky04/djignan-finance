@@ -355,6 +355,27 @@ dossier), le PROCHAIN commit repartira avec la mauvaise identité.
 
 `CACHE_VERSION` : `v31` → `v32`.
 
+### 13 août 2026 (suite) — Les transactions de dette/créance n'étaient jamais catégorisées (commit à venir)
+
+Signalé par l'utilisateur avec une capture de l'app déployée : les transactions créées par le lien
+dettes↔portefeuilles (§ "13 août 2026 (suite) — 3 fonctionnalités...") avaient `categoryId: null` en dur,
+volontaire à l'époque (pas de catégorie dédiée prévue) mais affichant "Sans catégorie" dans la liste des
+transactions — repéré en prod (`zaky04.github.io/geofinance`) sur deux vraies transactions ("Prêt reçu de
+gouv", "Prêt accordé à Sali").
+→ `debts.js` : nouvelle `ensureDebtCategoryId(type)` (exportée), retrouve ou crée une catégorie "Prêt et
+créance" — une par type (`income`/`expense`, les catégories sont scindées par type dans ce store) — utilisée
+à la fois pour la transaction d'ouverture et celle de remboursement. Reste exclue des agrégats budgétaires
+comme avant : ce fix ne touche que l'affichage (categoryId), pas le filtre `debtId` de `ledger.js`.
+**Migration au boot** (`app.js`, `migrateDebtTransactionCategories()`, appelée à chaque démarrage — coût nul
+une fois les lignes historiques corrigées) : rattrape automatiquement les transactions déjà en base avec
+`debtId` mais sans `categoryId`, donc les transactions de l'utilisateur visibles sur la capture se corrigent
+au prochain chargement de l'app, sans action de sa part.
+Vérifié : transaction "cassée" (categoryId null) injectée manuellement → réapparaît "Prêt et créance" après
+reload ; nouvelle dette créée → catégorisée immédiatement ; "Entrées (mois)" du dashboard reste à 0 malgré
+2150€ de transactions "Prêt et créance" (l'exclusion budgétaire n'a pas été affectée par ce changement).
+
+`CACHE_VERSION` : `v32` → `v33`.
+
 `CACHE_VERSION` : `v30` → `v31`.
 
 ## 7. Pistes prioritaires non traitées

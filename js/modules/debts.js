@@ -18,6 +18,22 @@ function remaining(debt, payments) {
   return Math.max(0, (debt.principal || 0) - paid);
 }
 
+const DEBT_CATEGORY_NAME = 'Prêt et créance';
+
+/** Retrouve (ou crée) la catégorie "Prêt et créance" pour le type donné (income/expense — les
+    catégories sont scindées par type dans ce store, donc il en existe potentiellement une pour
+    chaque). Utilisée pour que les mouvements de dette/créance (ouverture + remboursement)
+    n'apparaissent jamais "Sans catégorie" dans la liste des transactions, tout en restant exclus
+    des agrégats budgétaires (voir ledger.js, filtré via le champ debtId, pas via la catégorie). */
+export async function ensureDebtCategoryId(type) {
+  const categories = await dbGetAll(STORES.CATEGORIES);
+  const existing = categories.find((c) => c.type === type && c.name === DEBT_CATEGORY_NAME);
+  if (existing) return existing.id;
+  const category = { id: uuid(), name: DEBT_CATEGORY_NAME, type, parentId: null, createdAt: new Date().toISOString() };
+  await dbAdd(STORES.CATEGORIES, category);
+  return category.id;
+}
+
 function debtCardHtml(d, payments) {
   const paid = (debt_paid_of(d, payments));
   const rem = Math.max(0, (d.principal || 0) - paid);
@@ -164,12 +180,13 @@ async function openDebtModal(d = null) {
     };
 
     if (movesMoneyNow) {
+      const txType = currentType === 'debt' ? 'income' : 'expense';
       const openingTx = {
         id: uuid(),
-        type: currentType === 'debt' ? 'income' : 'expense',
+        type: txType,
         walletId: walletSelect.value,
         targetWalletId: null,
-        categoryId: null,
+        categoryId: await ensureDebtCategoryId(txType),
         amount: record.principal,
         date: record.startDate,
         note: currentType === 'debt' ? `Prêt reçu de ${record.personName}` : `Prêt accordé à ${record.personName}`,
@@ -211,12 +228,13 @@ async function openPaymentModal(d) {
     await dbAdd(STORES.DEBT_PAYMENTS, payment);
     await logAudit({ entityType: 'debtPayment', entityId: payment.id, action: 'create', after: payment });
 
+    const paymentTxType = d.type === 'debt' ? 'expense' : 'income';
     const paymentTx = {
       id: uuid(),
-      type: d.type === 'debt' ? 'expense' : 'income',
+      type: paymentTxType,
       walletId,
       targetWalletId: null,
-      categoryId: null,
+      categoryId: await ensureDebtCategoryId(paymentTxType),
       amount: payment.amount,
       date: payment.date,
       note: `Remboursement — ${d.personName}`,

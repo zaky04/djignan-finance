@@ -5,7 +5,7 @@
    de données (bus d'événements).
    ========================================================================== */
 
-import { STORES, dbAdd, dbGetAll, getSetting, setSetting } from './db.js';
+import { STORES, dbAdd, dbPut, dbGetAll, getSetting, setSetting } from './db.js';
 import { initLockScreen, isBiometricAvailable, registerBiometric } from './auth.js';
 import { bus, EVENTS, appState } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, CURRENCIES } from './utils.js';
@@ -19,7 +19,7 @@ import { renderTransactions, initTransactionsModule, openQuickAdd } from './modu
 import { renderBudgets, initBudgetsModule, generateDueRecurring } from './modules/budgets.js';
 import { renderSavings, initSavingsModule } from './modules/savings.js';
 import { renderInvestments, initInvestmentsModule } from './modules/investments.js';
-import { renderDebts, initDebtsModule } from './modules/debts.js';
+import { renderDebts, initDebtsModule, ensureDebtCategoryId } from './modules/debts.js';
 import { renderTools, initToolsModule } from './modules/tools.js';
 import { renderReports, initReportsModule } from './modules/reports.js';
 import { renderShared, initSharedModule } from './modules/shared.js';
@@ -173,6 +173,22 @@ async function seedDefaultsIfNeeded() {
   }
   const base = await getSetting('baseCurrency');
   if (!base) await setSetting('baseCurrency', 'EUR');
+}
+
+/** Rattrape les transactions de dette/créance créées avant l'introduction de la catégorie dédiée
+    "Prêt et créance" (identifiables par le champ debtId sans categoryId — voir debts.js). Coût
+    négligeable une fois la migration faite (plus aucune ligne à traiter ensuite), donc appelée à
+    chaque boot plutôt que gardée par un flag one-shot : plus robuste si de futures transactions
+    sans catégorie apparaissaient pour une autre raison. Pas besoin de notifier/re-render ici :
+    ceci tourne avant le déverrouillage, et onUnlocked() fait de toute façon un rendu complet et
+    frais du tableau de bord juste après.*/
+async function migrateDebtTransactionCategories() {
+  const transactions = await dbGetAll(STORES.TRANSACTIONS);
+  const toFix = transactions.filter((t) => t.debtId && !t.categoryId);
+  for (const t of toFix) {
+    t.categoryId = await ensureDebtCategoryId(t.type);
+    await dbPut(STORES.TRANSACTIONS, t);
+  }
 }
 
 /** Applique ?view=X ou ?action=quick-add (raccourcis PWA déclarés dans manifest.json — appui
@@ -411,6 +427,7 @@ async function onUnlocked() {
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 
     await seedDefaultsIfNeeded();
+    await migrateDebtTransactionCategories();
 
     initWalletsModule();
     initTransactionsModule();
