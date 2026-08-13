@@ -196,6 +196,7 @@ export async function computeMonthSummary(monthKey = currentMonthKey()) {
   let income = 0, expenses = 0;
   for (const t of transactions) {
     if (!t.date || !t.date.startsWith(monthKey)) continue;
+    if (t.debtId) continue; // mouvement de dette/créance : pas une dépense/recette discrétionnaire
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     if (t.type === 'income') income += amt;
@@ -213,6 +214,7 @@ export async function computeSpendingBetween(startDate, endDate) {
   let income = 0, expenses = 0;
   for (const t of transactions) {
     if (!t.date || t.date < startDate || t.date > endDate) continue;
+    if (t.debtId) continue;
     const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     if (t.type === 'income') income += amt;
     else if (t.type === 'expense') expenses += amt;
@@ -230,6 +232,7 @@ export async function computeExpensesByCategory(monthKey = currentMonthKey()) {
   const totals = new Map();
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
+    if (t.debtId) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     const cat = catById[t.categoryId];
@@ -256,6 +259,7 @@ export async function computeBudgetVsActual(monthKey = currentMonthKey()) {
   const actualByCategory = new Map();
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
+    if (t.debtId) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     actualByCategory.set(t.categoryId, (actualByCategory.get(t.categoryId) || 0) + amt);
@@ -284,6 +288,14 @@ export async function getExchangeRates() {
   return { rates, baseCurrency };
 }
 
+/** Devises dont le taux n'a jamais été confirmé par l'utilisateur (créé à 1:1 par défaut lors
+    du premier portefeuille/investissement/dette dans cette devise). Tant qu'il reste à 1:1 sans
+    confirmation, le patrimoine net et tous les totaux convertis dans cette devise sont trompeurs. */
+export async function getUnconfirmedRates() {
+  const { rates } = await ctx();
+  return rates.filter((r) => r.confirmed === false);
+}
+
 /** Somme des soldes de portefeuilles actifs (liquidités), hors investissements/dettes. */
 export async function computeLiquidBalance(cutoffDate = null) {
   const { wallets, transactions, rates, baseCurrency } = await ctx();
@@ -304,6 +316,7 @@ export async function computeCategoryActuals(monthKey = currentMonthKey(), type 
   const totals = new Map(cats.map((c) => [c.id, 0]));
   for (const t of transactions) {
     if (t.type !== type || !t.date || !t.date.startsWith(monthKey)) continue;
+    if (t.debtId) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);
@@ -319,6 +332,7 @@ export async function computeAnnualCategoryActuals(year, type = 'expense') {
   const totals = new Map(cats.map((c) => [c.id, 0]));
   for (const t of transactions) {
     if (t.type !== type || !t.date || !t.date.startsWith(String(year))) continue;
+    if (t.debtId) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);
@@ -441,6 +455,7 @@ export async function computeDailySpending(monthKey) {
   const totals = new Map();
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
+    if (t.debtId) continue;
     const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     totals.set(t.date, (totals.get(t.date) || 0) + amt);
   }

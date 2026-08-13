@@ -265,10 +265,19 @@ export function initLockScreen({ onUnlock }) {
     biometricBtn.innerHTML = FINGERPRINT_HTML;
     biometricBtn.setAttribute('aria-label', 'Déverrouillage biométrique');
     biometricBtn.hidden = !bioAvailable;
+    // Le blocage anti-brute-force doit survivre à un rechargement de page (sinon il suffit
+    // de recharger pour l'annuler) : on le relit depuis les settings à chaque entrée en mode unlock.
+    throttledUntil = await getSetting('pinThrottledUntil', 0);
+    if (Date.now() < throttledUntil) showThrottleError();
+  }
+
+  function showThrottleError() {
+    const remaining = Math.ceil((throttledUntil - Date.now()) / 1000);
+    shakeError(`Trop de tentatives. Réessayez dans ${Math.max(remaining, 1)}s.`);
   }
 
   async function handleDigit(d) {
-    if (Date.now() < throttledUntil) return;
+    if (mode === 'unlock' && Date.now() < throttledUntil) { showThrottleError(); return; }
     if (mode === 'setup') {
       if (buffer.length >= 6) return;
       buffer += d;
@@ -305,13 +314,16 @@ export function initLockScreen({ onUnlock }) {
       if (buffer.length === expectedLength) {
         const ok = await verifyPin(buffer);
         if (ok) {
+          throttledUntil = 0;
+          await setSetting('pinThrottledUntil', 0);
           onUnlock();
         } else {
           const attempts = await getSetting('failedAttempts', 0);
           shakeError('Code PIN incorrect.');
           if (attempts >= MAX_ATTEMPTS_BEFORE_THROTTLE) {
             throttledUntil = Date.now() + THROTTLE_MS;
-            shakeError(`Trop de tentatives. Réessayez dans ${THROTTLE_MS / 1000}s.`);
+            await setSetting('pinThrottledUntil', throttledUntil);
+            showThrottleError();
           }
           setTimeout(clearBuffer, 400);
         }

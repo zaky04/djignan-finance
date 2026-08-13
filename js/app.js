@@ -23,6 +23,7 @@ import { renderDebts, initDebtsModule } from './modules/debts.js';
 import { renderTools, initToolsModule } from './modules/tools.js';
 import { renderReports, initReportsModule } from './modules/reports.js';
 import { renderShared, initSharedModule } from './modules/shared.js';
+import { renderKeptAccounts, initKeptAccountsModule } from './modules/kept-accounts.js';
 import { renderSettings, initSettingsModule } from './modules/settings.js';
 import { initSearchModule } from './modules/search.js';
 
@@ -37,16 +38,17 @@ const VIEW_RENDERERS = {
   tools: renderTools,
   reports: renderReports,
   shared: renderShared,
+  keptAccounts: renderKeptAccounts,
   settings: renderSettings,
 };
 
 const VIEW_TITLES = {
   dashboard: 'Tableau de bord', wallets: 'Portefeuilles', transactions: 'Transactions', budgets: 'Budgets',
   savings: 'Épargne', investments: 'Investissements', debts: 'Dettes & créances', tools: 'Outils',
-  reports: 'Rapports', shared: 'Partage de dépenses', settings: 'Paramètres',
+  reports: 'Rapports', shared: 'Partage de dépenses', keptAccounts: 'Comptes gardés', settings: 'Paramètres',
 };
 
-const MORE_VIEWS = ['wallets', 'savings', 'investments', 'debts', 'tools', 'reports', 'shared', 'settings'];
+const MORE_VIEWS = ['wallets', 'savings', 'investments', 'debts', 'tools', 'reports', 'shared', 'keptAccounts', 'settings'];
 
 let lockScreenApi = null;
 let lastActivityAt = Date.now();
@@ -90,14 +92,25 @@ function navigateTo(view) {
   bus.emit(EVENTS.VIEW_CHANGED, view);
 }
 
-function openMoreSheet() {
+async function openMoreSheet() {
+  const keptAccountsEnabled = await getSetting('keptAccountsEnabled', false);
+  const views = MORE_VIEWS.filter((v) => v !== 'keptAccounts' || keptAccountsEnabled);
   const modal = openModal(
-    MORE_VIEWS.map((v) => `<button type="button" class="nav-item" style="width:100%;" data-view-target="${v}">${escapeHtml(VIEW_TITLES[v])}</button>`).join(''),
+    views.map((v) => `<button type="button" class="nav-item" style="width:100%;" data-view-target="${v}">${escapeHtml(VIEW_TITLES[v])}</button>`).join(''),
     { title: 'Plus' }
   );
   modal.el.querySelectorAll('[data-view-target]').forEach((btn) => {
     btn.addEventListener('click', () => { navigateTo(btn.dataset.viewTarget); modal.close(); });
   });
+}
+
+/** Bascule la visibilité du bouton de nav "Comptes gardés" (masqué par défaut, fonctionnalité
+    optionnelle activée dans Paramètres). Appelée au boot et depuis settings.js au changement. */
+export async function applyKeptAccountsVisibility() {
+  const enabled = await getSetting('keptAccountsEnabled', false);
+  const navBtn = document.getElementById('nav-kept-accounts');
+  if (navBtn) navBtn.hidden = !enabled;
+  if (!enabled && appState.currentView === 'keptAccounts') navigateTo('dashboard');
 }
 
 function applyTheme(theme) {
@@ -191,6 +204,7 @@ async function onUnlocked() {
     initToolsModule();
     initReportsModule();
     initSharedModule();
+    initKeptAccountsModule();
     initSettingsModule();
     initSearchModule();
     wireGlobalChrome();
@@ -199,6 +213,7 @@ async function onUnlocked() {
     applyTheme(appState.theme);
     appState.privacyHidden = await getSetting('privacyHidden', false);
     applyPrivacy(appState.privacyHidden);
+    await applyKeptAccountsVisibility();
 
     lockScreenApi = initLockScreen({ onUnlock: onUnlocked });
   } catch (err) {

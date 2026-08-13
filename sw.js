@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v25';
+const CACHE_VERSION = 'v27';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -34,6 +34,7 @@ const APP_SHELL = [
   './js/modules/reports.js',
   './js/modules/reports-extras.js',
   './js/modules/shared.js',
+  './js/modules/kept-accounts.js',
   './js/modules/search.js',
   './js/modules/settings.js',
   './vendor/chart.min.js',

@@ -6,7 +6,7 @@
    ========================================================================== */
 
 export const DB_NAME = 'geofinance-db';
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 export const STORES = {
   WALLETS: 'wallets',
@@ -26,6 +26,8 @@ export const STORES = {
   PARTICIPANTS: 'participants',
   SHARED_EXPENSES: 'sharedExpenses',
   CATEGORIZATION_RULES: 'categorizationRules',
+  KEPT_ACCOUNTS: 'keptAccounts',
+  KEPT_ACCOUNT_ENTRIES: 'keptAccountEntries',
 };
 
 let dbPromise = null;
@@ -106,6 +108,17 @@ function upgrade(db) {
   if (!db.objectStoreNames.contains(STORES.CATEGORIZATION_RULES)) {
     const s = db.createObjectStore(STORES.CATEGORIZATION_RULES, { keyPath: 'id' });
     s.createIndex('byCategory', 'categoryId');
+  }
+  // Comptes gardés : argent de tiers (famille, proches) que l'utilisateur garde/gère. Stores
+  // volontairement séparés des portefeuilles/transactions personnels — aucune fonction de
+  // ledger.js ne doit jamais les lire, pour ne jamais les compter dans le patrimoine net.
+  if (!db.objectStoreNames.contains(STORES.KEPT_ACCOUNTS)) {
+    const s = db.createObjectStore(STORES.KEPT_ACCOUNTS, { keyPath: 'id' });
+    s.createIndex('byArchived', 'archived');
+  }
+  if (!db.objectStoreNames.contains(STORES.KEPT_ACCOUNT_ENTRIES)) {
+    const s = db.createObjectStore(STORES.KEPT_ACCOUNT_ENTRIES, { keyPath: 'id' });
+    s.createIndex('byAccount', 'accountId');
   }
 }
 

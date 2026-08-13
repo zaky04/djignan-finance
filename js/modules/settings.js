@@ -523,6 +523,26 @@ const DASHBOARD_PANEL_LABELS = {
   debtsBalance: 'Solde créances & dettes',
 };
 
+async function renderFeaturesSection(container) {
+  const enabled = await getSetting('keptAccountsEnabled', false);
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>Fonctionnalités optionnelles</h3></div>
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:14px;cursor:pointer;">
+        <input type="checkbox" id="kept-accounts-toggle" ${enabled ? 'checked' : ''}>
+        Comptes gardés (argent de tiers : famille, proches…)
+      </label>
+      <p style="font-size:12.5px;color:var(--text-muted);margin:2px 0 0;">Ajoute un onglet dédié pour suivre l'argent d'un proche que vous gérez (petit frère, conjointe, mère…), totalement séparé de vos portefeuilles et de votre patrimoine net.</p>
+    </div>`;
+
+  container.querySelector('#kept-accounts-toggle').addEventListener('change', async (e) => {
+    await setSetting('keptAccountsEnabled', e.target.checked);
+    const navBtn = document.getElementById('nav-kept-accounts');
+    if (navBtn) navBtn.hidden = !e.target.checked;
+    showToast(e.target.checked ? 'Comptes gardés activés.' : 'Comptes gardés désactivés.');
+  });
+}
+
 async function renderDashboardConfigSection(container) {
   const panels = { ...DASHBOARD_PANEL_DEFAULTS, ...(await getSetting('dashboardPanels', {})) };
 
@@ -550,13 +570,14 @@ async function renderDashboardConfigSection(container) {
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-profile"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-credit"></div>';
+  container.innerHTML = '<div id="settings-profile"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-credit"></div>';
   await renderProfileSection(document.getElementById('settings-profile'));
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
   await renderInstallSection(document.getElementById('settings-install'));
   await renderUpdateSection(document.getElementById('settings-update'));
   await renderDashboardConfigSection(document.getElementById('settings-dashboard'));
+  await renderFeaturesSection(document.getElementById('settings-features'));
   await renderCurrencySection(document.getElementById('settings-currency'));
   await renderBackupSection(document.getElementById('settings-backup'));
   document.getElementById('settings-credit').innerHTML =

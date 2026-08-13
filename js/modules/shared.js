@@ -3,8 +3,10 @@
    Suivi façon Splitwise entre participants (colocation, voyage, couple…) :
    chaque dépense partagée est payée par une personne et répartie à parts
    égales entre les participants concernés ; le solde net de chacun indique
-   qui doit combien au groupe. Indépendant des portefeuilles/dettes
-   personnelles pour ne pas fausser le patrimoine net (voir ledger.js).
+   qui doit combien au groupe. Si un participant est marqué "Moi", SA part
+   (montant ÷ nb participants — pas le montant total, quel que soit le
+   payeur) est aussi enregistrée comme une vraie transaction personnelle,
+   pour que le budget/les rapports reflètent le coût réel supporté.
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit } from '../db.js';
@@ -18,8 +20,13 @@ const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill=
 function participantRowHtml(p) {
   return `
     <div class="tx-row" data-participant-id="${p.id}">
-      <div class="tx-main"><div class="tx-title">${escapeHtml(p.name)}</div></div>
-      <div class="card-actions"><button type="button" class="icon-btn" data-action="delete-participant" title="Supprimer">${DELETE_ICON}</button></div>
+      <div class="tx-main">
+        <div class="tx-title">${escapeHtml(p.name)} ${p.isMe ? '<span class="badge badge-accent">Moi</span>' : ''}</div>
+      </div>
+      <div class="card-actions">
+        ${!p.isMe ? `<button type="button" class="btn btn-ghost" data-action="set-me" style="padding:4px 10px;font-size:12.5px;">Définir comme moi</button>` : ''}
+        <button type="button" class="icon-btn" data-action="delete-participant" title="Supprimer">${DELETE_ICON}</button>
+      </div>
     </div>`;
 }
 
@@ -55,10 +62,40 @@ async function renderParticipantsPanel(container) {
       notifyDataChanged('participants');
     });
   });
+
+  container.querySelectorAll('[data-action="set-me"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.closest('[data-participant-id]').dataset.participantId;
+      const previousMe = participants.find((p) => p.isMe);
+      if (previousMe) await dbPut(STORES.PARTICIPANTS, { ...previousMe, isMe: false });
+      const target = participants.find((p) => p.id === id);
+      await dbPut(STORES.PARTICIPANTS, { ...target, isMe: true });
+      showToast(`${target.name} défini comme "Moi".`);
+      notifyDataChanged('participants');
+    });
+  });
 }
 
 /* ---------- Dépenses partagées ---------- */
-function sharedExpenseFormHtml(participants, defaultCurrency) {
+function categoryOptionsHtml(categories) {
+  const roots = categories.filter((c) => c.type === 'expense' && !c.parentId);
+  let html = '<option value="">Sans catégorie</option>';
+  for (const r of roots) {
+    html += `<option value="${r.id}">${escapeHtml(r.name)}</option>`;
+    for (const child of categories.filter((c) => c.parentId === r.id)) {
+      html += `<option value="${child.id}">— ${escapeHtml(child.name)}</option>`;
+    }
+  }
+  return html;
+}
+
+function walletOptionsHtml(wallets, currency) {
+  const matching = wallets.filter((w) => w.currency === currency);
+  if (!matching.length) return `<option value="">Aucun portefeuille en ${escapeHtml(currency)}</option>`;
+  return matching.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
+}
+
+function sharedExpenseFormHtml(participants, defaultCurrency, meParticipant) {
   return `
     <form id="shared-expense-form">
       <div class="form-row"><label>Description</label><input type="text" name="description" required maxlength="80" placeholder="Ex: Courses, Essence, Hôtel…"></div>
@@ -70,41 +107,96 @@ function sharedExpenseFormHtml(participants, defaultCurrency) {
       <div class="form-row"><label>Réparti entre (parts égales)</label>
         ${participants.map((p) => `
           <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;padding:4px 0;cursor:pointer;">
-            <input type="checkbox" name="splitAmong" value="${p.id}" checked> ${escapeHtml(p.name)}
+            <input type="checkbox" name="splitAmong" value="${p.id}" ${meParticipant ? `data-is-me="${p.id === meParticipant.id}"` : ''} checked> ${escapeHtml(p.name)}
           </label>`).join('')}
       </div>
       <div class="form-row"><label>Date</label><input type="date" name="date" value="${todayISO()}"></div>
+      ${meParticipant ? `
+      <div data-field="myShareFields">
+        <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">Votre part sera automatiquement ajoutée à vos transactions personnelles.</p>
+        <div class="form-row"><label>Catégorie (ma part)</label><select name="categoryId"></select></div>
+        <div class="form-row"><label>Portefeuille (ma part)</label><select name="walletId"></select></div>
+      </div>` : ''}
       <button type="submit" class="btn btn-primary btn-block">Enregistrer</button>
     </form>`;
 }
 
-function openSharedExpenseModal(participants, defaultCurrency) {
+async function openSharedExpenseModal(participants, defaultCurrency) {
   if (participants.length < 2) { showToast('Ajoutez au moins 2 participants avant de créer une dépense partagée.'); return; }
-  const modal = openModal(sharedExpenseFormHtml(participants, defaultCurrency), { title: 'Nouvelle dépense partagée' });
+  const meParticipant = participants.find((p) => p.isMe) || null;
+  const [categories, wallets] = await Promise.all([dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.WALLETS)]);
+  const activeWallets = wallets.filter((w) => !w.archived);
+  const modal = openModal(sharedExpenseFormHtml(participants, defaultCurrency, meParticipant), { title: 'Nouvelle dépense partagée' });
   wireCurrencySelect(modal.el);
   const form = modal.el.querySelector('#shared-expense-form');
+  const myShareFields = modal.el.querySelector('[data-field="myShareFields"]');
+  const categorySelect = form.elements.categoryId;
+  const walletSelect = form.elements.walletId;
+
+  if (meParticipant) {
+    categorySelect.innerHTML = categoryOptionsHtml(categories);
+    const refreshWalletOptions = () => { walletSelect.innerHTML = walletOptionsHtml(activeWallets, readCurrencyValue(form)); };
+    const syncMyShareVisibility = () => {
+      const meChecked = form.querySelector(`[data-is-me="true"]`)?.checked;
+      myShareFields.hidden = !meChecked;
+    };
+    form.querySelectorAll('[name="splitAmong"]').forEach((cb) => cb.addEventListener('change', syncMyShareVisibility));
+    modal.el.querySelectorAll('[data-currency-select], [data-currency-other]').forEach((el) => {
+      el.addEventListener('change', refreshWalletOptions);
+      el.addEventListener('input', refreshWalletOptions);
+    });
+    refreshWalletOptions();
+    syncMyShareVisibility();
+  }
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     const splitAmong = fd.getAll('splitAmong');
     if (splitAmong.length < 1) { showToast('Sélectionnez au moins un participant.'); return; }
+    const currency = readCurrencyValue(form);
     const record = {
       id: uuid(),
       description: fd.get('description').trim(),
       amount: parseFloat(fd.get('amount')) || 0,
-      currency: readCurrencyValue(form),
+      currency,
       paidBy: fd.get('paidBy'),
       splitAmong,
       date: fd.get('date') || todayISO(),
       settled: false,
+      myTransactionId: null,
       createdAt: new Date().toISOString(),
     };
+
+    const includesMe = meParticipant && splitAmong.includes(meParticipant.id);
+    if (includesMe) {
+      const walletId = fd.get('walletId');
+      if (!walletId) { showToast(`Créez d'abord un portefeuille en ${currency} pour enregistrer votre part.`); return; }
+      const myShare = record.amount / splitAmong.length;
+      const myTx = {
+        id: uuid(),
+        type: 'expense',
+        walletId,
+        targetWalletId: null,
+        categoryId: fd.get('categoryId') || null,
+        amount: myShare,
+        date: record.date,
+        note: `Partagé — ${record.description}`,
+        tags: [],
+        reconciled: false,
+        sharedExpenseId: record.id,
+        createdAt: new Date().toISOString(),
+      };
+      await dbAdd(STORES.TRANSACTIONS, myTx);
+      await logAudit({ entityType: 'transaction', entityId: myTx.id, action: 'create', after: myTx, note: 'Part personnelle (dépense partagée)' });
+      record.myTransactionId = myTx.id;
+    }
+
     await dbAdd(STORES.SHARED_EXPENSES, record);
     await logAudit({ entityType: 'sharedExpense', entityId: record.id, action: 'create', after: record });
     modal.close();
     showToast('Dépense partagée enregistrée.');
-    notifyDataChanged('sharedExpenses');
+    notifyDataChanged(includesMe ? 'all' : 'sharedExpenses');
   });
 }
 
@@ -181,12 +273,13 @@ export async function renderShared() {
     btn.addEventListener('click', async () => {
       const id = btn.closest('[data-shared-expense-id]').dataset.sharedExpenseId;
       const exp = expenses.find((x) => x.id === id);
-      const ok = await confirmDialog(`Supprimer la dépense "${exp?.description}" ?`, { danger: true, confirmText: 'Supprimer' });
+      const ok = await confirmDialog(`Supprimer la dépense "${exp?.description}" ?${exp?.myTransactionId ? ' Votre part personnelle liée sera aussi retirée de vos transactions.' : ''}`, { danger: true, confirmText: 'Supprimer' });
       if (!ok) return;
       await dbDelete(STORES.SHARED_EXPENSES, id);
+      if (exp?.myTransactionId) await dbDelete(STORES.TRANSACTIONS, exp.myTransactionId);
       await logAudit({ entityType: 'sharedExpense', entityId: id, action: 'delete', before: exp });
       showToast('Dépense supprimée.');
-      notifyDataChanged('sharedExpenses');
+      notifyDataChanged(exp?.myTransactionId ? 'all' : 'sharedExpenses');
     });
   });
 }

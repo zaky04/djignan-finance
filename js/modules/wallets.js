@@ -131,7 +131,10 @@ async function ensureExchangeRateRow(currency) {
   if (currency === base) return;
   const existing = await dbGetAll(STORES.EXCHANGE_RATES);
   if (!existing.some((r) => r.code === currency)) {
-    await dbPut(STORES.EXCHANGE_RATES, { code: currency, rateToBase: 1 });
+    // confirmed:false tant que l'utilisateur n'a pas explicitement saisi/validé ce taux —
+    // 1:1 est presque toujours faux (ex: 1 XOF ≠ 1 EUR) et fausserait silencieusement le
+    // patrimoine net si on ne le signalait pas (voir renderRatesPanel + dashboard.js).
+    await dbPut(STORES.EXCHANGE_RATES, { code: currency, rateToBase: 1, confirmed: false });
   }
 }
 
@@ -169,16 +172,19 @@ async function renderRatesPanel() {
     panel.innerHTML = `<div class="panel"><h3 style="margin-bottom:6px;">Taux de change</h3><p class="empty-state" style="padding:12px 0;">Aucune devise étrangère utilisée. Devise de base : <strong>${escapeHtml(base)}</strong>.</p></div>`;
     return;
   }
+  const unconfirmedCount = rates.filter((r) => r.confirmed === false).length;
   panel.innerHTML = `
     <div class="panel">
       <div class="panel-header"><h3>Taux de change (devise de base : ${escapeHtml(base)})</h3></div>
+      ${unconfirmedCount ? `<p class="alert alert-warn" style="margin-bottom:10px;">⚠ ${unconfirmedCount > 1 ? `${unconfirmedCount} taux ne sont` : 'Un taux n\'est'} pas encore confirmé (valeur 1:1 par défaut, presque certainement fausse). Corrigez-les ci-dessous pour un patrimoine net exact.</p>` : ''}
       <div class="filters-bar" style="flex-direction:column;align-items:stretch;gap:10px;">
         ${rates.map((r) => `
           <div style="display:flex;align-items:center;gap:10px;">
-            <span class="badge badge-accent" style="min-width:56px;justify-content:center;">${escapeHtml(r.code)}</span>
+            <span class="badge ${r.confirmed === false ? 'badge-neg' : 'badge-accent'}" style="min-width:56px;justify-content:center;">${escapeHtml(r.code)}</span>
             <span style="font-size:13px;color:var(--text-muted);">1 ${escapeHtml(r.code)} =</span>
-            <input type="number" step="0.0001" min="0" data-rate-code="${escapeHtml(r.code)}" value="${r.rateToBase}" style="width:110px;padding:7px 9px;border-radius:8px;border:1px solid var(--border);background:var(--surface);">
+            <input type="number" step="0.0001" min="0" data-rate-code="${escapeHtml(r.code)}" value="${r.rateToBase}" style="width:110px;padding:7px 9px;border-radius:8px;border:1px solid ${r.confirmed === false ? 'var(--neg)' : 'var(--border)'};background:var(--surface);">
             <span style="font-size:13px;color:var(--text-muted);">${escapeHtml(base)}</span>
+            ${r.confirmed === false ? '<span style="font-size:12px;color:var(--neg);">non confirmé</span>' : ''}
           </div>`).join('')}
       </div>
     </div>`;
@@ -187,7 +193,7 @@ async function renderRatesPanel() {
     input.addEventListener('change', async () => {
       const code = input.dataset.rateCode;
       const value = parseFloat(input.value) || 0;
-      await dbPut(STORES.EXCHANGE_RATES, { code, rateToBase: value });
+      await dbPut(STORES.EXCHANGE_RATES, { code, rateToBase: value, confirmed: true });
       // On archive le taux du jour dans l'historique AVANT d'appliquer le nouveau,
       // pour que les calculs de patrimoine passés restent basés sur le taux qui
       // était réellement en vigueur à chaque date (voir ledger.js ratesAsOf()).

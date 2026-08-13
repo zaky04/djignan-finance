@@ -64,12 +64,21 @@ async function deserializeReceiptsForImport(data) {
   }
 }
 
+/** À appeler après toute sauvegarde réussie (export manuel, chiffré, ou auto) : marque
+    lastBackupAt ET remet à zéro le compteur de report, pour que le rappel hebdomadaire
+    redevienne "poli" (snooze 24h autorisé) tant que l'utilisateur ne l'ignore pas à nouveau
+    plusieurs fois de suite. Voir checkWeeklyBackupReminder(). */
+async function markBackupDone() {
+  await setSetting('lastBackupAt', new Date().toISOString());
+  await setSetting('backupSnoozeCount', 0);
+}
+
 /* ---------- Export / import JSON en clair ---------- */
 export async function exportJsonBackup() {
   const data = await exportAllData();
   await serializeReceiptsForExport(data);
   downloadFile(`geofinance-backup-${todayISO()}.json`, JSON.stringify(data, null, 2), 'application/json');
-  await setSetting('lastBackupAt', new Date().toISOString());
+  await markBackupDone();
 }
 
 export async function importJsonBackup(file, { merge = false } = {}) {
@@ -97,7 +106,7 @@ export async function exportEncryptedBackup(passphrase) {
     ciphertext: bufToBase64(ciphertext),
   };
   downloadFile(`geofinance-backup-chiffre-${todayISO()}.json`, JSON.stringify(payload), 'application/json');
-  await setSetting('lastBackupAt', new Date().toISOString());
+  await markBackupDone();
 }
 
 export async function importEncryptedBackup(file, passphrase, { merge = false } = {}) {
@@ -370,7 +379,7 @@ export async function runAutoBackupIfConfigured() {
     const writable = await fileHandle.createWritable();
     await writable.write(JSON.stringify(data, null, 2));
     await writable.close();
-    await setSetting('lastBackupAt', new Date().toISOString());
+    await markBackupDone();
     return true;
   } catch (err) {
     console.warn('[backup] Sauvegarde automatique échouée :', err);
@@ -378,27 +387,43 @@ export async function runAutoBackupIfConfigured() {
   }
 }
 
-/* ---------- Rappel hebdomadaire ---------- */
+/* ---------- Rappel hebdomadaire ----------
+   "Plus tard" ne peut pas être utilisé indéfiniment : au-delà de 3 reports consécutifs, le
+   rappel passe en mode "urgent" (bouton "Plus tard" retiré, ne reste que "Exporter maintenant"
+   ou fermer). Fermer sans exporter en mode urgent NE pose PAS de nouveau snooze, donc le rappel
+   réapparaîtra au prochain déverrouillage — c'est volontaire : au-delà de 3 reports, on considère
+   que le rappel poli n'a pas fonctionné et qu'il faut relancer l'utilisateur à chaque session
+   jusqu'à ce qu'il exporte réellement (voir markBackupDone() qui remet le compteur à 0). */
+const BACKUP_SNOOZE_LIMIT = 3;
+
 export async function checkWeeklyBackupReminder() {
   const last = await getSetting('lastBackupAt');
   const snoozedUntil = await getSetting('backupSnoozedUntil');
+  const snoozeCount = await getSetting('backupSnoozeCount', 0);
   const now = Date.now();
-  if (snoozedUntil && now < new Date(snoozedUntil).getTime()) return;
+  const urgent = snoozeCount >= BACKUP_SNOOZE_LIMIT;
+  if (!urgent && snoozedUntil && now < new Date(snoozedUntil).getTime()) return;
   const lastMs = last ? new Date(last).getTime() : 0;
   const sevenDaysMs = 7 * 24 * 3600 * 1000;
   if (now - lastMs < sevenDaysMs) return;
 
   if (await runAutoBackupIfConfigured()) { showToast('Sauvegarde automatique effectuée.'); return; }
 
-  showBackupReminderModal();
+  showBackupReminderModal(urgent);
 }
 
-function showBackupReminderModal() {
+function showBackupReminderModal(urgent = false) {
   document.querySelectorAll('#modal-root .modal-backdrop[data-modal="backup-reminder"]').forEach((el) => el.remove());
   const tpl = document.getElementById('tpl-modal-backup-reminder');
   const root = document.getElementById('modal-root');
   root.appendChild(tpl.content.cloneNode(true));
   const backdrop = root.querySelector('.modal-backdrop[data-modal="backup-reminder"]');
+
+  if (urgent) {
+    backdrop.querySelector('#backup-title').textContent = 'Sauvegarde en retard ⚠';
+    backdrop.querySelector('.modal-body > p').textContent = "Vous avez repoussé ce rappel plusieurs fois. Vos données ne vivent que sur cet appareil : sans export, un changement de téléphone, une réinstallation ou un nettoyage du cache les effacerait définitivement. Exportez-les maintenant.";
+    backdrop.querySelector('#backup-later-btn').remove();
+  }
 
   function close() { backdrop.remove(); document.removeEventListener('keydown', onKey); }
   function onKey(e) { if (e.key === 'Escape') close(); }
@@ -406,8 +431,9 @@ function showBackupReminderModal() {
   backdrop.querySelector('.modal-close').addEventListener('click', close);
   document.addEventListener('keydown', onKey);
 
-  backdrop.querySelector('#backup-later-btn').addEventListener('click', async () => {
+  backdrop.querySelector('#backup-later-btn')?.addEventListener('click', async () => {
     await setSetting('backupSnoozedUntil', new Date(Date.now() + 24 * 3600 * 1000).toISOString());
+    await setSetting('backupSnoozeCount', (await getSetting('backupSnoozeCount', 0)) + 1);
     close();
   });
 

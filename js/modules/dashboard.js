@@ -3,7 +3,7 @@
    ========================================================================== */
 
 import { formatCurrency, formatDate, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';
-import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions } from '../ledger.js';
+import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderIncomeFlowSankey, PALETTE } from '../charts.js';
 import { getSetting } from '../db.js';
 
@@ -33,10 +33,19 @@ function setAmount(el, value, currency) {
   el.textContent = formatCurrency(value, currency);
 }
 
-function renderAlerts(budgetRows, thresholds) {
+function renderAlerts(budgetRows, thresholds, unconfirmedRates) {
   const stack = document.getElementById('dashboard-alerts');
   if (!stack) return;
   stack.innerHTML = '';
+
+  if (unconfirmedRates.length) {
+    const div = document.createElement('div');
+    div.className = 'alert alert-danger';
+    const codes = unconfirmedRates.map((r) => r.code).join(', ');
+    div.textContent = `Taux de change non confirmé pour ${codes} (valeur 1:1 par défaut) — le patrimoine net affiché est probablement faux. À corriger dans Portefeuilles.`;
+    stack.appendChild(div);
+  }
+
   const overBudget = budgetRows
     .map((r) => ({ ...r, pct: percentage(r.actual, r.budget) }))
     .filter((r) => r.pct >= thresholds.warn)
@@ -159,7 +168,7 @@ export async function renderDashboard() {
   const debtsBalanceEl = document.getElementById('panel-debts-balance-dash');
   if (debtsBalanceEl) debtsBalanceEl.hidden = !panels.debtsBalance;
 
-  const [summary, prevSummary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, forecast, recentTx, netWorth, composition] = await Promise.all([
+  const [summary, prevSummary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, forecast, recentTx, netWorth, composition, unconfirmedRates] = await Promise.all([
     computeMonthSummary(monthKey),
     computeMonthSummary(monthKeyOffset(monthKey, -1)),
     computeExpensesByCategory(monthKey),
@@ -170,6 +179,7 @@ export async function renderDashboard() {
     getEnrichedTransactions({ limit: 8 }),
     computeNetWorth(),
     computeNetWorthComposition(),
+    getUnconfirmedRates(),
   ]);
   const currency = summary.currency;
 
@@ -252,7 +262,7 @@ export async function renderDashboard() {
     renderIncomeFlowSankey('dashboard-income-flow', { income: summary.income, flows, currency });
   }
 
-  renderAlerts(budgetVsActual, thresholds);
+  renderAlerts(budgetVsActual, thresholds, unconfirmedRates);
   if (panels.recentTransactions) renderRecentTransactions(recentTx);
   if (panels.watchCategories) renderWatchCategories(budgetVsActual);
   if (panels.upcomingBills) renderUpcomingBills(forecast.upcoming, forecast.currency);

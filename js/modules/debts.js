@@ -72,7 +72,14 @@ function paidDebtRowHtml(d, paidDate) {
     </div>`;
 }
 
+function walletOptionsHtml(wallets, currency) {
+  const matching = wallets.filter((w) => w.currency === currency);
+  if (!matching.length) return `<option value="">Aucun portefeuille en ${escapeHtml(currency)}</option>`;
+  return matching.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
+}
+
 function debtFormHtml(d, defaultCurrency) {
+  const isEdit = !!d;
   return `
     <form id="debt-form">
       <div class="segmented" data-field="type">
@@ -83,6 +90,17 @@ function debtFormHtml(d, defaultCurrency) {
       <div class="form-row"><label>Nom de la personne / organisme</label><input type="text" name="personName" required maxlength="60" value="${escapeHtml(d?.personName || '')}"></div>
       <div class="form-row"><label>Montant</label><input type="number" step="0.01" min="0" name="principal" required value="${d?.principal ?? ''}"></div>
       <div class="form-row"><label>Devise</label>${currencySelectHtml(d?.currency || defaultCurrency)}</div>
+      ${!isEdit ? `
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" name="movesMoneyNow" checked> Cet argent bouge aujourd'hui
+        </label>
+        <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">Décochez si c'est une dette déjà existante avant d'utiliser l'app (aucun mouvement de portefeuille ne sera créé).</p>
+      </div>
+      <div class="form-row" data-field="movesMoneyWallet">
+        <label>Portefeuille</label>
+        <select name="walletId"></select>
+      </div>` : ''}
       <div class="form-row"><label>Taux d'intérêt annuel % (optionnel)</label><input type="number" step="0.01" min="0" name="interestRate" value="${d?.interestRate ?? ''}"></div>
       <div class="form-row"><label>Date de départ</label><input type="date" name="startDate" value="${d?.startDate || todayISO()}"></div>
       <div class="form-row"><label>Échéance (optionnel)</label><input type="date" name="dueDate" value="${d?.dueDate || ''}"></div>
@@ -102,34 +120,83 @@ async function openDebtModal(d = null) {
     modal.el.querySelectorAll('.segmented-btn').forEach((x) => x.classList.toggle('is-active', x === b));
   }));
 
-  modal.el.querySelector('#debt-form').addEventListener('submit', async (e) => {
+  const form = modal.el.querySelector('#debt-form');
+  const movesCheckbox = form.elements.movesMoneyNow;
+  const walletRow = modal.el.querySelector('[data-field="movesMoneyWallet"]');
+  const walletSelect = form.elements.walletId;
+
+  if (movesCheckbox) {
+    let allWallets = [];
+    const refreshWalletOptions = async () => {
+      if (!allWallets.length) allWallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
+      walletSelect.innerHTML = walletOptionsHtml(allWallets, readCurrencyValue(form));
+    };
+    const syncWalletVisibility = () => { walletRow.hidden = !movesCheckbox.checked; };
+    movesCheckbox.addEventListener('change', syncWalletVisibility);
+    modal.el.querySelectorAll('[data-currency-select], [data-currency-other]').forEach((el) => {
+      el.addEventListener('change', refreshWalletOptions);
+      el.addEventListener('input', refreshWalletOptions);
+    });
+    await refreshWalletOptions();
+    syncWalletVisibility();
+  }
+
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const before = d ? { ...d } : null;
+    const currency = readCurrencyValue(e.target);
+    const movesMoneyNow = !d && movesCheckbox?.checked;
+    if (movesMoneyNow && !walletSelect.value) { showToast('Choisissez un portefeuille, ou décochez "Cet argent bouge aujourd\'hui".'); return; }
+
     const record = {
       id: d?.id || uuid(),
       type: currentType,
       personName: fd.get('personName').trim(),
       principal: parseFloat(fd.get('principal')) || 0,
-      currency: readCurrencyValue(e.target),
+      currency,
       interestRate: parseFloat(fd.get('interestRate')) || 0,
       startDate: fd.get('startDate') || todayISO(),
       dueDate: fd.get('dueDate') || null,
       status: d?.status || 'active',
       note: (fd.get('note') || '').trim().slice(0, 140),
+      openingTransactionId: d?.openingTransactionId || null,
     };
+
+    if (movesMoneyNow) {
+      const openingTx = {
+        id: uuid(),
+        type: currentType === 'debt' ? 'income' : 'expense',
+        walletId: walletSelect.value,
+        targetWalletId: null,
+        categoryId: null,
+        amount: record.principal,
+        date: record.startDate,
+        note: currentType === 'debt' ? `Prêt reçu de ${record.personName}` : `Prêt accordé à ${record.personName}`,
+        tags: [],
+        reconciled: false,
+        debtId: record.id,
+        createdAt: new Date().toISOString(),
+      };
+      await dbAdd(STORES.TRANSACTIONS, openingTx);
+      await logAudit({ entityType: 'transaction', entityId: openingTx.id, action: 'create', after: openingTx, note: 'Mouvement de dette/créance' });
+      record.openingTransactionId = openingTx.id;
+    }
+
     await dbPut(STORES.DEBTS, record);
     await logAudit({ entityType: 'debt', entityId: record.id, action: d ? 'update' : 'create', before, after: record });
     modal.close();
     showToast(d ? 'Mis à jour.' : 'Créé.');
-    notifyDataChanged('debts');
+    notifyDataChanged(movesMoneyNow ? 'all' : 'debts');
   });
 }
 
-function openPaymentModal(d) {
+async function openPaymentModal(d) {
+  const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
   const modal = openModal(`
     <form id="payment-form">
       <div class="form-row"><label>Montant remboursé</label><input type="number" step="0.01" min="0" name="amount" required autofocus></div>
+      <div class="form-row"><label>Portefeuille</label><select name="walletId" required>${walletOptionsHtml(wallets, d.currency)}</select></div>
       <div class="form-row"><label>Date</label><input type="date" name="date" value="${todayISO()}"></div>
       <div class="form-row"><label>Note (optionnel)</label><input type="text" name="note" maxlength="140"></div>
       <button type="submit" class="btn btn-primary btn-block">Enregistrer</button>
@@ -138,9 +205,29 @@ function openPaymentModal(d) {
   modal.el.querySelector('#payment-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const walletId = fd.get('walletId');
+    if (!walletId) { showToast(`Créez d'abord un portefeuille en ${d.currency}.`); return; }
     const payment = { id: uuid(), debtId: d.id, amount: parseFloat(fd.get('amount')) || 0, date: fd.get('date'), note: (fd.get('note') || '').trim().slice(0, 140) };
     await dbAdd(STORES.DEBT_PAYMENTS, payment);
     await logAudit({ entityType: 'debtPayment', entityId: payment.id, action: 'create', after: payment });
+
+    const paymentTx = {
+      id: uuid(),
+      type: d.type === 'debt' ? 'expense' : 'income',
+      walletId,
+      targetWalletId: null,
+      categoryId: null,
+      amount: payment.amount,
+      date: payment.date,
+      note: `Remboursement — ${d.personName}`,
+      tags: [],
+      reconciled: false,
+      debtId: d.id,
+      debtPaymentId: payment.id,
+      createdAt: new Date().toISOString(),
+    };
+    await dbAdd(STORES.TRANSACTIONS, paymentTx);
+    await logAudit({ entityType: 'transaction', entityId: paymentTx.id, action: 'create', after: paymentTx, note: 'Remboursement de dette/créance' });
 
     const payments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === d.id);
     const rem = remaining(d, payments);
@@ -290,10 +377,12 @@ export function initDebtsModule() {
     } else if (btn.dataset.action === 'edit') {
       openDebtModal(d);
     } else if (btn.dataset.action === 'delete') {
-      const ok = await confirmDialog(`Supprimer "${d.personName}" et tout son historique de remboursement ?`, { danger: true, confirmText: 'Supprimer' });
+      const ok = await confirmDialog(`Supprimer "${d.personName}" et tout son historique de remboursement (et les mouvements de portefeuille associés) ?`, { danger: true, confirmText: 'Supprimer' });
       if (ok) {
         const payments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === d.id);
+        const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((t) => t.debtId === d.id);
         for (const p of payments) await dbDelete(STORES.DEBT_PAYMENTS, p.id);
+        for (const t of linkedTx) await dbDelete(STORES.TRANSACTIONS, t.id);
         await dbDelete(STORES.DEBTS, d.id);
         await logAudit({ entityType: 'debt', entityId: d.id, action: 'delete', before: d });
         notifyDataChanged('debts');
@@ -302,6 +391,7 @@ export function initDebtsModule() {
           onAction: async () => {
             await dbAdd(STORES.DEBTS, d);
             for (const p of payments) await dbAdd(STORES.DEBT_PAYMENTS, p);
+            for (const t of linkedTx) await dbAdd(STORES.TRANSACTIONS, t);
             await logAudit({ entityType: 'debt', entityId: d.id, action: 'create', after: d, note: 'Restaurée (annulation)' });
             showToast('Restauré.');
             notifyDataChanged('debts');
