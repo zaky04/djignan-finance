@@ -5,23 +5,6 @@
    l'import/export JSON puisse fusionner ou restaurer sans collision.
    ========================================================================== */
 
-/* Sync cloud Firebase — importé de manière paresseuse pour rester 100%
-   fonctionnel si Firebase est inaccessible ou si l'utilisateur n'est pas
-   connecté. Les fonctions sont no-op silencieuses dans ces cas. */
-let _syncToCloud = null;
-let _deleteFromCloud = null;
-async function _lazySync() {
-  if (_syncToCloud) return;
-  try {
-    const mod = await import('./firebase-sync.js');
-    _syncToCloud = mod.syncRecordToCloud;
-    _deleteFromCloud = mod.deleteRecordFromCloud;
-  } catch {
-    _syncToCloud = () => {};
-    _deleteFromCloud = () => {};
-  }
-}
-
 export const DB_NAME = 'geofinance-db';
 export const DB_VERSION = 4;
 
@@ -182,24 +165,18 @@ export async function dbGetAllByIndex(store, indexName, query) {
 export async function dbPut(store, value) {
   const db = await openDatabase();
   await reqToPromise(tx(db, store, 'readwrite').objectStore(store).put(value));
-  // Sync cloud silencieuse — non-bloquante, erreurs ignorées
-  _lazySync().then(() => _syncToCloud?.(store, value)).catch(() => {});
   return value;
 }
 
 export async function dbAdd(store, value) {
   const db = await openDatabase();
   await reqToPromise(tx(db, store, 'readwrite').objectStore(store).add(value));
-  // Sync cloud silencieuse — non-bloquante, erreurs ignorées
-  _lazySync().then(() => _syncToCloud?.(store, value)).catch(() => {});
   return value;
 }
 
 export async function dbDelete(store, id) {
   const db = await openDatabase();
   await reqToPromise(tx(db, store, 'readwrite').objectStore(store).delete(id));
-  // Sync cloud silencieuse — non-bloquante, erreurs ignorées
-  _lazySync().then(() => _deleteFromCloud?.(store, id)).catch(() => {});
 }
 
 export async function dbClear(store) {

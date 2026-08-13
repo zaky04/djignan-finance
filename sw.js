@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v32'; // bumped : ajout Firebase sync (firebase-config.js, firebase-sync.js)
+const CACHE_VERSION = 'v31';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -24,8 +24,6 @@ const APP_SHELL = [
   './js/backup.js',
   './js/install-prompt.js',
   './js/notifications.js',
-  './js/firebase-config.js',   // ← config Firebase (à remplir avant déploiement)
-  './js/firebase-sync.js',     // ← couche sync Firestore
   './js/modules/dashboard.js',
   './js/modules/wallets.js',
   './js/modules/transactions.js',
