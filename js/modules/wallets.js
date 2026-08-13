@@ -215,8 +215,8 @@ async function renderRatesPanel() {
       let updated = 0;
       const missing = [];
       for (const r of rates) {
-        const unitsPerBase = live[r.code];
-        if (!unitsPerBase) { missing.push(r.code); continue; }
+        const unitsPerBase = Number(live[r.code]);
+        if (!isFinite(unitsPerBase) || unitsPerBase <= 0) { missing.push(r.code); continue; }
         const rateToBase = 1 / unitsPerBase;
         await dbPut(STORES.EXCHANGE_RATES, { code: r.code, rateToBase, confirmed: true });
         await dbAdd(STORES.EXCHANGE_RATE_HISTORY, { id: uuid(), code: r.code, date: todayISO(), rateToBase });

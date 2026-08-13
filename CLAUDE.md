@@ -203,6 +203,41 @@ onboarding déclenché sur base de données neuve et absent sur une base existan
 volontairement laissée de côté à la demande de l'auteur — elle reste une bonne idée mais nécessite son
 propre cadrage (`manifest.json` share_target, nouveau parseur, `sw.js`) avant d'être attaquée.
 
+### 13 août 2026 (suite) — Audit de sécurité (commit à venir)
+
+**Faille corrigée — la sauvegarde JSON exportait le hash et le sel du PIN.** `exportAllData()` (`db.js`)
+itérait tous les stores sans exception, y compris `SETTINGS`, qui contient `pinHash`/`pinSalt`
+(PBKDF2), `biometricPublicKeySpki`/`biometricCredentialId`. Concrètement : exporter une sauvegarde JSON
+**en clair** (bouton "Exporter (JSON)", pas la variante chiffrée) faisait sortir de l'appareil, sans
+aucune protection supplémentaire, exactement le matériel nécessaire pour attaquer le PIN hors-ligne — un
+PIN à 4-6 chiffres tombe en quelques secondes/minutes une fois le hash+sel en main, malgré les 150k
+itérations PBKDF2 (l'espace de recherche est trop petit, pas la fonction de hachage qui est en cause).
+→ Nouvelle liste `DEVICE_LOCAL_SETTING_KEYS` dans `db.js`, filtrée hors de `exportAllData()` — donc hors
+des DEUX variantes d'export (chiffré compris, par défense en profondeur) et de la sauvegarde auto. Effet de
+bord assumé : restaurer une sauvegarde en mode "remplacer tout" oblige désormais à recréer un code PIN sur
+l'appareil de destination au lieu d'hériter silencieusement de celui de la sauvegarde — c'est le comportement
+correct (comparable à n'importe quel gestionnaire de mots de passe). Le mode "fusionner" n'est pas affecté
+(le PIN actuel de l'appareil n'est jamais touché). Au passage, `autoBackupDirHandle` (un
+`FileSystemDirectoryHandle`, objet natif non sérialisable) est exclu aussi — il produisait une entrée cassée
+sans intérêt dans l'export.
+
+Autres correctifs, plus mineurs, trouvés en creusant :
+- **Injection de formule CSV (OWASP CSV Injection)** — `csvEscape()` dans `backup.js` ne neutralisait pas un
+  champ commençant par `=`, `+`, `-` ou `@`, qu'Excel/Sheets peut interpréter comme une formule à
+  l'ouverture. Risque réel via l'import de relevé bancaire générique (note/libellé venant d'un tiers) puis
+  ré-export. Préfixe désormais ces champs d'une apostrophe.
+- **Robustesse du fetch de taux en ligne** (§6.3 ci-dessus) — une réponse malformée du service externe
+  pouvait produire `NaN`/`Infinity` stocké comme taux. Validation `isFinite(...) && > 0` ajoutée avant
+  écriture.
+
+Zones vérifiées et jugées saines (déjà auditées le 12 août, revérifiées avec le code ajouté depuis) :
+échappement HTML systématique (`escapeHtml`) sur tout le nouveau code (dettes/partage/comptes gardés),
+WebAuthn (challenge aléatoire, vérification ECDSA locale correcte), pas d'`eval`/`Function`/`document.write`
+dans le code propre à l'app (seulement dans les libs vendorisées, attendu), pas de `target="_blank"` non
+protégé.
+
+`CACHE_VERSION` : `v28` → `v29`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

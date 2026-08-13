@@ -128,7 +128,12 @@ export async function importEncryptedBackup(file, passphrase, { merge = false } 
 
 /* ---------- Import / export CSV des transactions ---------- */
 function csvEscape(value) {
-  const s = String(value ?? '');
+  let s = String(value ?? '');
+  // Neutralise l'injection de formule façon "CSV injection" (OWASP) : un champ commençant
+  // par =, +, -, @ peut être interprété comme une formule par Excel/Sheets à l'ouverture.
+  // Les notes peuvent provenir d'un relevé bancaire tiers importé (pas toujours sous le
+  // contrôle direct de l'utilisateur), d'où la prudence même dans un export "de confiance".
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

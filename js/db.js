@@ -221,10 +221,26 @@ export async function setSetting(key, value) {
 }
 
 /* ---------- Export / Import complet (utilisé par backup.js) ---------- */
+/** Clés de STORES.SETTINGS propres à CET appareil, jamais exportées dans une sauvegarde — ni en
+    clair, ni même dans la variante "chiffrée" (défense en profondeur : le hash/sel du PIN et les
+    identifiants biométriques ne doivent jamais quitter l'appareil, quelle que soit la protection
+    autour du fichier). Restaurer une sauvegarde doit toujours redemander un PIN sur l'appareil de
+    destination, jamais hériter silencieusement de celui de l'appareil d'origine.
+    autoBackupDirHandle est en plus un FileSystemDirectoryHandle (objet natif non sérialisable en
+    JSON, comme un Blob) : l'exporter produirait une entrée cassée sans intérêt. */
+const DEVICE_LOCAL_SETTING_KEYS = new Set([
+  'pinSalt', 'pinHash', 'pinIterations', 'pinLength', 'failedAttempts', 'pinThrottledUntil',
+  'biometricCredentialId', 'biometricPublicKeySpki',
+  'autoBackupDirHandle',
+]);
+
 export async function exportAllData() {
   const data = { exportedAt: new Date().toISOString(), version: DB_VERSION, stores: {} };
   for (const store of Object.values(STORES)) {
-    data.stores[store] = await dbGetAll(store);
+    const rows = await dbGetAll(store);
+    data.stores[store] = store === STORES.SETTINGS
+      ? rows.filter((r) => !DEVICE_LOCAL_SETTING_KEYS.has(r.key))
+      : rows;
   }
   return data;
 }
