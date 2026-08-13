@@ -118,6 +118,16 @@ export function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
+/** Convertit en nombre fini, sinon `fallback`. Contrairement à l'idiome `Number(x) || 0` utilisé
+    ailleurs dans le code, ceci rejette aussi Infinity/-Infinity (qui sont "truthy" et passent donc
+    au travers de `|| 0` sans y être ramenés à 0) — utile aux frontières d'entrée non fiables
+    (import CSV/JSON) où une valeur comme la chaîne "Infinity" doit être neutralisée plutôt que de
+    se propager dans les calculs de ledger.js. */
+export function safeNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export function percentage(part, total) {
   if (!total) return 0;
   return clamp((part / total) * 100, 0, 999);

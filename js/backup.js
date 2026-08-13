@@ -6,7 +6,7 @@
 
 import { STORES, dbGetAll, dbAdd, dbBulkPut, exportAllData, importAllData, getSetting, setSetting } from './db.js';
 import { getEnrichedTransactions } from './ledger.js';
-import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast } from './utils.js';
+import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast, safeNumber } from './utils.js';
 import { notifyDataChanged } from './state.js';
 
 function bufToBase64(buf) {
@@ -242,7 +242,7 @@ export async function importGeoFinanceCsvRows(rows) {
     const category = findOrCreateCategory(categoryName, type);
     const tx = {
       id: uuid(), type, walletId: wallet.id, targetWalletId: targetWallet?.id || null,
-      categoryId: category?.id || null, amount: parseFloat(amountStr) || 0, date: date || todayISO(),
+      categoryId: category?.id || null, amount: safeNumber(parseFloat(amountStr)), date: date || todayISO(),
       note: note || '', reconciled: (reconciledStr || '').toLowerCase().startsWith('oui'),
       createdAt: new Date().toISOString(),
     };

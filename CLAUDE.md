@@ -238,6 +238,42 @@ protégé.
 
 `CACHE_VERSION` : `v28` → `v29`.
 
+### 13 août 2026 (suite) — Audit de sécurité avancé, 2e passe (commit à venir)
+
+**Faille la plus sérieuse trouvée cette passe — l'import pouvait injecter un PIN choisi par un
+attaquant.** Le filtre `DEVICE_LOCAL_SETTING_KEYS` posé lors du premier audit (§ précédente) protégeait
+l'EXPORT, mais pas l'IMPORT : `importAllData()` faisait un `dbBulkPut` direct des lignes du fichier fourni,
+sans filtre. Un fichier de "sauvegarde" forgé contenant `{key:'pinHash', value: <hash choisi par
+l'attaquant>}` (+ `pinSalt` assorti), importé via "Importer (JSON) → Fusionner", **remplaçait
+silencieusement le PIN de l'appareil** — l'utilisateur légitime se retrouve verrouillé dehors, ou pire,
+l'attaquant connaît déjà le PIN correspondant au hash qu'il a fourni et peut déverrouiller l'app plus tard.
+Vecteur réaliste : ingénierie sociale ("voici un budget partagé, importe ce fichier"). → Le même filtre
+`DEVICE_LOCAL_SETTING_KEYS` s'applique maintenant aussi côté import (`db.js`), donc ces clés ne peuvent
+JAMAIS être posées autrement que par les flux internes d'`auth.js` (`setupPin`, `changePin`,
+`registerBiometric`). Vérifié par une attaque simulée : import d'un `pinHash` forgé → hash réel inchangé,
+PIN d'origine toujours fonctionnel après reload.
+
+**Autres correctifs de cette passe :**
+- **`Number(x) || 0` ne filtre pas `Infinity`** (il est "truthy", contrairement à `NaN`/`0`/`undefined`) —
+  idiome utilisé partout dans `ledger.js`. Une valeur `"Infinity"` dans un CSV/JSON importé s'y propageait
+  donc telle quelle. Ajoute `safeNumber()` dans `utils.js` (rejette aussi Infinity/-Infinity), utilisée à
+  l'import CSV format GeoFinance ; ajoute un sanitizer générique dans `importAllData()` qui ramène à 0 tout
+  champ `number` non fini sur les lignes importées, tous stores confondus. Vérifié par attaque simulée
+  (portefeuille importé avec `initialBalance: Infinity` → stocké à `0`).
+- **Content-Security-Policy ajoutée** (`index.html`) — défense en profondeur : aucune faille XSS connue,
+  mais si une apparaissait, `script-src 'self'` bloque tout script distant/injecté. A nécessité de sortir le
+  `<script>` inline d'enregistrement du Service Worker vers un fichier externe (`js/sw-register.js`), sinon
+  incompatible avec `script-src` sans `'unsafe-inline'`. `style-src` garde `'unsafe-inline'` (le CSS de
+  l'app repose largement sur des attributs `style=""` — un refactor en classes CSS est un chantier séparé,
+  pas une urgence sécurité vu que XSS-via-CSS est un vecteur bien plus faible que XSS-via-JS, déjà bloqué
+  par `script-src`). `connect-src` autorise `open.er-api.com` (taux de change en ligne) ; `worker-src 'self'
+  blob:` nécessaire pour le Worker Tesseract (OCR). Testé : PDF (jsPDF), OCR (Worker Tesseract, blob PNG de
+  test), fetch de taux en ligne, et les 11 vues de l'app — tout fonctionne sous la nouvelle politique.
+  `frame-ancestors` volontairement absent (n'a aucun effet via `<meta>`, exige un en-tête HTTP — hors de
+  portée d'un hébergement statique GitHub Pages).
+
+`CACHE_VERSION` : `v29` → `v30`. Nouveau fichier `js/sw-register.js` ajouté au précache de `sw.js`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

@@ -2,6 +2,15 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<!-- CSP en defense-in-depth : aucune faille XSS connue (voir CLAUDE.md), mais si une venait à
+     apparaître, ceci bloque le chargement de script distant/injecté. style-src garde
+     'unsafe-inline' car le CSS de l'app repose largement sur des attributs style="" —
+     refactoriser ça en classes CSS serait un chantier séparé, pas une urgence sécurité (XSS via
+     CSS est un vecteur bien plus faible que via JS, déjà couvert par script-src). connect-src
+     autorise open.er-api.com pour la récupération optionnelle de taux de change (voir wallets.js).
+     frame-ancestors est volontairement absent : cette directive n'a aucun effet via <meta> (elle
+     exige un en-tête HTTP, hors de portée d'un site 100% statique sur GitHub Pages). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' https://open.er-api.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self';">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="GeoFinance System — gestion complète de vos finances personnelles, 100% locale et hors-ligne.">
 <meta name="theme-color" content="#0B1220" media="(prefers-color-scheme: dark)">
@@ -525,15 +534,7 @@
 <!-- ============================================================ -->
 <!-- SCRIPTS                                                       -->
 <!-- ============================================================ -->
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(err => {
-        console.error('Échec d\'enregistrement du Service Worker :', err);
-      });
-    });
-  }
-</script>
+<script src="js/sw-register.js" defer></script>
 <script src="vendor/chart.min.js" defer></script>
 <script src="vendor/jspdf.umd.min.js" defer></script>
 <script type="module" src="js/app.js"></script>

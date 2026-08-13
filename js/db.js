@@ -245,11 +245,29 @@ export async function exportAllData() {
   return data;
 }
 
+/** Corrige typeof number non finis (NaN/Infinity) sur les champs de premier niveau d'une ligne
+    importée — un fichier de sauvegarde n'est pas une entrée fiable (corruption, édition manuelle,
+    fichier forgé) ; sans ça, une valeur comme "Infinity" se propagerait telle quelle dans les
+    calculs de ledger.js (l'idiome `Number(x) || 0` utilisé ailleurs ne filtre PAS Infinity, qui
+    est "truthy" — voir safeNumber() dans utils.js). */
+function sanitizeImportedRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  for (const key of Object.keys(row)) {
+    if (typeof row[key] === 'number' && !Number.isFinite(row[key])) row[key] = 0;
+  }
+  return row;
+}
+
 export async function importAllData(data, { merge = false } = {}) {
   if (!data || !data.stores) throw new Error('Fichier de sauvegarde invalide.');
   for (const store of Object.values(STORES)) {
-    const rows = data.stores[store];
+    let rows = data.stores[store];
     if (!rows) continue;
+    // Symétrique à exportAllData() : un fichier de sauvegarde (potentiellement forgé) ne doit
+    // JAMAIS pouvoir poser/écraser le PIN ou les identifiants biométriques de CET appareil — la
+    // seule voie légitime pour ça reste les flux internes d'auth.js (setupPin, registerBiometric).
+    if (store === STORES.SETTINGS) rows = rows.filter((r) => !DEVICE_LOCAL_SETTING_KEYS.has(r?.key));
+    rows = rows.map(sanitizeImportedRow);
     if (!merge) await dbClear(store);
     await dbBulkPut(store, rows);
   }
