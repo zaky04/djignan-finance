@@ -634,6 +634,30 @@ les cases à cocher (fond transparent inchangé).
 
 `CACHE_VERSION` : `v40` → `v41`.
 
+### 14 août 2026 (suite) — Import CSV générique : les lignes invalides disparaissaient sans avertissement
+
+Dette technique identifiée depuis l'audit du 12 août (§5.4, §7.3) : dans `importGenericCsvRows`
+(`backup.js`, import d'un relevé bancaire générique via mapping de colonnes), une ligne dont la date
+ou le montant ne pouvait pas être lu (colonne vide, format inattendu, mauvaise colonne choisie dans
+le mapping) était silencieusement ignorée (`continue`) — sans incrémenter le moindre compteur.
+L'utilisateur voyait juste "X transaction(s) importée(s)" sans jamais savoir qu'il manquait des
+lignes de son relevé, ni pourquoi.
+
+→ Ajout d'un troisième compteur `invalid` (aux côtés de `imported`/`skipped`), incrémenté à chaque
+ligne ignorée pour date ou montant illisible. Toast mis à jour dans `settings.js` pour afficher ce
+décompte : *"X transaction(s) importée(s). Y doublon(s) ignoré(s). Z ligne(s) invalide(s)
+ignorée(s) (date ou montant illisible — vérifiez le mapping des colonnes)."*
+
+`importGeoFinanceCsvRows` (ré-import du propre format d'export CSV de GeoFinance) n'a volontairement
+pas été touché : c'est un format fixe et fiable généré par l'app elle-même, contrairement au CSV
+générique dont le mapping est manuel et sujet à erreur — le risque de ligne mal formée y est
+structurellement bien plus faible.
+
+Testé : import de 5 lignes fictives (1 date invalide, 1 montant vide, 1 montant non numérique, 2
+valides) → `{ imported: 2, skipped: 0, invalid: 3 }`, conforme.
+
+`CACHE_VERSION` : `v42` → `v43`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
@@ -643,7 +667,8 @@ Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
    automatique dédié comme pour l'export local, §6.2). Reste ouvert : rappel périodique pour la
    sauvegarde cloud, similaire à `backupSnoozeCount`.
 2. ~~**Tests de non-régression légers pour `ledger.js`**~~ — **fait, voir §10** (`test/ledger.test.html`).
-3. **Avertir l'utilisateur sur les imports CSV avec montants invalides** (dette technique §5.4).
+3. ~~**Avertir l'utilisateur sur les imports CSV avec montants invalides**~~ — **fait, voir §6** (entrée
+   du 14 août 2026).
 4. **Arrondi en centimes entiers dans `ledger.js`** si des écarts d'affichage sont un jour rapportés par
    l'utilisateur (pas urgent tant que ça n'arrive pas).
 

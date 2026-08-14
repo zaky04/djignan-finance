@@ -295,9 +295,11 @@ function parseFlexibleDate(raw) {
     amountCol, invertSign, debitCol, creditCol }. La catégorie est devinée via guessCategoryId()
     (ledger.js — règles explicites de Budgets > Règles puis ressemblance avec des transactions
     déjà catégorisées, partagé avec la Saisie express), sinon laissée vide.
-    Retourne { imported, skipped } — skipped compte les lignes ignorées car déjà présentes
-    (même portefeuille, date, montant et type — cas d'un relevé réimporté sur une période
-    qui chevauche un import précédent). */
+    Retourne { imported, skipped, invalid } — skipped compte les lignes ignorées car déjà
+    présentes (même portefeuille, date, montant et type — cas d'un relevé réimporté sur une
+    période qui chevauche un import précédent) ; invalid compte les lignes dont la date ou le
+    montant n'a pas pu être lu (colonne vide, format inattendu…) — avant ce compteur, ces lignes
+    disparaissaient silencieusement sans que l'utilisateur sache qu'un relevé était mal mappé. */
 export async function importGenericCsvRows(rows, mapping) {
   const wallets = await dbGetAll(STORES.WALLETS);
   const wallet = wallets.find((w) => w.id === mapping.walletId);
@@ -305,10 +307,10 @@ export async function importGenericCsvRows(rows, mapping) {
 
   const allTransactions = await dbGetAll(STORES.TRANSACTIONS);
 
-  let imported = 0, skipped = 0;
+  let imported = 0, skipped = 0, invalid = 0;
   for (const cols of rows) {
     const date = parseFlexibleDate(cols[mapping.dateCol]);
-    if (!date) continue;
+    if (!date) { invalid++; continue; }
     const note = mapping.noteCol != null ? (cols[mapping.noteCol] || '').trim().slice(0, 140) : '';
 
     let amount, type;
@@ -317,11 +319,11 @@ export async function importGenericCsvRows(rows, mapping) {
       const credit = parseFlexibleNumber(cols[mapping.creditCol]);
       if (debit > 0) { amount = debit; type = 'expense'; }
       else if (credit > 0) { amount = credit; type = 'income'; }
-      else continue;
+      else { invalid++; continue; }
     } else {
       let raw = parseFlexibleNumber(cols[mapping.amountCol]);
       if (mapping.invertSign) raw = -raw;
-      if (!raw) continue;
+      if (!raw) { invalid++; continue; }
       amount = Math.abs(raw);
       type = raw < 0 ? 'expense' : 'income';
     }
@@ -337,7 +339,7 @@ export async function importGenericCsvRows(rows, mapping) {
     imported++;
   }
   notifyDataChanged('all');
-  return { imported, skipped };
+  return { imported, skipped, invalid };
 }
 
 /* ---------- Sauvegarde automatique locale (File System Access API) ----------

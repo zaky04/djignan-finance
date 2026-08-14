@@ -87,9 +87,9 @@ function openCsvMappingModal(analysis) {
       creditCol: parseInt(fd.get('creditCol'), 10),
     };
     try {
-      const { imported, skipped } = await importGenericCsvRows(rows, mapping);
+      const { imported, skipped, invalid } = await importGenericCsvRows(rows, mapping);
       modal.close();
-      showToast(`${imported} transaction(s) importée(s).${skipped ? ` ${skipped} doublon(s) ignoré(s).` : ''}`);
+      showToast(`${imported} transaction(s) importée(s).${skipped ? ` ${skipped} doublon(s) ignoré(s).` : ''}${invalid ? ` ${invalid} ligne(s) invalide(s) ignorée(s) (date ou montant illisible — vérifiez le mapping des colonnes).` : ''}`);
     } catch (err) {
       showToast('Erreur : ' + (err.message || 'import impossible.'));
     }
