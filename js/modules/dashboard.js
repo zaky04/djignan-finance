@@ -227,7 +227,9 @@ export async function renderDashboard() {
   setAmount(document.getElementById('budget-month-value'), monthlyBudget.totalBudget, monthlyBudget.currency);
   const budgetTrendEl = document.getElementById('budget-month-trend');
   if (monthlyBudget.totalBudget > 0) {
-    const remainingLabel = monthlyBudget.remaining >= 0
+    // Tolérance d'un demi-centime (même convention que ledger.js/debts.js) : évite qu'un budget
+    // respecté "pile" affiche "Dépassé de 0,00 €" à cause d'un résidu flottant infime.
+    const remainingLabel = monthlyBudget.remaining >= -0.005
       ? `Reste ${formatCurrency(monthlyBudget.remaining, monthlyBudget.currency)} ce mois-ci`
       : `Dépassé de ${formatCurrency(Math.abs(monthlyBudget.remaining), monthlyBudget.currency)}`;
     budgetTrendEl.textContent = `${formatCurrency(monthlyBudget.totalSpent, monthlyBudget.currency)} dépensé sur catégories budgétées · ${remainingLabel}`;

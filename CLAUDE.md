@@ -96,10 +96,10 @@ Ou via `.claude/launch.json` (config `geofinance`, port 8123) avec les outils de
 
 | # | Sujet | Détail | Sévérité |
 |---|---|---|---|
-| 1 | Pas de tests automatisés | `ledger.js` (~500 lignes de calculs financiers interconnectés) n'a aucun filet de sécurité — un refactor peut casser un calcul silencieusement. Pas de `package.json`/CI non plus. | Moyenne (pas bloquant, mais risque croissant avec la taille du projet) |
-| 2 | Arithmétique flottante | Les montants sont des `Number` JS sommés directement, pas de représentation en centimes entiers. L'affichage arrondit (masque la plupart des cas), mais des comparaisons comme `actual <= budget` peuvent ponctuellement dériver d'un centime. | Faible |
+| 1 | ~~Pas de tests automatisés~~ | **Résolu le 14 août 2026** — voir §10 (`test/ledger.test.html`). | — |
+| 2 | Arithmétique flottante | Les montants sont des `Number` JS sommés directement, pas de représentation en centimes entiers. L'affichage arrondit (masque la plupart des cas). **Comparaisons de seuil corrigées le 14 août 2026** (tolérance 0.005, voir §6) — reste vrai pour toute future comparaison exacte à ajouter : y penser. | Faible |
 | 3 | PIN : limite inhérente au 100% client-side | PBKDF2 150k itérations protège contre un accès "casual", pas contre une extraction forensique de l'IndexedDB brute (pas de coffre matériel disponible sans backend). Ce n'est pas un bug corrigible facilement, juste une limite du modèle à garder en tête. | Info (pas actionnable) |
-| 4 | Import CSV générique silencieux sur montant invalide | `backup.js` (`importGenericCsvRows`) : un montant non parsable devient `0` sans avertir l'utilisateur qu'une ligne a été mal importée. | Faible-Moyenne |
+| 4 | ~~Import CSV générique silencieux sur montant invalide~~ | **Résolu le 14 août 2026** — voir §6. | — |
 | 5 | Pas de doc de vision/roadmap versionnée | Avant ce fichier, aucun README/CLAUDE.md n'existait — la vision produit ne se lisait que dans les messages de commit. | Résolu par ce fichier (à maintenir) |
 
 ## 6. Journal des correctifs
@@ -658,6 +658,30 @@ valides) → `{ imported: 2, skipped: 0, invalid: 3 }`, conforme.
 
 `CACHE_VERSION` : `v42` → `v43`.
 
+### 14 août 2026 (suite) — Tolérance de dérive flottante sur les comparaisons de seuil exact
+
+Dette technique §5.2 : les montants sont des `Number` JS sommés directement (pas de centimes
+entiers), donc une somme peut ponctuellement dériver de quelques millièmes de centime (classique :
+`0.1 + 0.2 === 0.30000000000000004` en JS). Deux endroits comparaient un total à un seuil de façon
+**exacte**, sans marge : un budget respecté "pile" au centime près pouvait donc apparaître, à tort,
+comme dépassé.
+
+→ Appliqué la même convention de tolérance qu'utilise déjà `debts.js` ailleurs dans le code (marge de
+`0.005`, soit un demi-centime) aux deux points identifiés :
+- `ledger.js` (`computeFinancialHealthScore`) : `r.actual <= r.budget` → `r.actual <= r.budget + 0.005`
+  pour le calcul du taux de respect du budget (composante du score de santé financière).
+- `dashboard.js` : `monthlyBudget.remaining >= 0` → `monthlyBudget.remaining >= -0.005` pour choisir
+  entre l'affichage "Reste X €" et "Dépassé de X €" sur le tableau de bord.
+
+Une vraie migration vers des centimes entiers en stockage reste volontairement hors scope — voir
+§7.4 pour le raisonnement (chantier disproportionné pour un problème jamais rapporté en pratique).
+
+Testé : ajout d'un scénario dédié dans `test/ledger.test.html` (§10) — un budget de 0.3 € consommé
+par deux dépenses de 0.1 € et 0.2 € (qui dérive réellement à `0.30000000000000004` en JS, vérifié
+explicitement) reste compté comme respecté (`budgetAdherencePct === 100`) grâce à la tolérance.
+
+`CACHE_VERSION` : `v43` → `v44`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
@@ -669,8 +693,12 @@ Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
 2. ~~**Tests de non-régression légers pour `ledger.js`**~~ — **fait, voir §10** (`test/ledger.test.html`).
 3. ~~**Avertir l'utilisateur sur les imports CSV avec montants invalides**~~ — **fait, voir §6** (entrée
    du 14 août 2026).
-4. **Arrondi en centimes entiers dans `ledger.js`** si des écarts d'affichage sont un jour rapportés par
-   l'utilisateur (pas urgent tant que ça n'arrive pas).
+4. ~~**Arrondi en centimes entiers dans `ledger.js`**~~ — **tolérance appliquée aux 2 comparaisons de
+   seuil exact identifiées, voir §6** (14 août 2026). Une vraie migration vers des centimes entiers en
+   stockage (au lieu de `Number` en unités monétaires) reste délibérément **hors scope** : chantier de
+   grande ampleur touchant tout le modèle de données existant (migration IndexedDB pour tous les
+   utilisateurs déjà installés) pour un problème qui n'a jamais été rapporté en pratique — à ne
+   reconsidérer que si un écart réel et visible remonte un jour.
 
 ## 8. Comment reprendre le travail
 
@@ -755,8 +783,8 @@ philosophie du projet) qui :
   rapide) — pas de dépendance à la console.
 
 **Pour l'utiliser** : ouvrir `test/ledger.test.html` dans un navigateur (ex: servi par `serve.ps1`
-comme le reste de l'app) après tout changement dans `ledger.js`. 22 assertions, toutes vertes
-actuellement.
+comme le reste de l'app) après tout changement dans `ledger.js`. 24 assertions, toutes vertes
+actuellement (2 ajoutées le 14 août pour couvrir la tolérance de dérive flottante, voir §6).
 
 **Piège rencontré en l'écrivant, à connaître pour la suite** : le Service Worker met en cache
 n'importe quelle requête GET same-origin après une première visite — y compris `test/*`, qui n'est

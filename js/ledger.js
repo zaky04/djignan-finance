@@ -479,7 +479,11 @@ export async function computeFinancialHealthScore(monthKey = currentMonthKey()) 
   const debtScore = Math.max(0, Math.min(100, 100 - debtRatio * 100));
 
   const budgeted = budgetRows.filter((r) => r.budget > 0);
-  const withinBudget = budgeted.filter((r) => r.actual <= r.budget).length;
+  // Tolérance d'un demi-centime : les montants sont des Number sommés directement (pas de
+  // représentation en centimes entiers), donc une somme peut ponctuellement déraper de quelques
+  // millièmes d'un centime — sans ça, un budget respecté "pile" pourrait apparaître dépassé par
+  // erreur d'arrondi flottant. Même convention que debts.js (comparaisons de soldes à 0.005 près).
+  const withinBudget = budgeted.filter((r) => r.actual <= r.budget + 0.005).length;
   const budgetAdherencePct = budgeted.length ? (withinBudget / budgeted.length) * 100 : 70;
   const budgetScore = budgetAdherencePct;
 
