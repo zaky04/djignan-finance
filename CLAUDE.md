@@ -601,6 +601,39 @@ fait exactement un import) → bouton passe à `hidden = false` immédiatement, 
 
 `CACHE_VERSION` : `v39` → `v40`.
 
+### 14 août 2026 (suite) — Selects/inputs restaient blancs en thème sombre en dehors de `.form-row`
+
+Signalé par l'utilisateur (capture d'écran) : en thème sombre, le `<select>` "Verrouillage
+automatique après inactivité" (Paramètres) restait rendu en clair (fond blanc natif du navigateur),
+détonnant visuellement au milieu d'une page sombre.
+
+Cause : seule la règle `.form-row input, .form-row select, .form-row textarea` (styles.css)
+applique un fond/bordure suivant les variables de thème. Or de nombreux `<select>`/`<input>` de
+l'app sont rendus hors d'un `.form-row` (listes déroulantes courtes dans des lignes `stat-row`,
+filtres, sélecteurs inline) — pour ceux-là, seule la règle de reset minimal `input, select, textarea
+{ font: inherit; color: inherit; }` s'appliquait, qui ne touche ni au fond ni à la bordure : le
+navigateur retombe alors sur son rendu natif (fond blanc), quel que soit le thème de la page. Un
+audit du reste de l'app a montré que ce n'était pas un cas isolé : `#base-currency-select`,
+`#ef-months`/`#pi-mode` (Outils), `#tx-filter-*` (Transactions, bien que déjà couverts par
+`.filters-bar` dans ce cas précis), les selects de type de transaction fractionnée, etc. — tous
+potentiellement concernés selon leur emplacement dans le markup.
+
+→ `styles.css` : la règle de reset globale `input, select, textarea` porte maintenant elle-même
+`background: var(--surface-alt)`, `border`, `border-radius` et le focus outline — donc tout
+select/input texte respecte le thème quel que soit son wrapper, sans dépendre de `.form-row`.
+Explicitement exclu de cette règle : `checkbox`/`radio`/`range`/`color`/`file`/`image`, dont le
+rendu natif (case à cocher, etc.) n'a pas besoin de fond/bordure custom et serait déformé par ces
+propriétés. Les règles plus spécifiques déjà en place (`.form-row select`, `.filters-bar select`,
+`.search-input-row input`) restent inchangées et continuent de gagner par spécificité CSS — pas de
+régression sur leurs styles existants (padding/fond légèrement différents, intentionnels).
+
+Testé : fond calculé (`getComputedStyle`) de plusieurs selects pris dans des vues différentes
+(Paramètres, Transactions, Outils) en thème sombre → tous sombres (`rgb(23,28,51)` / `rgb(18,22,43)`
+selon la variable utilisée) ; repassé en thème clair → tous clairs à nouveau, sans changement pour
+les cases à cocher (fond transparent inchangé).
+
+`CACHE_VERSION` : `v40` → `v41`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

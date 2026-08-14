@@ -18,6 +18,22 @@ body {
 ul, ol { list-style: none; margin: 0; padding: 0; }
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; touch-action: manipulation; }
 input, select, textarea { font: inherit; color: inherit; }
+/* Les navigateurs stylent nativement select/text inputs en clair par défaut, indépendamment du
+   thème de la page (contrairement aux boutons, déjà neutralisés ligne au-dessus) — tout select ou
+   champ texte en dehors de .form-row (qui a sa propre règle plus spécifique, redondante avec
+   celle-ci mais gardée pour la surcharge de padding) restait donc blanc en thème sombre. Exclut
+   checkbox/radio/range/color/file/image : ce sont des contrôles à rendu natif propre (case à
+   cocher, etc.) que leur fond de div/label environnant suffit à distinguer du thème — leur
+   appliquer fond+bordure les déformerait sans bénéfice visuel. */
+select, textarea,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="image"]) {
+  background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+select:focus, textarea:focus,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="image"]):focus {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
 h1, h2, h3, h4, p { margin: 0; }
 a { color: inherit; }
 svg { display: block; flex-shrink: 0; }
