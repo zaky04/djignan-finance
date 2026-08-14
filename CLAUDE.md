@@ -462,7 +462,36 @@ Petite lacune connue, non bloquante : les messages d'erreur Firebase remontés d
 `Firebase: Error (auth/popup-blocked).`) sont les codes techniques bruts du SDK, pas traduits en français
 convivial. À améliorer si ça se révèle confus en usage réel, pas une urgence.
 
-`CACHE_VERSION` : `v30` → `v31`.
+### 13 août 2026 (suite) — Connexion Google cassée sur mobile, corrigée (repli sur signInWithRedirect)
+
+Signalé par l'utilisateur en testant sur mobile : le bouton "Se connecter avec Google" reste bloqué sur
+"Connexion…" sans rien faire. Cause connue et bien documentée de l'écosystème Firebase : `signInWithPopup`
+est peu fiable sur mobile et **ne fonctionne carrément pas** dans une PWA installée en plein écran
+(`display-mode: standalone`) — il n'y a pas de fenêtre de navigateur où ouvrir la popup.
+
+→ `firebase-sync.js` : `shouldPreferRedirect()` (réutilise `isStandalone`/`isIOS`/`isAndroid` déjà exportées
+par `install-prompt.js`, pas de détection dupliquée) — sur mobile/PWA installée, `signInWithGoogle()` appelle
+directement `signInWithRedirect()` (navigation de page complète vers Google puis retour) au lieu de
+`signInWithPopup()` ; sur desktop, popup tentée en premier, avec repli automatique sur la redirection si elle
+échoue (`auth/popup-blocked`, `auth/popup-closed-by-user`, `auth/operation-not-supported-in-this-environment`,
+`auth/cancelled-popup-request`). Un flag `cloudRedirectPending` (settings) est posé juste avant la navigation
+(elle interrompt toute exécution JS en cours, donc rien après `signInWithRedirect()` ne s'exécute) et lu au
+retour par `handlePendingRedirect()`, appelée dans `renderCloudBackupSection()` avant `waitForAuthReady()`.
+Conséquence acceptée : le retour de redirection recharge toute la page, donc l'utilisateur retombe sur l'écran
+de code PIN (comportement normal de l'app à chaque chargement) avant de pouvoir revoir son état de connexion
+dans Paramètres — pas un bug, effet secondaire attendu d'un flux de connexion par redirection.
+
+Testé en émulant un contexte mobile (user-agent Android) : `shouldPreferRedirect()` détecte correctement
+`isAndroid: true`, le clic sur "Se connecter" déclenche directement une vraie navigation vers
+`accounts.google.com` (titre d'onglet vérifié) sans jamais tenter la popup cassée ; `cloudRedirectPending`
+correctement posé à `true` avant la navigation, persiste après retour sur l'app, et se remet à `false`
+proprement même sans connexion réellement complétée (annulée volontairement — compléter une vraie connexion
+Google nécessite les identifiants de l'utilisateur, hors de portée d'une session Claude). Avertissement
+console bénin et connu de l'écosystème Firebase+Chrome (`Cross-Origin-Opener-Policy policy would block the
+window.closed call`) observé lors du test popup sur desktop — n'affecte pas le flux réel, disparaît de toute
+façon sur mobile/PWA installée puisque la popup n'y est plus jamais tentée.
+
+`CACHE_VERSION` : `v35` → `v36`.
 
 ## 7. Pistes prioritaires non traitées
 

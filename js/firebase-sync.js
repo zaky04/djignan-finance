@@ -19,6 +19,19 @@ import { buildEncryptedPayload, decryptPayload, deserializeReceiptsForImport, ma
 import { importAllData, getSetting, setSetting } from './db.js';
 import { openModal, showToast, confirmDialog, formatDate } from './utils.js';
 import { notifyDataChanged } from './state.js';
+import { isStandalone, isIOS, isAndroid } from './install-prompt.js';
+
+/* signInWithPopup est notoirement peu fiable sur mobile, et carrément non fonctionnel dans une
+   PWA installée en plein écran (display-mode: standalone) : il n'y a pas de fenêtre de navigateur
+   dans laquelle ouvrir la popup, donc le clic "Se connecter" ne fait rien de visible. On préfère
+   signInWithRedirect (navigation de page complète, retour automatique après connexion) sur mobile/
+   standalone d'emblée, et en repli si la popup échoue quand même ailleurs. */
+function shouldPreferRedirect() {
+  return isStandalone() || isIOS() || isAndroid();
+}
+const POPUP_FALLBACK_CODES = new Set([
+  'auth/popup-blocked', 'auth/popup-closed-by-user', 'auth/operation-not-supported-in-this-environment', 'auth/cancelled-popup-request',
+]);
 
 // À ajuster si une version plus récente est disponible au moment du déploiement
 // (voir firebase.google.com/docs/web/setup) — sans build, la version est figée ici.
@@ -58,11 +71,39 @@ function waitForAuthReady(authMod) {
   });
 }
 
+/** Renvoie l'utilisateur connecté (flux popup, résolu tout de suite) ou `null` (flux redirection :
+    la page navigue vers Google puis revient sur l'app — l'appelant n'a rien à faire d'autre,
+    handlePendingRedirect() complète la connexion au rechargement, voir renderCloudBackupSection). */
 export async function signInWithGoogle() {
   const { authMod } = await ensureFirebase();
   const provider = new authMod.GoogleAuthProvider();
-  const result = await authMod.signInWithPopup(firebaseAuth, provider);
-  return result.user;
+  if (shouldPreferRedirect()) {
+    await setSetting('cloudRedirectPending', true);
+    await authMod.signInWithRedirect(firebaseAuth, provider);
+    return null;
+  }
+  try {
+    const result = await authMod.signInWithPopup(firebaseAuth, provider);
+    return result.user;
+  } catch (err) {
+    if (!POPUP_FALLBACK_CODES.has(err.code)) throw err;
+    await setSetting('cloudRedirectPending', true);
+    await authMod.signInWithRedirect(firebaseAuth, provider);
+    return null;
+  }
+}
+
+/** À appeler après ensureFirebase() si un cloudRedirectPending est en cours : complète la
+    connexion démarrée par signInWithRedirect() avant que la page ne navigue vers Google.
+    Sans effet (retourne vite) s'il n'y a en fait aucune redirection en attente. */
+async function handlePendingRedirect(authMod) {
+  if (!(await getSetting('cloudRedirectPending', false))) return;
+  try {
+    const result = await authMod.getRedirectResult(firebaseAuth);
+    if (result?.user) await setSetting('cloudBackupWasSignedIn', true);
+  } finally {
+    await setSetting('cloudRedirectPending', false);
+  }
 }
 
 export async function signOutGoogle() {
@@ -125,12 +166,14 @@ export async function renderCloudBackupSection(container) {
 
   const lastCloudBackupAt = await getSetting('lastCloudBackupAt');
   let user = null;
-  // Ne charge le SDK au chargement des Paramètres que si une connexion précédente est connue —
-  // sinon un utilisateur qui n'a jamais touché à cette fonctionnalité ne déclenche jamais le
-  // chargement réseau du SDK Firebase rien qu'en ouvrant ses Paramètres.
-  if (await getSetting('cloudBackupWasSignedIn', false)) {
+  // Ne charge le SDK au chargement des Paramètres que si une connexion précédente est connue, OU
+  // qu'un retour de redirection Google est en attente (flux mobile/PWA installée, voir
+  // shouldPreferRedirect()) — sinon un utilisateur qui n'a jamais touché à cette fonctionnalité
+  // ne déclenche jamais le chargement réseau du SDK Firebase rien qu'en ouvrant ses Paramètres.
+  if (await getSetting('cloudBackupWasSignedIn', false) || await getSetting('cloudRedirectPending', false)) {
     try {
       const { authMod } = await ensureFirebase();
+      await handlePendingRedirect(authMod);
       user = await waitForAuthReady(authMod);
       if (!user) await setSetting('cloudBackupWasSignedIn', false);
     } catch {
@@ -158,7 +201,8 @@ export async function renderCloudBackupSection(container) {
     btn.disabled = true;
     btn.textContent = 'Connexion…';
     try {
-      await signInWithGoogle();
+      const user = await signInWithGoogle();
+      if (!user) return; // flux redirection : la page va naviguer vers Google, rien d'autre à faire ici
       await setSetting('cloudBackupWasSignedIn', true);
       showToast('Connecté.');
       await renderCloudBackupSection(container);
