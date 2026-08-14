@@ -682,14 +682,37 @@ explicitement) reste compté comme respecté (`budgetAdherencePct === 100`) grâ
 
 `CACHE_VERSION` : `v43` → `v44`.
 
+### 14 août 2026 (suite) — Rappel périodique pour la sauvegarde cloud
+
+La sauvegarde cloud (§6, 13 août) n'existait qu'à la demande — rien ne rappelait à l'utilisateur de
+l'utiliser, contrairement à l'export local qui a son propre rappel hebdomadaire avec escalade
+(`checkWeeklyBackupReminder`, §6.2). Proposé par l'auteur, implémenté à sa demande.
+
+→ `firebase-sync.js` : `checkWeeklyCloudBackupReminder()`, même principe que le rappel local — report
+par tranches de 24h (`cloudBackupSnoozedUntil`), mode "urgent" au-delà de 3 reports
+(`cloudBackupSnoozeCount`, bouton "Plus tard" retiré), remis à 0 après toute sauvegarde cloud réussie
+(déplacé dans `pushBackupToCloud()` elle-même — pas seulement le chemin du rappel — pour qu'une
+sauvegarde manuelle depuis Paramètres compte aussi). Ne s'affiche que si `cloudBackupWasSignedIn`
+(réglage local) est vrai : un utilisateur qui n'a jamais connecté son compte Google ne voit jamais ce
+rappel, et surtout **ne déclenche jamais le chargement du SDK Firebase** rien que pour la vérification
+— seul un clic sur "Sauvegarder maintenant" dans le rappel charge le SDK, même principe de paresse que
+le reste du fichier. Appelé au boot (`app.js`) via `setTimeout` à 6s, décalé après le rappel local (4s)
+pour ne pas empiler les deux invites si les deux tombent le même jour.
+
+Testé dans le navigateur (base IndexedDB isolée) : aucune modale ni appel réseau pour un utilisateur
+jamais connecté ; modale correcte après 7 jours pour un utilisateur connecté ; clic "Plus tard" pose
+bien le report et le rappel ne se réaffiche pas immédiatement après ; 3 reports + snooze expiré →
+mode urgent (pas de bouton "Plus tard", message adapté) ; clic "Sauvegarder maintenant" ferme le
+rappel et ouvre bien l'invite de mot de passe de chiffrement.
+
+`CACHE_VERSION` : `v44` → `v45`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
 
-1. **Rendre la sauvegarde vraiment robuste** — *partiellement résolu (§6, sauvegarde cloud Google)* :
-   il existe maintenant une sauvegarde cloud chiffrée, mais uniquement à la demande (pas de rappel
-   automatique dédié comme pour l'export local, §6.2). Reste ouvert : rappel périodique pour la
-   sauvegarde cloud, similaire à `backupSnoozeCount`.
+1. ~~**Rendre la sauvegarde vraiment robuste**~~ — **fait, voir §6** (sauvegarde cloud Google + rappel
+   périodique dédié, entrées du 14 août 2026).
 2. ~~**Tests de non-régression légers pour `ledger.js`**~~ — **fait, voir §10** (`test/ledger.test.html`).
 3. ~~**Avertir l'utilisateur sur les imports CSV avec montants invalides**~~ — **fait, voir §6** (entrée
    du 14 août 2026).

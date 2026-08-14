@@ -144,6 +144,68 @@ export async function pushBackupToCloud(passphrase) {
 
   await markBackupDone();
   await setSetting('lastCloudBackupAt', new Date().toISOString());
+  // Repart "poli" (snooze 24h de nouveau autorisé) quel que soit le chemin ayant déclenché cette
+  // sauvegarde — bouton des Paramètres ou rappel périodique — même logique que markBackupDone()
+  // pour le rappel local.
+  await setSetting('cloudBackupSnoozeCount', 0);
+}
+
+/* ---------- Rappel périodique de sauvegarde cloud ----------
+   Même principe que le rappel hebdomadaire d'export local (backup.js, checkWeeklyBackupReminder) :
+   report par tranches de 24h, mode "urgent" (bouton "Plus tard" retiré) au-delà de 3 reports.
+   Ne s'affiche QUE pour un utilisateur qui s'est déjà connecté une fois (cloudBackupWasSignedIn) —
+   ce réglage est purement local, donc cette vérification ne charge JAMAIS le SDK Firebase pour un
+   utilisateur qui n'utilise pas cette fonctionnalité (même principe de chargement paresseux que le
+   reste de ce fichier). Le SDK n'est chargé qu'une fois que l'utilisateur clique "Sauvegarder
+   maintenant" dans le rappel — jamais pour décider si le rappel doit s'afficher. */
+const CLOUD_BACKUP_SNOOZE_LIMIT = 3;
+
+export async function checkWeeklyCloudBackupReminder() {
+  if (!isFirebaseConfigured) return;
+  if (!(await getSetting('cloudBackupWasSignedIn', false))) return;
+
+  const snoozedUntil = await getSetting('cloudBackupSnoozedUntil');
+  const snoozeCount = await getSetting('cloudBackupSnoozeCount', 0);
+  const now = Date.now();
+  const urgent = snoozeCount >= CLOUD_BACKUP_SNOOZE_LIMIT;
+  if (!urgent && snoozedUntil && now < new Date(snoozedUntil).getTime()) return;
+
+  const last = await getSetting('lastCloudBackupAt');
+  const lastMs = last ? new Date(last).getTime() : 0;
+  const sevenDaysMs = 7 * 24 * 3600 * 1000;
+  if (now - lastMs < sevenDaysMs) return;
+
+  showCloudBackupReminderModal(urgent);
+}
+
+function showCloudBackupReminderModal(urgent = false) {
+  const message = urgent
+    ? "Vous avez repoussé ce rappel plusieurs fois. Sans sauvegarde cloud récente, une réinstallation ou un changement d'appareil vous ferait perdre les données saisies depuis votre dernière sauvegarde. Sauvegardez maintenant."
+    : "Ça fait plus de 7 jours que vos données n'ont pas été sauvegardées dans le cloud. Voulez-vous le faire maintenant ?";
+  const modal = openModal(`
+    <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${message}</p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;">
+      <button type="button" class="btn btn-primary" id="cloud-reminder-backup-btn">Sauvegarder maintenant</button>
+      ${urgent ? '' : '<button type="button" class="btn btn-ghost" id="cloud-reminder-later-btn">Plus tard</button>'}
+    </div>`, { title: 'Sauvegarde cloud' });
+
+  modal.el.querySelector('#cloud-reminder-later-btn')?.addEventListener('click', async () => {
+    await setSetting('cloudBackupSnoozedUntil', new Date(Date.now() + 24 * 3600 * 1000).toISOString());
+    await setSetting('cloudBackupSnoozeCount', (await getSetting('cloudBackupSnoozeCount', 0)) + 1);
+    modal.close();
+  });
+
+  modal.el.querySelector('#cloud-reminder-backup-btn').addEventListener('click', async () => {
+    modal.close();
+    const p = await promptPassphrase('Chiffrer la sauvegarde cloud');
+    if (!p) return;
+    try {
+      await pushBackupToCloud(p);
+      showToast('Sauvegarde envoyée dans le cloud.');
+    } catch (err) {
+      showToast('Erreur : ' + (err.message || 'envoi impossible.'));
+    }
+  });
 }
 
 export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {

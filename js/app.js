@@ -10,6 +10,7 @@ import { initLockScreen, isBiometricAvailable, registerBiometric } from './auth.
 import { bus, EVENTS, appState } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder } from './backup.js';
+import { checkWeeklyCloudBackupReminder } from './firebase-sync.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
 
@@ -446,6 +447,10 @@ async function onUnlocked() {
   maybeShowInstallPrompt();
   checkAndNotify();
   setTimeout(() => checkWeeklyBackupReminder(), 4000); // décalé pour ne pas superposer les deux invites
+  // Encore décalé par rapport au rappel local : si les deux sont dus le même jour, on ne veut pas
+  // les empiler l'un sur l'autre. checkWeeklyCloudBackupReminder() ne charge le SDK Firebase que si
+  // l'utilisateur clique "Sauvegarder maintenant" dans le rappel, jamais pour décider s'il s'affiche.
+  setTimeout(() => checkWeeklyCloudBackupReminder(), 6000);
 }
 
 (async function boot() {
