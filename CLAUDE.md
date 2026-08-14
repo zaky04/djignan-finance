@@ -517,6 +517,35 @@ après soumission du mot de passe (avant le fix, il ne l'était jamais, confirm�
 
 `CACHE_VERSION` : `v36` → `v37`.
 
+### 13 août 2026 (suite) — Dépassement de la limite de taille Firestore (1 Mo/document)
+
+Signalé par l'utilisateur, mot de passe cette fois correctement transmis (fix précédent) : erreur
+`the value property payload is longer than 1048487 bytes`. Cause : Firestore refuse tout document de plus de
+~1 Mo — la sauvegarde complète (historique de transactions + justificatifs photo convertis en data URL
+base64 dans le payload, voir `serializeReceiptsForExport()` dans `backup.js`) dépasse vite cette limite en
+usage réel, stockée jusqu'ici dans un seul champ d'un seul document.
+
+→ `firebase-sync.js` : le JSON chiffré est découpé en morceaux de 900 000 caractères (`CHUNK_SIZE`, marge
+sous la limite exacte), stockés dans une sous-collection `backups/{uid}/chunks/{i}` plutôt qu'un seul champ.
+Le document `backups/{uid}` lui-même ne garde qu'un `chunkCount` + `updatedAt`. `pushBackupToCloud()` supprime
+d'abord les anciens morceaux (leur nombre varie d'une sauvegarde à l'autre) avant d'écrire les nouveaux, le
+tout dans un seul `writeBatch` (atomique — soit tout s'écrit, soit rien). `pullBackupFromCloud()` lit
+`chunkCount`, récupère tous les morceaux en parallèle, les concatène, puis déchiffre comme avant.
+**Nécessite une mise à jour des règles de sécurité Firestore** (nouvelle sous-collection à couvrir) :
+```
+match /backups/{userId} {
+  allow read, write: if request.auth != null && request.auth.uid == userId;
+  match /chunks/{chunkId} {
+    allow read, write: if request.auth != null && request.auth.uid == userId;
+  }
+}
+```
+Testé : découpage/réassemblage d'une chaîne de 2,3 Mo simulée (proche d'une sauvegarde avec plusieurs
+justificatifs photo) → 3 morceaux, tous sous la limite, réassemblage strictement identique à l'original.
+Écriture/lecture Firestore réelles à confirmer par l'utilisateur (règles mises à jour requises côté console).
+
+`CACHE_VERSION` : `v37` → `v38`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

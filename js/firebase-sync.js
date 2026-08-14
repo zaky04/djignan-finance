@@ -12,6 +12,11 @@
    ouverture des Paramètres si une connexion précédente est connue) — jamais
    sur le chemin par défaut de l'app. Même principe que le chargement
    paresseux de Tesseract dans ocr.js.
+
+   Le blob chiffré est découpé en morceaux (backups/{uid}/chunks/{i}, voir
+   CHUNK_SIZE) plutôt que stocké dans un seul document backups/{uid} : Firestore
+   refuse tout document de plus de ~1 Mo, et l'historique de transactions +
+   les justificatifs photo en base64 dépassent vite cette limite en usage réel.
    ========================================================================== */
 
 import { firebaseConfig, isFirebaseConfigured } from './firebase-config.js';
@@ -111,15 +116,32 @@ export async function signOutGoogle() {
   await authMod.signOut(firebaseAuth);
 }
 
+// Firestore refuse un document de plus de ~1 048 487 octets. Avec l'historique de transactions
+// et les justificatifs photo (convertis en data URL base64 dans le payload — voir
+// serializeReceiptsForExport() dans backup.js), la sauvegarde complète dépasse vite cette limite
+// pour un usage réel. On découpe donc le JSON chiffré en morceaux stockés dans une sous-collection
+// plutôt que dans un seul champ — marge confortable sous la limite exacte.
+const CHUNK_SIZE = 900000;
+
 export async function pushBackupToCloud(passphrase) {
   const { firestoreMod } = await ensureFirebase();
   const user = firebaseAuth.currentUser;
   if (!user) throw new Error('Non connecté.');
-  const payload = await buildEncryptedPayload(passphrase);
-  await firestoreMod.setDoc(firestoreMod.doc(firebaseDb, 'backups', user.uid), {
-    payload: JSON.stringify(payload),
-    updatedAt: firestoreMod.serverTimestamp(),
-  });
+  const payloadStr = JSON.stringify(await buildEncryptedPayload(passphrase));
+  const chunks = [];
+  for (let i = 0; i < payloadStr.length; i += CHUNK_SIZE) chunks.push(payloadStr.slice(i, i + CHUNK_SIZE));
+
+  const chunksRef = firestoreMod.collection(firebaseDb, 'backups', user.uid, 'chunks');
+  const existing = await firestoreMod.getDocs(chunksRef);
+  const batch = firestoreMod.writeBatch(firebaseDb);
+  // Supprime d'abord les anciens morceaux : leur nombre peut varier d'une sauvegarde à l'autre
+  // (données en plus ou en moins) — sans ça, d'anciens morceaux en trop resteraient et
+  // corrompraient la sauvegarde suivante à la lecture (concaténation avec des restes obsolètes).
+  existing.forEach((d) => batch.delete(d.ref));
+  chunks.forEach((chunk, i) => batch.set(firestoreMod.doc(chunksRef, String(i)), { data: chunk }));
+  batch.set(firestoreMod.doc(firebaseDb, 'backups', user.uid), { chunkCount: chunks.length, updatedAt: firestoreMod.serverTimestamp() });
+  await batch.commit();
+
   await markBackupDone();
   await setSetting('lastCloudBackupAt', new Date().toISOString());
 }
@@ -130,7 +152,13 @@ export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
   if (!user) throw new Error('Non connecté.');
   const snap = await firestoreMod.getDoc(firestoreMod.doc(firebaseDb, 'backups', user.uid));
   if (!snap.exists()) throw new Error('Aucune sauvegarde cloud trouvée pour ce compte.');
-  const payload = JSON.parse(snap.data().payload);
+  const { chunkCount } = snap.data();
+  const chunksRef = firestoreMod.collection(firebaseDb, 'backups', user.uid, 'chunks');
+  const chunkDocs = await Promise.all(
+    Array.from({ length: chunkCount }, (_, i) => firestoreMod.getDoc(firestoreMod.doc(chunksRef, String(i))))
+  );
+  const payloadStr = chunkDocs.map((d) => d.data().data).join('');
+  const payload = JSON.parse(payloadStr);
   const data = await decryptPayload(payload, passphrase);
   await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
