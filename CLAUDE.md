@@ -734,6 +734,40 @@ avant de toucher une variable utilisée dans une dizaine d'endroits.
 
 `CACHE_VERSION` : `v45` → `v46`.
 
+### 14 août 2026 (suite) — Mesuré et corrigé : computeNetWorthHistory 7x plus lent que ses jumelles
+
+Suite de l'audit demandé par l'auteur (§7.7 listait le risque comme "non mesuré, à profiler si un
+jour rapporté" — mesuré tout de suite plutôt que de laisser la piste ouverte sans données). Généré un
+jeu de données synthétique réaliste (14 600 transactions, 5 ans, ~8/jour) dans une base IndexedDB de
+test isolée, puis chronométré chaque agrégat de `ledger.js` utilisé par le tableau de bord.
+
+Résultat : la plupart des calculs prennent 200-700ms sur ce volume (pas instantané, mais pas
+gênant — le tableau de bord les exécute en parallèle via `Promise.all`, voir `dashboard.js`).
+`computeNetWorthHistory(6)` sortait du lot à **1555ms**, contre ~215-235ms pour
+`computeInvestmentValueHistory`/`computeDebtHistory` qui calculent pourtant un historique similaire
+sur la même période. Cause : ces deux dernières appellent `ctx()` (10 lectures IndexedDB) **une
+seule fois** puis bouclent en mémoire sur les données déjà chargées — `computeNetWorthHistory`,
+elle, délègue à `computeNetWorth(cutoff)` à chaque itération, qui rappelle `ctx()` à chaque fois : un
+historique sur 6 mois relit donc l'intégralité des portefeuilles/transactions/investissements/dettes
+6 fois de suite pour un résultat identique à chaque relecture (seule la date de coupure change).
+
+→ Extrait le cœur pur de `computeNetWorth` dans `netWorthAt(cutoffDate, data)` (aucun accès DB) ;
+`computeNetWorth()` et `computeNetWorthHistory()` appellent chacune `ctx()` une seule fois puis
+l'utilisent — même principe que `computeInvestmentValueHistory`/`computeDebtHistory`, qui n'avaient
+jamais eu ce problème.
+
+Testé : les 24 assertions de `test/ledger.test.html` (§10) passent toujours après le refactor (le
+comportement observable est strictement identique, seul le nombre de lectures DB change) ;
+rechronométré sur le même jeu de données de 14 600 transactions → **1555ms → 473ms** (≈3,3x).
+
+Piste plus large volontairement pas traitée ici (§7.7 mise à jour) : `ctx()` lui-même charge tout un
+store en mémoire à chaque appel (`dbGetAll`, pas de requête IndexedDB bornée par date/index) — les
+~300-500ms restants sur ce jeu de données synthétique viennent de là. Non touché : chantier plus
+large (requêtes indexées par date, éventuellement un cache de session) disproportionné tant qu'aucun
+utilisateur réel n'a signalé de lenteur perceptible.
+
+`CACHE_VERSION` : `v46` → `v47`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
@@ -756,11 +790,13 @@ Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
    **décision de design à prendre avec l'auteur** : contraste de `--text-faint` sous le seuil WCAG AA
    dans les deux thèmes (détails §6) — corriger impliquerait de resserrer la hiérarchie visuelle à 2
    niveaux de gris au lieu de 3.
-7. **Comportement à grande échelle** — `ledger.js`/`ledger.js` s'appuient sur `dbGetAll()` qui charge
-   un store entier en mémoire à chaque calcul (pas de requête indexée bornée). Avec plusieurs milliers
-   de transactions accumulées sur plusieurs années, certaines vues pourraient ralentir — non mesuré
-   à ce jour faute de jeu de données réel de cette taille. À profiler si un ralentissement est un jour
-   rapporté, plutôt qu'à optimiser à l'aveugle maintenant.
+7. **Comportement à grande échelle** — *mesuré et partiellement corrigé le 14 août 2026, voir §6*
+   (jeu de données synthétique de 14 600 transactions/5 ans ; `computeNetWorthHistory` était le point
+   noir isolé, corrigé, 1555ms → 473ms). Reste ouvert, non traité volontairement : `ctx()`
+   (`ledger.js`) charge un store entier en mémoire à chaque calcul (`dbGetAll()`, pas de requête
+   IndexedDB bornée par date/index) — sur ce même jeu de données, ~300-500ms résiduels par calcul en
+   viennent. Des requêtes indexées par date réduiraient ça, mais c'est un chantier plus large,
+   disproportionné tant qu'aucun utilisateur réel n'a signalé de lenteur perceptible.
 
 ## 8. Comment reprendre le travail
 
