@@ -657,3 +657,60 @@ Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
   de modifier une fonction, ils expliquent souvent une décision non intuitive (ex: pourquoi `fetch({cache:
   'reload'})` plutôt que `cache.add()` dans `sw.js`, pourquoi les dates locales et pas `.toISOString()`...).
 - Avant tout commit touchant du JS/CSS/HTML : penser au bump de `CACHE_VERSION` (§3.1).
+
+## 9. Empaquetage Android (APK / TWA)
+
+### 14 août 2026 — Première génération d'un APK (Trusted Web Activity)
+
+Demandé par l'utilisateur : une version APK installable sur Android. Généré via **TWA (Trusted Web
+Activity)**, la méthode standard pour empaqueter une PWA — pas une copie figée du code : l'APK est
+une coquille native qui affiche l'app en plein écran en pointant vers l'URL déployée
+(`https://zaky04.github.io/geofinance/`).
+
+**Important — la logique de mise à jour ne change pas.** L'APK charge le contenu réel depuis
+GitHub Pages à chaque lancement ; le Service Worker (`sw.js`, `CACHE_VERSION`) continue de gérer le
+cache et les mises à jour exactement comme pour la PWA web. Déployer sur `main` met à jour l'app pour
+tout le monde (web ET APK) sans avoir à régénérer l'APK. Seul un changement natif (icône, nom,
+format d'empaquetage) nécessiterait un nouvel APK — jamais une évolution normale du code.
+
+**Générée localement** (pas de compte développeur externe requis, contrairement à Firebase) via
+`@bubblewrap/cli` (Google), avec :
+- `packageId` : `com.zaky04.geofinance` (quasi permanent si publié un jour — choisi avec l'utilisateur).
+- Usage prévu : sideload / partage direct pour l'instant (pas de Play Store).
+
+**Détails techniques pour reproduire/mettre à jour l'APK plus tard :**
+- Le projet TWA (`twa-manifest.json`, projet Gradle généré, keystore) vit **hors du dépôt Git**, dans
+  un répertoire de travail local temporaire — à recréer si besoin (voir ci-dessous), il n'est pas
+  versionné.
+- Bubblewrap exige un JDK **exactement 17.x** (vérifie littéralement `JAVA_VERSION="17.0` dans le
+  fichier `release` du JDK) — un JDK 21 (ex: celui livré avec Android Studio) est explicitement
+  rejeté, malgré la doc qui suggère juste "17+". Téléchargé Temurin 17 (adoptium.net) séparément pour
+  contourner ça.
+- Le SDK Android local (`%LOCALAPPDATA%\Android\Sdk`, installé via Android Studio/Flutter) utilise la
+  structure moderne (`cmdline-tools/latest/`) — la validation de Bubblewrap cherche un dossier
+  `tools/` ou `bin/` directement à la racine du SDK (structure historique). Contourné en créant une
+  jonction NTFS `Sdk\tools` → `Sdk\cmdline-tools\latest` (`New-Item -ItemType Junction`), sans toucher
+  au SDK réel.
+- Mots de passe du keystore passés via les variables d'environnement
+  `BUBBLEWRAP_KEYSTORE_PASSWORD`/`BUBBLEWRAP_KEY_PASSWORD` (évite les prompts interactifs, qui plantent
+  dans un terminal non-interactif).
+- `bubblewrap build` échouait systématiquement sur `gradlew.bat` ("n'est pas reconnu") à cause d'un
+  souci d'interopérabilité entre le sous-processus lancé par Node (npx via Git Bash/MSYS) et
+  `cmd.exe` sur Windows. Contourné en lançant `gradlew.bat assembleRelease` directement depuis
+  PowerShell (hors de l'orchestration de Bubblewrap), puis en signant l'APK manuellement avec
+  `zipalign`/`apksigner` (build-tools `36.1.0`) et le keystore généré par `keytool`.
+- Certificat de signature (empreinte SHA-256, à connaître si un jour Digital Asset Links ou Play
+  Console sont configurés) :
+  `BA:BC:56:75:B6:02:57:24:C3:3F:64:F3:C7:9F:A5:F9:CC:65:97:4F:5A:5A:F3:33:7D:86:11:F4:50:A2:9D:FE`
+
+**Le fichier `android.keystore` et son mot de passe ont été remis directement à l'utilisateur** (pas
+committés dans ce dépôt — un keystore est un secret, sa perte empêcherait de republier une mise à jour
+signée de la même app). **À sauvegarder par l'utilisateur dans un endroit sûr, durablement** —
+nécessaire pour toute regénération future de l'APK sous le même `packageId`.
+
+**Non fait à ce stade (pas demandé, pertinent seulement pour Play Store ou expérience 100% sans
+barre d'adresse)** : `.well-known/assetlinks.json` (Digital Asset Links) — doit être hébergé à la
+racine du domaine `zaky04.github.io`, donc dans le dépôt spécial `zaky04.github.io` (page utilisateur
+GitHub), **pas dans ce dépôt `geofinance`** qui ne sert que le sous-chemin `/geofinance/`. Sans ce
+fichier, l'APK fonctionne normalement mais affiche une fine barre d'adresse Chrome (Custom Tabs) au
+lieu d'un plein écran natif — cosmétique, pas bloquant pour un usage sideload.
