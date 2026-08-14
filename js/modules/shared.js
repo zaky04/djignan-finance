@@ -25,7 +25,7 @@ function participantRowHtml(p) {
       </div>
       <div class="card-actions">
         ${!p.isMe ? `<button type="button" class="btn btn-ghost" data-action="set-me" style="padding:4px 10px;font-size:12.5px;">Définir comme moi</button>` : ''}
-        <button type="button" class="icon-btn" data-action="delete-participant" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete-participant" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
       </div>
     </div>`;
 }
@@ -210,7 +210,7 @@ function sharedExpenseRowHtml(exp, participants) {
         <div class="tx-sub">Payé par ${escapeHtml(payer?.name || '?')} · ${formatDate(exp.date)} · Partagé entre ${escapeHtml(names)}</div>
       </div>
       <div class="tx-amount amount">${formatCurrency(exp.amount, exp.currency)}</div>
-      <div class="card-actions"><button type="button" class="icon-btn" data-action="delete-expense" title="Supprimer">${DELETE_ICON}</button></div>
+      <div class="card-actions"><button type="button" class="icon-btn" data-action="delete-expense" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button></div>
     </div>`;
 }
 

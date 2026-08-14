@@ -53,9 +53,9 @@ function debtCardHtml(d, payments) {
           ${d.note ? `<div class="tx-sub">${escapeHtml(d.note)}</div>` : ''}
         </div>
         <div class="card-actions">
-          <button type="button" class="icon-btn" data-action="pay" title="Enregistrer un remboursement">${PAY_ICON}</button>
-          <button type="button" class="icon-btn" data-action="edit" title="Modifier">${EDIT_ICON}</button>
-          <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+          <button type="button" class="icon-btn" data-action="pay" aria-label="Enregistrer un remboursement" title="Enregistrer un remboursement">${PAY_ICON}</button>
+          <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
+          <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
         </div>
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${Math.min(pct, 100)}%"></div></div>
@@ -88,7 +88,7 @@ function paidDebtRowHtml(d, paidDate) {
       </div>
       <div class="tx-amount amount ${isDebt ? 'neg' : 'pos'}">${formatCurrency(d.principal, d.currency)}</div>
       <div class="card-actions">
-        <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
       </div>
     </div>`;
 }

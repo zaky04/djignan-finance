@@ -435,12 +435,12 @@ function txRowHtml(t) {
       </div>
       <div class="tx-amount amount ${cls}" data-value="${t.amount}">${sign}${formatCurrency(t.amount, currency)}</div>
       <div class="card-actions">
-        ${t.receiptBlob ? `<button type="button" class="icon-btn" data-action="view-receipt" title="Voir le justificatif">${RECEIPT_ICON}</button>` : ''}
-        <button type="button" class="icon-btn" data-action="reconcile" title="${t.reconciled ? 'Pointée (cliquer pour annuler)' : 'Marquer comme pointée'}" style="color:${t.reconciled ? 'var(--pos)' : 'var(--text-faint)'}">
+        ${t.receiptBlob ? `<button type="button" class="icon-btn" data-action="view-receipt" aria-label="Voir le justificatif" title="Voir le justificatif">${RECEIPT_ICON}</button>` : ''}
+        <button type="button" class="icon-btn" data-action="reconcile" aria-label="${t.reconciled ? 'Pointée (cliquer pour annuler)' : 'Marquer comme pointée'}" title="${t.reconciled ? 'Pointée (cliquer pour annuler)' : 'Marquer comme pointée'}" style="color:${t.reconciled ? 'var(--pos)' : 'var(--text-faint)'}">
           ${t.reconciled ? CHECK_CIRCLE : EMPTY_CIRCLE}
         </button>
-        <button type="button" class="icon-btn" data-action="edit" title="Modifier">${EDIT_ICON}</button>
-        <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
       </div>
     </div>`;
 }

@@ -43,10 +43,10 @@ function goalCardHtml(g) {
         </div>
       </div>
       <div class="card-actions" style="justify-content:flex-end;margin-top:10px;">
-        <button type="button" class="icon-btn" data-action="contribute" title="Ajouter une contribution">${ADD_ICON}</button>
-        <button type="button" class="icon-btn" data-action="edit" title="Modifier">${EDIT_ICON}</button>
-        <button type="button" class="icon-btn" data-action="archive" title="${g.archived ? 'Désarchiver' : 'Archiver'}">${ARCHIVE_ICON}</button>
-        <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="contribute" aria-label="Ajouter une contribution" title="Ajouter une contribution">${ADD_ICON}</button>
+        <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="archive" aria-label="${g.archived ? 'Désarchiver' : 'Archiver'}" title="${g.archived ? 'Désarchiver' : 'Archiver'}">${ARCHIVE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
       </div>
     </div>`;
 }

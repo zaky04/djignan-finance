@@ -56,9 +56,9 @@ function investmentCardHtml(inv, metrics) {
           <div style="font-weight:700;font-size:14.5px;margin-top:6px;">${escapeHtml(inv.name)}</div>
         </div>
         <div class="card-actions">
-          <button type="button" class="icon-btn" data-action="history" title="Historique / Ajouter">${HISTORY_ICON}</button>
-          <button type="button" class="icon-btn" data-action="edit" title="Modifier">${EDIT_ICON}</button>
-          <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+          <button type="button" class="icon-btn" data-action="history" aria-label="Historique / Ajouter" title="Historique / Ajouter">${HISTORY_ICON}</button>
+          <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
+          <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
         </div>
       </div>
       <div class="stat-row"><span class="stat-row-label">Capital net investi</span><span class="amount" data-value="${metrics.netInvested}">${formatCurrency(metrics.netInvested, inv.currency)}</span></div>
@@ -128,7 +128,7 @@ async function openHistoryModal(inv) {
             <div class="tx-sub">${formatDate(e.date)}</div>
           </div>
           <div class="tx-amount">${formatCurrency(e.amount, inv.currency)}</div>
-          <div class="card-actions"><button type="button" class="icon-btn" data-action="delete-entry">${DELETE_ICON}</button></div>
+          <div class="card-actions"><button type="button" class="icon-btn" data-action="delete-entry" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button></div>
         </div>`).join('') : '<div class="empty-state">Aucun historique pour le moment.</div>'}
     </div>
   `, { title: `Historique — ${inv.name}` });

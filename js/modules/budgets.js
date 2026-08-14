@@ -308,9 +308,9 @@ function categoryRowHtml(cat, isChild = false) {
       <div class="tx-icon" style="color:${color};background:${color}22;">${icon}</div>
       <div class="tx-main"><div class="tx-title">${isChild ? '— ' : ''}${escapeHtml(cat.name)}</div></div>
       <div class="card-actions">
-        ${!isChild ? `<button type="button" class="icon-btn" data-action="add-sub" title="Ajouter une sous-catégorie">${PLUS_ICON}</button>` : ''}
-        <button type="button" class="icon-btn" data-action="edit" title="Modifier">${EDIT_ICON}</button>
-        <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+        ${!isChild ? `<button type="button" class="icon-btn" data-action="add-sub" aria-label="Ajouter une sous-catégorie" title="Ajouter une sous-catégorie">${PLUS_ICON}</button>` : ''}
+        <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
       </div>
     </div>`;
 }
@@ -443,9 +443,9 @@ function recurringRowHtml(r, wallets, categories) {
       </div>
       <div class="tx-amount amount ${r.type === 'income' ? 'pos' : 'neg'}">${r.type === 'income' ? '+' : '−'}${formatCurrency(r.amount, wallet?.currency || 'EUR')}</div>
       <div class="card-actions">
-        <button type="button" class="icon-btn" data-action="toggle" title="${r.active ? 'Désactiver' : 'Activer'}">${r.active ? PAUSE_ICON : PLAY_ICON}</button>
-        <button type="button" class="icon-btn" data-action="edit" title="Modifier">${EDIT_ICON}</button>
-        <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="toggle" aria-label="${r.active ? 'Désactiver' : 'Activer'}" title="${r.active ? 'Désactiver' : 'Activer'}">${r.active ? PAUSE_ICON : PLAY_ICON}</button>
+        <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
       </div>
     </div>`;
 }
@@ -507,7 +507,7 @@ function ruleRowHtml(rule, categories) {
         <div class="tx-sub">→ ${escapeHtml(cat?.name || 'Catégorie supprimée')}</div>
       </div>
       <div class="card-actions">
-        <button type="button" class="icon-btn" data-action="delete" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
       </div>
     </div>`;
 }

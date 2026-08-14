@@ -151,10 +151,10 @@ function walletCardHtml(w) {
           </div>
         </div>
         <div class="card-actions">
-          <button type="button" class="icon-btn" data-action="edit" title="Modifier">
+          <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>
           </button>
-          <button type="button" class="icon-btn" data-action="archive" title="${w.archived ? 'Désarchiver' : 'Archiver'}">
+          <button type="button" class="icon-btn" data-action="archive" aria-label="${w.archived ? 'Désarchiver' : 'Archiver'}" title="${w.archived ? 'Désarchiver' : 'Archiver'}">
             <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 4h18v4H3V4Zm1 6h16v10H4V10Zm4 3v2h8v-2H8Z"/></svg>
           </button>
         </div>

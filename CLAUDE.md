@@ -707,6 +707,33 @@ rappel et ouvre bien l'invite de mot de passe de chiffrement.
 
 `CACHE_VERSION` : `v44` → `v45`.
 
+### 14 août 2026 (suite) — Audit accessibilité : boutons icône sans nom accessible
+
+Jamais fait à ce jour sur l'app (§7.6, demandé par l'auteur). Constat principal : la quasi-totalité
+des boutons "icône seule" (modifier, supprimer, archiver, pointer une transaction, etc. — présents
+dans presque tous les modules) utilisaient uniquement `title="..."` pour indiquer leur fonction.
+`title` s'affiche en infobulle à la souris, mais n'est fiable ni au clavier (pas de tooltip visible
+au focus dans la plupart des navigateurs) ni pour un lecteur d'écran (support inégal, certains
+l'ignorent complètement pour le nom accessible d'un `<button>` sans texte) — un bouton "icône seule"
+sans `aria-label` est essentiellement un bouton sans nom pour ces utilisateurs.
+
+→ Ajouté `aria-label` (même texte que le `title` existant, y compris pour les libellés dynamiques
+comme "Archiver"/"Désarchiver") à tous les boutons `icon-btn` qui n'en avaient pas : `debts.js`,
+`kept-accounts.js`, `budgets.js`, `investments.js`, `savings.js`, `shared.js`, `transactions.js`,
+`wallets.js` (~25 boutons). Ceux qui avaient déjà `aria-label` (navigation mois/année, fermeture de
+modale, filtres de recherche) n'ont pas été touchés.
+
+**Trouvé mais volontairement pas corrigé, à valider avec l'auteur** : `--text-faint` (utilisé pour
+les états vides, les libellés du calendrier, les tendances des cartes résumé — pas juste décoratif)
+a un contraste insuffisant contre son fond dans les deux thèmes : ≈2.6:1 en clair (`#9aa0b4` sur
+`#ffffff`), ≈3.7:1 en sombre (`#6b7096` sur `#12162b`) — sous le seuil WCAG AA de 4.5:1 pour du texte
+normal. Non corrigé ici car resserrer ce contraste implique de foncer la teinte, ce qui la
+rapprocherait visuellement de `--text-muted` (déjà à la limite, ≈4.9:1) et réduirait la hiérarchie
+visuelle à 2 niveaux au lieu de 3 — un choix de design, pas un simple bug, à trancher avec l'auteur
+avant de toucher une variable utilisée dans une dizaine d'endroits.
+
+`CACHE_VERSION` : `v45` → `v46`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
@@ -722,6 +749,18 @@ Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
    grande ampleur touchant tout le modèle de données existant (migration IndexedDB pour tous les
    utilisateurs déjà installés) pour un problème qui n'a jamais été rapporté en pratique — à ne
    reconsidérer que si un écart réel et visible remonte un jour.
+5. **Digital Asset Links pour l'APK** (§9) — plein écran natif sans barre d'adresse Chrome. Nécessite
+   d'héberger `.well-known/assetlinks.json` à la racine de `zaky04.github.io`, donc dans le dépôt
+   `zaky04.github.io` (page utilisateur GitHub) — **pas ce dépôt-ci**, qui ne sert que `/geofinance/`.
+6. ~~**Audit accessibilité**~~ — **fait pour les boutons icône, voir §6** (14 août 2026). Reste ouvert,
+   **décision de design à prendre avec l'auteur** : contraste de `--text-faint` sous le seuil WCAG AA
+   dans les deux thèmes (détails §6) — corriger impliquerait de resserrer la hiérarchie visuelle à 2
+   niveaux de gris au lieu de 3.
+7. **Comportement à grande échelle** — `ledger.js`/`ledger.js` s'appuient sur `dbGetAll()` qui charge
+   un store entier en mémoire à chaque calcul (pas de requête indexée bornée). Avec plusieurs milliers
+   de transactions accumulées sur plusieurs années, certaines vues pourraient ralentir — non mesuré
+   à ce jour faute de jeu de données réel de cette taille. À profiler si un ralentissement est un jour
+   rapporté, plutôt qu'à optimiser à l'aveugle maintenant.
 
 ## 8. Comment reprendre le travail
 
