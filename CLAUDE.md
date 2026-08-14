@@ -638,13 +638,11 @@ les cases à cocher (fond transparent inchangé).
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
 
-1. **Rendre la sauvegarde vraiment robuste** — le fix §6.2 rend le rappel plus insistant mais ne résout pas
-   le risque de fond : pas de sauvegarde cloud automatique. Pistes possibles sans trahir le positionnement
-   "local/privé" : auto-backup local plus proactif (déjà partiellement possible via File System Access API,
-   mais Chromium desktop uniquement), export automatique périodique vers le Téléchargements du navigateur.
-2. **Tests de non-régression légers pour `ledger.js`** — pas besoin d'un framework complet vu l'absence de
-   build ; un script Node (ou une page de test HTML dédiée) qui rejoue quelques scénarios de calcul connus
-   suffirait à sécuriser les futurs refactors.
+1. **Rendre la sauvegarde vraiment robuste** — *partiellement résolu (§6, sauvegarde cloud Google)* :
+   il existe maintenant une sauvegarde cloud chiffrée, mais uniquement à la demande (pas de rappel
+   automatique dédié comme pour l'export local, §6.2). Reste ouvert : rappel périodique pour la
+   sauvegarde cloud, similaire à `backupSnoozeCount`.
+2. ~~**Tests de non-régression légers pour `ledger.js`**~~ — **fait, voir §10** (`test/ledger.test.html`).
 3. **Avertir l'utilisateur sur les imports CSV avec montants invalides** (dette technique §5.4).
 4. **Arrondi en centimes entiers dans `ledger.js`** si des écarts d'affichage sont un jour rapportés par
    l'utilisateur (pas urgent tant que ça n'arrive pas).
@@ -707,6 +705,46 @@ format d'empaquetage) nécessiterait un nouvel APK — jamais une évolution nor
 committés dans ce dépôt — un keystore est un secret, sa perte empêcherait de republier une mise à jour
 signée de la même app). **À sauvegarder par l'utilisateur dans un endroit sûr, durablement** —
 nécessaire pour toute regénération future de l'APK sous le même `packageId`.
+
+## 10. Tests automatisés
+
+### 14 août 2026 — Tests de non-régression pour `ledger.js`
+
+Dette technique identifiée depuis l'audit du 12 août (§7.2) : le cœur des calculs financiers
+(`ledger.js`) n'avait aucune protection contre une régression de calcul lors d'un futur refactor.
+
+`test/ledger.test.html` — page HTML autonome (pas de framework, pas de build, conforme à la
+philosophie du projet) qui :
+- pose `window.__GEOFINANCE_TEST_DB_NAME__ = 'geofinance-ledger-test-db'` **avant** d'importer
+  `db.js`, ce qui redirige toutes les opérations vers une base IndexedDB isolée — jamais celle de
+  l'utilisateur. Nécessite un changement d'une ligne dans `db.js` (`DB_NAME` lit ce global s'il
+  existe, sinon comportement inchangé — voir commentaire sur place) : le seul point d'extension
+  ajouté pour permettre ce test.
+- vide cette base et y insère des données connues (portefeuilles multi-devises, transactions
+  revenu/dépense/virement, budget, dette + créance + paiement, investissement + historique de
+  valorisations, règle de catégorisation) via les vraies fonctions de `db.js`.
+- appelle les vraies fonctions de `ledger.js` (`walletBalancesAsOf`, `investmentValueAsOf`,
+  `computeNetWorth`, `computeMonthSummary`, `computeBudgetVsActual`, `computeExpensesByCategory`,
+  `computeFinancialHealthScore`, `guessCategoryId`) et compare au résultat attendu, calculé à la main.
+- affiche un résumé pass/fail directement sur la page (titre de l'onglet inclus, pour un coup d'œil
+  rapide) — pas de dépendance à la console.
+
+**Pour l'utiliser** : ouvrir `test/ledger.test.html` dans un navigateur (ex: servi par `serve.ps1`
+comme le reste de l'app) après tout changement dans `ledger.js`. 22 assertions, toutes vertes
+actuellement.
+
+**Piège rencontré en l'écrivant, à connaître pour la suite** : le Service Worker met en cache
+n'importe quelle requête GET same-origin après une première visite — y compris `test/*`, qui n'est
+pourtant pas dans `APP_SHELL`. Un premier run a montré 3 échecs (résultat contaminé par des
+transactions de fixture mal isolées, corrigé), puis après correction du fichier de test, le
+*second* run affichait encore les anciens résultats : le Service Worker servait la version du
+fichier HTML mise en cache lors du premier chargement, pas la version corrigée sur disque. Il faut
+vider `caches`/désinscrire le Service Worker (comme d'habitude en local, §3.1) avant de rejouer les
+tests après une modification de `test/ledger.test.html` lui-même.
+
+`CACHE_VERSION` : `v41` → `v42` (changement dans `db.js`, précaché dans `APP_SHELL`, même si sans
+effet pour un utilisateur réel — `window.__GEOFINANCE_TEST_DB_NAME__` n'est jamais posé en dehors de
+cette page de test).
 
 **Non fait à ce stade (pas demandé, pertinent seulement pour Play Store ou expérience 100% sans
 barre d'adresse)** : `.well-known/assetlinks.json` (Digital Asset Links) — doit être hébergé à la

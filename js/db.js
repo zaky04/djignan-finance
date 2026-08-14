@@ -5,7 +5,11 @@
    l'import/export JSON puisse fusionner ou restaurer sans collision.
    ========================================================================== */
 
-export const DB_NAME = 'geofinance-db';
+// Le nom de la base est normalement fixe ; le seul point d'extension est un test dédié
+// (test/ledger.test.html) qui pose ce global AVANT d'importer ce module pour rediriger toutes
+// les opérations vers une base IndexedDB isolée, jamais celle de l'utilisateur. Sur une page
+// normale de l'app, ce global n'existe jamais : comportement inchangé.
+export const DB_NAME = (typeof window !== 'undefined' && window.__GEOFINANCE_TEST_DB_NAME__) || 'geofinance-db';
 export const DB_VERSION = 4;
 
 export const STORES = {

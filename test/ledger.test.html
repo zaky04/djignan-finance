@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>GeoFinance — Tests ledger.js</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 760px; margin: 32px auto; padding: 0 16px; background: #12162b; color: #eef0fb; }
+  h1 { font-size: 18px; }
+  #summary { font-weight: 700; font-size: 15px; margin: 16px 0; }
+  .pass { color: #16a34a; }
+  .fail { color: #e11d48; }
+  ul { list-style: none; padding: 0; font-size: 13.5px; line-height: 1.7; }
+  li { padding: 4px 8px; border-radius: 6px; }
+  li.fail { background: rgba(225,29,72,.12); }
+  .detail { color: #9aa0b4; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>GeoFinance — Tests de non-régression pour ledger.js</h1>
+<p class="detail">
+  Rejoue quelques scénarios de calcul connus contre le vrai <code>ledger.js</code>, dans une base
+  IndexedDB isolée (<code>geofinance-ledger-test-db</code>, jamais celle de l'utilisateur — voir
+  <code>window.__GEOFINANCE_TEST_DB_NAME__</code> dans <code>js/db.js</code>). Rejouer cette page
+  après un refactor de <code>ledger.js</code> pour repérer une régression de calcul.
+</p>
+<div id="summary">Exécution…</div>
+<ul id="results"></ul>
+
+<script type="module">
+// Doit être posé AVANT tout import de db.js : redirige toutes les opérations vers une base de
+// test isolée, jamais la vraie base de l'utilisateur.
+window.__GEOFINANCE_TEST_DB_NAME__ = 'geofinance-ledger-test-db';
+
+const { STORES, dbAdd, wipeAllData, setSetting } = await import('../js/db.js');
+const {
+  walletBalancesAsOf, investmentValueAsOf, computeNetWorth, computeMonthSummary,
+  computeBudgetVsActual, computeExpensesByCategory, computeFinancialHealthScore, guessCategoryId,
+} = await import('../js/ledger.js');
+
+const results = [];
+function assertEqual(desc, actual, expected, tolerance = 0.001) {
+  const ok = typeof expected === 'number'
+    ? Math.abs(actual - expected) <= tolerance
+    : actual === expected;
+  results.push({ desc, ok, actual, expected });
+}
+function assertTrue(desc, ok, detail = '') {
+  results.push({ desc, ok, actual: detail, expected: '' });
+}
+
+async function seedFixtures() {
+  await wipeAllData();
+  await setSetting('baseCurrency', 'EUR');
+
+  await dbAdd(STORES.EXCHANGE_RATES, { code: 'EUR', rateToBase: 1, confirmed: true });
+  await dbAdd(STORES.EXCHANGE_RATES, { code: 'USD', rateToBase: 0.9, confirmed: true }); // 1 USD = 0.9 EUR
+
+  await dbAdd(STORES.WALLETS, { id: 'w1', name: 'Compte EUR', currency: 'EUR', initialBalance: 1000, createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.WALLETS, { id: 'w2', name: 'Compte USD', currency: 'USD', initialBalance: 0, createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.WALLETS, { id: 'w3', name: 'Épargne EUR', currency: 'EUR', initialBalance: 0, createdAt: '2026-01-01T00:00:00.000Z' });
+
+  await dbAdd(STORES.CATEGORIES, { id: 'c1', name: 'Alimentation', type: 'expense' });
+  await dbAdd(STORES.CATEGORIES, { id: 'c2', name: 'Salaire', type: 'income' });
+
+  await dbAdd(STORES.TRANSACTIONS, { id: 't1', type: 'income', walletId: 'w1', categoryId: 'c2', amount: 2000, date: '2026-06-01', note: 'Salaire juin' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 't2', type: 'expense', walletId: 'w1', categoryId: 'c1', amount: 300, date: '2026-06-05', note: 'Courses' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 't3', type: 'expense', walletId: 'w2', categoryId: 'c1', amount: 50, date: '2026-06-10', note: 'Café Michel' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 't4', type: 'transfer', walletId: 'w1', targetWalletId: 'w3', amount: 200, date: '2026-06-15', note: 'Virement épargne' });
+
+  await dbAdd(STORES.BUDGETS, { id: 'b1', categoryId: 'c1', month: '2026-06', limit: 400 });
+
+  await dbAdd(STORES.DEBTS, { id: 'd1', type: 'debt', currency: 'EUR', principal: 500, startDate: '2026-05-01' });
+  await dbAdd(STORES.DEBTS, { id: 'd2', type: 'receivable', currency: 'EUR', principal: 200, startDate: '2026-05-01' });
+  await dbAdd(STORES.DEBT_PAYMENTS, { id: 'p1', debtId: 'd1', amount: 100, date: '2026-06-01' });
+
+  await dbAdd(STORES.INVESTMENTS, { id: 'inv1', name: 'Actions', currency: 'EUR', capitalInvested: 1000, createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.INVESTMENT_ENTRIES, { id: 'e1', investmentId: 'inv1', type: 'valuation', amount: 1200, date: '2026-05-01' });
+  await dbAdd(STORES.INVESTMENT_ENTRIES, { id: 'e2', investmentId: 'inv1', type: 'valuation', amount: 1300, date: '2026-06-10' });
+
+  // Portefeuille dédié, séparé de w1/w2/w3 : ces transactions ne servent qu'à guessCategoryId
+  // (règles + fréquence). En dehors de juin (mois utilisé par tous les tests mensuels ci-dessus)
+  // et soldé à 0 (une entrée compense les 3 sorties) pour ne fausser ni computeNetWorth (qui
+  // compte tous les portefeuilles, y compris ce dernier) ni les agrégats mensuels.
+  await dbAdd(STORES.WALLETS, { id: 'w4', name: 'Historique (test guessCategoryId)', currency: 'EUR', initialBalance: 0, createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.CATEGORIZATION_RULES, { id: 'r1', pattern: 'restaurant', categoryId: 'c1' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'th1', type: 'expense', walletId: 'w4', categoryId: 'c1', amount: 5, date: '2026-04-01', note: 'Café Michel' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'th2', type: 'expense', walletId: 'w4', categoryId: 'c1', amount: 5, date: '2026-04-02', note: 'Café Michel' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'th3', type: 'expense', walletId: 'w4', categoryId: 'c2', amount: 5, date: '2026-04-03', note: 'Café Michel' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'th4', type: 'income', walletId: 'w4', categoryId: 'c2', amount: 15, date: '2026-04-04', note: 'Compense th1-th3 pour solde w4 = 0' });
+}
+
+async function runTests() {
+  await seedFixtures();
+  const wallets = await (await import('../js/db.js')).dbGetAll(STORES.WALLETS);
+  const transactions = await (await import('../js/db.js')).dbGetAll(STORES.TRANSACTIONS);
+
+  // --- walletBalancesAsOf (fonction pure, pas d'accès DB) ---
+  const balances = walletBalancesAsOf(wallets, transactions);
+  assertEqual('walletBalancesAsOf : w1 = initial +revenu -dépense -virement sortant', balances.get('w1'), 2500);
+  assertEqual('walletBalancesAsOf : w2 = -dépense en USD (pas de conversion à ce niveau)', balances.get('w2'), -50);
+  assertEqual('walletBalancesAsOf : w3 = virement entrant', balances.get('w3'), 200);
+
+  const balancesAtCutoff = walletBalancesAsOf(wallets, transactions, '2026-06-05');
+  assertEqual('walletBalancesAsOf(cutoff) : ignore les transactions après la date', balancesAtCutoff.get('w1'), 2700);
+  assertEqual('walletBalancesAsOf(cutoff) : w3 non affecté avant son virement', balancesAtCutoff.get('w3'), 0);
+
+  // --- investmentValueAsOf (fonction pure) ---
+  const inv = { id: 'inv1', createdAt: '2026-01-01T00:00:00.000Z', capitalInvested: 1000 };
+  const entries = [
+    { investmentId: 'inv1', type: 'valuation', amount: 1200, date: '2026-05-01' },
+    { investmentId: 'inv1', type: 'valuation', amount: 1300, date: '2026-06-10' },
+  ];
+  assertEqual('investmentValueAsOf : dernière valorisation connue (sans cutoff)', investmentValueAsOf(inv, entries, null), 1300);
+  assertEqual('investmentValueAsOf : valorisation la plus récente ≤ cutoff', investmentValueAsOf(inv, entries, '2026-06-01'), 1200);
+  assertEqual('investmentValueAsOf : repli sur le capital investi si aucune valorisation avant cutoff', investmentValueAsOf(inv, entries, '2026-02-01'), 1000);
+  assertEqual('investmentValueAsOf : 0 si cutoff avant la création de l\'investissement', investmentValueAsOf(inv, entries, '2025-12-01'), 0);
+
+  // --- computeNetWorth (agrégat complet : portefeuilles + investissements + créances - dettes) ---
+  const netWorth = await computeNetWorth();
+  // w1(2500) + w2(-50 USD * 0.9 = -45 EUR) + w3(200) + inv1(1300) + créance d2(200) - dette d1(500-100=400)
+  assertEqual('computeNetWorth : patrimoine net = portefeuilles + investissements + créances - dettes', netWorth.total, 2500 - 45 + 200 + 1300 + 200 - 400);
+
+  // --- computeMonthSummary (exclut les virements) ---
+  const summary = await computeMonthSummary('2026-06');
+  assertEqual('computeMonthSummary : revenus du mois', summary.income, 2000);
+  assertEqual('computeMonthSummary : dépenses converties en devise de base', summary.expenses, 300 + 50 * 0.9);
+  assertEqual('computeMonthSummary : épargne nette = revenus - dépenses', summary.netSavings, 2000 - (300 + 50 * 0.9));
+
+  // --- computeBudgetVsActual ---
+  const budgetRows = await computeBudgetVsActual('2026-06');
+  const c1Row = budgetRows.find((r) => r.categoryId === 'c1');
+  assertTrue('computeBudgetVsActual : trouve la ligne de budget Alimentation', !!c1Row);
+  if (c1Row) {
+    assertEqual('computeBudgetVsActual : budget alloué', c1Row.budget, 400);
+    assertEqual('computeBudgetVsActual : dépensé réel (converti)', c1Row.actual, 300 + 50 * 0.9);
+  }
+
+  // --- computeExpensesByCategory ---
+  const byCategory = await computeExpensesByCategory('2026-06');
+  assertEqual('computeExpensesByCategory : une seule catégorie de dépense ce mois-ci', byCategory.length, 1);
+  if (byCategory.length) {
+    assertEqual('computeExpensesByCategory : total Alimentation', byCategory[0].value, 300 + 50 * 0.9);
+  }
+
+  // --- computeFinancialHealthScore (sanity check, pas de valeur exacte attendue) ---
+  const health = await computeFinancialHealthScore('2026-06');
+  assertTrue('computeFinancialHealthScore : score dans [0, 100]', health.score >= 0 && health.score <= 100, `score=${health.score}`);
+
+  // --- guessCategoryId ---
+  const byRule = await guessCategoryId('Restaurant Le Gourmet', 'expense');
+  assertEqual('guessCategoryId : une règle de catégorisation explicite gagne', byRule, 'c1');
+
+  const byFrequency = await guessCategoryId('café michel', 'expense');
+  assertEqual('guessCategoryId : à défaut de règle, la catégorie la plus fréquente parmi les correspondances', byFrequency, 'c1');
+
+  const byNothing = await guessCategoryId('xyz totalement inconnu', 'expense');
+  assertEqual('guessCategoryId : null si aucune correspondance', byNothing, null);
+
+  render();
+}
+
+function render() {
+  const ul = document.getElementById('results');
+  const passCount = results.filter((r) => r.ok).length;
+  for (const r of results) {
+    const li = document.createElement('li');
+    li.className = r.ok ? 'pass' : 'fail';
+    li.textContent = `${r.ok ? '✓' : '✗'} ${r.desc}` + (r.ok ? '' : ` — attendu ${JSON.stringify(r.expected)}, obtenu ${JSON.stringify(r.actual)}`);
+    ul.appendChild(li);
+  }
+  const summary = document.getElementById('summary');
+  const allPass = passCount === results.length;
+  summary.className = allPass ? 'pass' : 'fail';
+  summary.textContent = `${passCount} / ${results.length} tests réussis`;
+  document.title = `${allPass ? '✓' : '✗'} ${passCount}/${results.length} — GeoFinance ledger tests`;
+}
+
+runTests().catch((err) => {
+  document.getElementById('summary').className = 'fail';
+  document.getElementById('summary').textContent = 'Erreur pendant l\'exécution des tests : ' + err.message;
+  console.error(err);
+});
+</script>
+</body>
+</html>
