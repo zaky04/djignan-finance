@@ -11,12 +11,12 @@
    ========================================================================== */
 
 export const firebaseConfig = {
-  apiKey: 'REPLACE_ME',
-  authDomain: 'REPLACE_ME',
-  projectId: 'REPLACE_ME',
-  storageBucket: 'REPLACE_ME',
-  messagingSenderId: 'REPLACE_ME',
-  appId: 'REPLACE_ME',
+  apiKey: 'AIzaSyAg5BqRaVOV0QCqrRx0rV0JwuC8XS67-jg',
+  authDomain: 'geofinance-backup.firebaseapp.com',
+  projectId: 'geofinance-backup',
+  storageBucket: 'geofinance-backup.firebasestorage.app',
+  messagingSenderId: '868830301244',
+  appId: '1:868830301244:web:715281871daba9a49c8739',
 };
 
 /** true tant que la config n'a pas été renseignée : permet à firebase-sync.js d'afficher un

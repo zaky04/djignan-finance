@@ -435,13 +435,32 @@ modules) se charge sans violation CSP via `import()` direct de l'URL gstatic —
 tout la dernière fois est confirmé corrigé** ; `buildEncryptedPayload`/`decryptPayload` : aller-retour
 chiffrement/déchiffrement correct, mauvais mot de passe correctement rejeté (non-régression du refactor).
 
-**Reste à faire par l'utilisateur** (je ne peux pas agir sur son compte Google) : créer le projet Firebase,
-activer Google comme fournisseur de connexion, créer Firestore avec les règles de sécurité restreignant
-chaque utilisateur à son propre document, autoriser `zaky04.github.io` comme domaine, remplacer les
-`'REPLACE_ME'` dans `js/firebase-config.js` par les vraies valeurs — puis tester réellement la connexion
-Google et la sauvegarde/restauration Firestore (impossible à simuler sans le projet réel).
-
 `CACHE_VERSION` : `v34` → `v35`.
+
+### 13 août 2026 (suite) — Projet Firebase réel créé et branché
+
+L'utilisateur a suivi le guide pas à pas (console.firebase.google.com : projet `geofinance-backup`, connexion
+Google activée, Firestore créé en mode production avec les règles de sécurité restreignant chaque utilisateur
+à son propre document, domaine `zaky04.github.io` autorisé) et fourni la config réelle → `js/firebase-config.js`
+mis à jour (`REPLACE_ME` remplacés par les vraies valeurs — pas secrètes, sécurité assurée par les règles
+Firestore, pas par la confidentialité de l'apiKey).
+
+**Test supplémentaire avec la vraie config** (toujours sans pouvoir compléter une vraie connexion Google —
+ça nécessite l'interaction humaine de l'utilisateur dans son propre navigateur) : `signInWithGoogle()` appelé
+directement → échoue avec `auth/popup-blocked`, **pas** une erreur de config (`auth/invalid-api-key` etc.) ni
+une violation CSP. Ça confirme que Firebase accepte la config réelle et atteint l'étape d'ouverture de la
+fenêtre de connexion — seul le bloqueur de popup du navigateur automatisé (sans geste utilisateur "de
+confiance") arrête le flux à ce stade précis, ce qui n'arrivera pas pour l'utilisateur cliquant normalement.
+
+**Reste à faire par l'utilisateur** : tester réellement "Se connecter avec Google" dans son navigateur (popup
+devrait s'ouvrir normalement), "Sauvegarder maintenant" (vérifier dans la console Firebase → Firestore
+Database qu'un document apparaît sous `backups/{son-UID}`), puis simuler une réinstallation (vider les
+données de site ou utiliser un autre appareil/profil) → se reconnecter → "Restaurer depuis le cloud" → vérifier
+que les données reviennent.
+
+Petite lacune connue, non bloquante : les messages d'erreur Firebase remontés dans les toasts (ex.
+`Firebase: Error (auth/popup-blocked).`) sont les codes techniques bruts du SDK, pas traduits en français
+convivial. À améliorer si ça se révèle confus en usage réel, pas une urgence.
 
 `CACHE_VERSION` : `v30` → `v31`.
 
