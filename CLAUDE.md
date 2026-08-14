@@ -546,6 +546,34 @@ justificatifs photo) → 3 morceaux, tous sous la limite, réassemblage strictem
 
 `CACHE_VERSION` : `v37` → `v38`.
 
+### 14 août 2026 — Restauration cassée par la CSP : `fetch(data:...)` bloqué (commit à venir)
+
+Signalé par l'utilisateur après avoir franchi les étapes précédentes (connexion, mot de passe, découpage) :
+`Failed to fetch` en cliquant "Restaurer depuis le cloud". Reproduit directement dans le navigateur pour
+confirmer la cause exacte avant de corriger : `fetch('data:text/plain;base64,...')` échouait avec
+`TypeError: Failed to fetch`, et la console révélait le vrai coupable — la CSP (`connect-src`), pas un bug
+réseau ou Firestore.
+
+Cause : `dataUrlToBlob()` (`backup.js`), utilisée par `deserializeReceiptsForImport()` pour reconstituer les
+photos de justificatifs (`receiptBlob`) à partir de leur forme sérialisée en data URL base64, appelle
+`fetch(dataUrl)` — un usage détourné mais standard de `fetch()` pour convertir une data URL en `Blob`. La CSP
+`connect-src` ajoutée pour Firebase (§13 août, Firebase) n'incluait pas `data:`, donc tout navigateur qui
+respecte la CSP pour les data URLs (Chrome le fait) bloquait cette conversion.
+
+**Portée plus large que la restauration cloud seule** : `deserializeReceiptsForImport()` est aussi le chemin
+utilisé par l'import local de sauvegarde chiffrée (`importEncryptedBackup()` dans `backup.js`, bouton
+"Importer (JSON chiffré)" des Paramètres) — toute sauvegarde locale ou cloud contenant au moins un
+justificatif photo échouait à l'import, silencieusement liée à ce même bug, pas seulement au cloud.
+
+→ `index.html` : ajout de `data:` à `connect-src` dans la CSP. Commentaire explicatif mis à jour pour
+documenter pourquoi (éviter qu'un futur audit sécurité le retire en pensant à une faille).
+
+Testé : `fetch('data:text/plain;base64,aGVsbG8=')` échouait avant le correctif (`Failed to fetch`, erreur CSP
+visible dans la console), réussit après (reload complet + vidage du cache SW pour prendre en compte la
+nouvelle CSP du `index.html`).
+
+`CACHE_VERSION` : `v38` → `v39`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
