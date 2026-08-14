@@ -574,6 +574,33 @@ nouvelle CSP du `index.html`).
 
 `CACHE_VERSION` : `v38` → `v39`.
 
+### 14 août 2026 (suite) — Après restauration, "Comptes gardés" restait invisible dans le menu desktop
+
+Signalé par l'utilisateur juste après avoir restauré sa sauvegarde cloud sur un second appareil
+(desktop) : les transactions étaient bien revenues, mais l'onglet "Comptes gardés" — activé côté
+mobile avant la sauvegarde — n'apparaissait pas dans le menu latéral, alors que le réglage aurait
+dû suivre.
+
+Cause : le réglage `keptAccountsEnabled` (comme tout `STORES.SETTINGS`) est bien inclus dans
+`exportAllData()`/`importAllData()` et revient donc correctement en base après import/restauration.
+Mais la visibilité du bouton de nav (`#nav-kept-accounts`, `hidden` géré par
+`applyOptionalModuleVisibility()` dans `settings.js`) n'était recalculée qu'au démarrage de l'app
+(`app.js`) et quand l'utilisateur cochait la case lui-même dans Paramètres — jamais après un import
+JSON local, un import chiffré local, ou une restauration cloud, qui écrivent pourtant ce même
+réglage. Le bouton restait figé dans l'état d'avant l'import jusqu'au prochain rechargement complet
+de la page.
+
+→ `app.js` : le listener déjà abonné à `EVENTS.DATA_CHANGED` (qui re-rend la vue courante) appelle
+maintenant aussi `applyOptionalModuleVisibility()` quand le scope est `'all'` — le scope utilisé par
+les 3 chemins d'import/restauration (`importJsonBackup`, `importEncryptedBackup`,
+`pullBackupFromCloud`), sans avoir à modifier ces 3 fonctions individuellement.
+
+Testé : réglage `keptAccountsEnabled` remis à `false` puis bouton de nav forcé `hidden` (simulant
+l'état au boot avant import) → réglage remis à `true` en base + `notifyDataChanged('all')` (ce que
+fait exactement un import) → bouton passe à `hidden = false` immédiatement, sans rechargement.
+
+`CACHE_VERSION` : `v39` → `v40`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

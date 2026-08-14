@@ -150,7 +150,14 @@ function wireGlobalChrome() {
   });
   setInterval(checkAutoLock, 15000);
 
-  bus.on(EVENTS.DATA_CHANGED, () => { VIEW_RENDERERS[appState.currentView]?.(); });
+  bus.on(EVENTS.DATA_CHANGED, (scope) => {
+    VIEW_RENDERERS[appState.currentView]?.();
+    // scope 'all' = import/restauration (locale ou cloud) : peut avoir changé des réglages de
+    // modules optionnels (ex: keptAccountsEnabled) sans passer par settings.js, qui applique déjà
+    // la visibilité lui-même — sans ça le bouton de nav reste dans l'état d'avant l'import jusqu'au
+    // prochain rechargement de page.
+    if (scope === 'all') applyOptionalModuleVisibility();
+  });
 }
 
 async function seedDefaultsIfNeeded() {
