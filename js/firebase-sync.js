@@ -148,8 +148,11 @@ function promptPassphrase(title) {
     modal.el.querySelector('#cloud-passphrase-form').addEventListener('submit', (e) => {
       e.preventDefault();
       const p = new FormData(e.target).get('passphrase');
-      modal.close();
+      // resolve() AVANT modal.close() : close() déclenche onClose() (=> resolve(null))
+      // synchroniquement — appeler resolve(p) après serait un no-op (une promesse déjà
+      // résolue ignore les résolutions suivantes), le mot de passe réel serait perdu.
       resolve(p);
+      modal.close();
     });
   });
 }

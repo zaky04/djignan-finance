@@ -493,6 +493,30 @@ façon sur mobile/PWA installée puisque la popup n'y est plus jamais tentée.
 
 `CACHE_VERSION` : `v35` → `v36`.
 
+### 13 août 2026 (suite) — Bug réel trouvé : le mot de passe de chiffrement était toujours perdu
+
+Signalé par l'utilisateur : connecté avec succès, clique "Sauvegarder maintenant", saisit le mot de passe de
+chiffrement, puis... rien. Cause : dans `promptPassphrase()` (dupliquée à l'identique dans `firebase-sync.js`
+et **déjà présente avant, dans `settings.js`**), l'ordre des deux appels était `modal.close(); resolve(p);`.
+Or `openModal()`'s `close()` (`utils.js`) déclenche `onClose()` **synchroniquement**, et l'`onClose` fourni ici
+est `() => resolve(null)` — donc `resolve(null)` s'exécutait avant `resolve(p)`, et comme une Promise ignore
+toute résolution après la première, le mot de passe réel était **systématiquement perdu**, silencieusement
+(`if (!p) return;` côté appelant). Reproduit et confirmé en isolant exactement ce motif dans le navigateur.
+
+**Portée du bug** : pas nouveau avec Firebase — `promptPassphrase()` dans `settings.js` (export/import "JSON
+chiffré" en local, boutons présents depuis longtemps) avait exactement le même défaut. Autrement dit
+l'export/import chiffré local ne fonctionnait probablement jamais non plus depuis ce menu, bug pré-existant
+non lié à cette session, découvert par ricochet en développant la sauvegarde cloud.
+`confirmDialog()` (`utils.js`), qui suit un motif similaire, n'est PAS concerné : son auteur original avait
+mis le bon ordre (`resolve(true); modal.close();`) — seul `promptPassphrase` (écrit séparément) avait
+l'ordre inversé. Recherché dans tout le projet (`grep`) : aucune autre occurrence du motif fautif.
+
+→ Corrigé aux deux endroits (`settings.js` et `firebase-sync.js`) : `resolve(p)` avant `modal.close()`.
+Testé : export JSON chiffré local (`settings.js`) → `lastBackupAt` correctement mis à jour immédiatement
+après soumission du mot de passe (avant le fix, il ne l'était jamais, confirmé par comparaison avant/après).
+
+`CACHE_VERSION` : `v36` → `v37`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
