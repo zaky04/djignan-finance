@@ -55,7 +55,7 @@ async function serializeReceiptsForExport(data) {
     }
   }
 }
-async function deserializeReceiptsForImport(data) {
+export async function deserializeReceiptsForImport(data) {
   for (const t of data.stores?.[STORES.TRANSACTIONS] || []) {
     if (t.receiptDataUrl) {
       t.receiptBlob = await dataUrlToBlob(t.receiptDataUrl);
@@ -68,7 +68,7 @@ async function deserializeReceiptsForImport(data) {
     lastBackupAt ET remet à zéro le compteur de report, pour que le rappel hebdomadaire
     redevienne "poli" (snooze 24h autorisé) tant que l'utilisateur ne l'ignore pas à nouveau
     plusieurs fois de suite. Voir checkWeeklyBackupReminder(). */
-async function markBackupDone() {
+export async function markBackupDone() {
   await setSetting('lastBackupAt', new Date().toISOString());
   await setSetting('backupSnoozeCount', 0);
 }
@@ -89,8 +89,11 @@ export async function importJsonBackup(file, { merge = false } = {}) {
   notifyDataChanged('all');
 }
 
-/* ---------- Export / import JSON chiffré (AES-GCM 256, PBKDF2) ---------- */
-export async function exportEncryptedBackup(passphrase) {
+/* ---------- Export / import JSON chiffré (AES-GCM 256, PBKDF2) ----------
+   buildEncryptedPayload()/decryptPayload() portent tout le cœur cryptographique, indépendamment
+   de la destination (fichier téléchargé ici, document Firestore dans firebase-sync.js) : le même
+   chiffrement, testé une seule fois, sert aux deux. */
+export async function buildEncryptedPayload(passphrase) {
   const data = await exportAllData();
   await serializeReceiptsForExport(data);
   const json = JSON.stringify(data);
@@ -98,13 +101,29 @@ export async function exportEncryptedBackup(passphrase) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveAesKey(passphrase, salt);
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(json));
-  const payload = {
+  return {
     geofinanceEncryptedBackup: true,
     version: 1,
     salt: bufToBase64(salt),
     iv: bufToBase64(iv),
     ciphertext: bufToBase64(ciphertext),
   };
+}
+
+export async function decryptPayload(payload, passphrase) {
+  if (!payload?.geofinanceEncryptedBackup) throw new Error("Ce n'est pas une sauvegarde chiffrée GeoFinance valide.");
+  const key = await deriveAesKey(passphrase, base64ToBuf(payload.salt));
+  let plainBuf;
+  try {
+    plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBuf(payload.iv) }, key, base64ToBuf(payload.ciphertext));
+  } catch {
+    throw new Error('Mot de passe incorrect ou sauvegarde corrompue.');
+  }
+  return JSON.parse(new TextDecoder().decode(plainBuf));
+}
+
+export async function exportEncryptedBackup(passphrase) {
+  const payload = await buildEncryptedPayload(passphrase);
   downloadFile(`geofinance-backup-chiffre-${todayISO()}.json`, JSON.stringify(payload), 'application/json');
   await markBackupDone();
 }
@@ -112,15 +131,7 @@ export async function exportEncryptedBackup(passphrase) {
 export async function importEncryptedBackup(file, passphrase, { merge = false } = {}) {
   const text = await readFileAsText(file);
   const payload = JSON.parse(text);
-  if (!payload.geofinanceEncryptedBackup) throw new Error("Ce fichier n'est pas une sauvegarde chiffrée GeoFinance valide.");
-  const key = await deriveAesKey(passphrase, base64ToBuf(payload.salt));
-  let plainBuf;
-  try {
-    plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBuf(payload.iv) }, key, base64ToBuf(payload.ciphertext));
-  } catch {
-    throw new Error('Mot de passe incorrect ou fichier corrompu.');
-  }
-  const data = JSON.parse(new TextDecoder().decode(plainBuf));
+  const data = await decryptPayload(payload, passphrase);
   await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
   notifyDataChanged('all');

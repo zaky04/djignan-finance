@@ -8,9 +8,12 @@
      refactoriser ça en classes CSS serait un chantier séparé, pas une urgence sécurité (XSS via
      CSS est un vecteur bien plus faible que via JS, déjà couvert par script-src). connect-src
      autorise open.er-api.com pour la récupération optionnelle de taux de change (voir wallets.js).
+     Domaines gstatic/googleapis/firebase* : sauvegarde cloud optionnelle via Google (voir
+     firebase-sync.js) — chargés/appelés uniquement si l'utilisateur active cette fonctionnalité,
+     jamais sur le chemin par défaut. frame-src accueille la fenêtre de connexion Google.
      frame-ancestors est volontairement absent : cette directive n'a aucun effet via <meta> (elle
      exige un en-tête HTTP, hors de portée d'un site 100% statique sur GitHub Pages). -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' https://open.er-api.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com https://www.googleapis.com; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' https://open.er-api.com https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://*.firebaseapp.com https://accounts.google.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self';">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="GeoFinance System — gestion complète de vos finances personnelles, 100% locale et hors-ligne.">
 <meta name="theme-color" content="#0B1220" media="(prefers-color-scheme: dark)">

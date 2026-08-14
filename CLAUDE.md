@@ -397,6 +397,52 @@ deviner — comportement défensif voulu, pas un bug.
 
 `CACHE_VERSION` : `v33` → `v34`.
 
+### 13 août 2026 (suite) — Sauvegarde cloud optionnelle via Google (Firebase Auth + Firestore)
+
+Reprise cadrée de la tentative Firebase annulée plus tôt (§ "Tentative de sync cloud Firebase, ajoutée puis
+annulée"). **Diagnostic confirmé** (horodatages git) : la CSP a été ajoutée à 12h34, Firebase à 15h51 —
+`script-src`/`connect-src` bloquaient tous les domaines Google/Firebase, personne ne les avait ajoutés en
+même temps. Reconstruit proprement cette fois, avec deux choix validés avec l'utilisateur avant de coder :
+
+1. **Chiffré, pas en clair** — réutilise `buildEncryptedPayload`/`decryptPayload` (voir ci-dessous), le même
+   chiffrement AES-GCM/PBKDF2 que l'export chiffré local, déjà éprouvé. Le mot de passe ne quitte jamais
+   l'appareil ; même une mauvaise configuration des règles Firestore ne rendrait rien lisible.
+2. **Sauvegarder/Restaurer à la demande, pas de synchro continue** — un seul document Firestore par
+   utilisateur (clé = UID Google), contenant le blob chiffré. Aucun moteur de résolution de conflits à
+   construire.
+
+**Fichiers** :
+- `backup.js` — extrait `buildEncryptedPayload(passphrase)`/`decryptPayload(payload, passphrase)` (exportées)
+  du cœur d'`exportEncryptedBackup`/`importEncryptedBackup`, qui les appellent maintenant au lieu de dupliquer
+  le chiffrement. `deserializeReceiptsForImport` et `markBackupDone` exportées aussi (réutilisées côté cloud).
+- `js/firebase-config.js` (nouveau) — objet `firebaseConfig`, valeurs `'REPLACE_ME'` tant que l'utilisateur
+  n'a pas créé son projet Firebase et fourni les vraies clés (pas secrètes — la sécurité vient des règles
+  Firestore, pas de la confidentialité de l'apiKey). `isFirebaseConfigured` détecte l'état non configuré.
+- `js/firebase-sync.js` (nouveau) — SDK Firebase (modular, CDN ESM, pas de build/npm) chargé **paresseusement**
+  via `import()` dynamique, uniquement si une connexion précédente est connue (setting
+  `cloudBackupWasSignedIn`) ou au clic sur "Se connecter" — jamais sur le chemin par défaut. `waitForAuthReady()`
+  attend la première notification `onAuthStateChanged` plutôt que de lire `auth.currentUser` immédiatement
+  après `getAuth()` (la restauration de session est asynchrone, lire trop tôt peut renvoyer null à tort).
+  `signInWithGoogle`, `signOutGoogle`, `pushBackupToCloud`, `pullBackupFromCloud`, `renderCloudBackupSection`
+  (UI montée dans Paramètres, nouveau conteneur `#settings-cloud-backup`).
+- `index.html` — CSP étendue : `script-src` += gstatic/apis.google/googleapis, `connect-src` +=
+  firestore/identitytoolkit/securetoken/firebaseio (+ `wss://`), nouvelle directive `frame-src` pour la
+  fenêtre de connexion Google. Domaines confirmés par recherche externe avant d'écrire le code.
+
+**Testé sans les vraies clés Firebase** (limite assumée — voir plan) : app fonctionnelle sans jamais charger
+le SDK tant que non sollicité (zéro requête réseau gstatic/googleapis vérifiée) ; le SDK réel (les 3 sous-
+modules) se charge sans violation CSP via `import()` direct de l'URL gstatic — **le point exact qui cassait
+tout la dernière fois est confirmé corrigé** ; `buildEncryptedPayload`/`decryptPayload` : aller-retour
+chiffrement/déchiffrement correct, mauvais mot de passe correctement rejeté (non-régression du refactor).
+
+**Reste à faire par l'utilisateur** (je ne peux pas agir sur son compte Google) : créer le projet Firebase,
+activer Google comme fournisseur de connexion, créer Firestore avec les règles de sécurité restreignant
+chaque utilisateur à son propre document, autoriser `zaky04.github.io` comme domaine, remplacer les
+`'REPLACE_ME'` dans `js/firebase-config.js` par les vraies valeurs — puis tester réellement la connexion
+Google et la sauvegarde/restauration Firestore (impossible à simuler sans le projet réel).
+
+`CACHE_VERSION` : `v34` → `v35`.
+
 `CACHE_VERSION` : `v30` → `v31`.
 
 ## 7. Pistes prioritaires non traitées

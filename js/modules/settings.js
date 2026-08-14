@@ -12,6 +12,7 @@ import {
   isFileSystemAccessSupported, chooseAutoBackupDirectory, getAutoBackupDirectory, clearAutoBackupDirectory,
 } from '../backup.js';
 import { isNotificationSupported, getNotificationPermission, requestNotificationPermission, checkAndNotify } from '../notifications.js';
+import { renderCloudBackupSection } from '../firebase-sync.js';
 import { isStandalone, isIOS, isSafari, isAndroid, hasDeferredPrompt, triggerInstall, resetInstallPromptSnooze } from '../install-prompt.js';
 import { DASHBOARD_PANEL_DEFAULTS, BUDGET_ALERT_THRESHOLD_DEFAULTS } from './dashboard.js';
 import { escapeHtml, formatDate, CURRENCIES, openModal, confirmDialog, showToast } from '../utils.js';
@@ -595,7 +596,7 @@ async function renderDashboardConfigSection(container) {
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-profile"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-credit"></div>';
+  container.innerHTML = '<div id="settings-profile"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-cloud-backup"></div><div id="settings-credit"></div>';
   await renderProfileSection(document.getElementById('settings-profile'));
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
@@ -605,6 +606,7 @@ export async function renderSettings() {
   await renderFeaturesSection(document.getElementById('settings-features'));
   await renderCurrencySection(document.getElementById('settings-currency'));
   await renderBackupSection(document.getElementById('settings-backup'));
+  await renderCloudBackupSection(document.getElementById('settings-cloud-backup'));
   document.getElementById('settings-credit').innerHTML =
     '<p style="text-align:center;font-size:11px;color:var(--text-faint);margin:20px 0 4px;">Par Adtcheko 5T/ · <a href="mailto:ronywest01@gmail.com" style="color:inherit;">Contribuer / contact</a></p>';
 }
