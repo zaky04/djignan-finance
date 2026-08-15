@@ -968,4 +968,45 @@ const EN = {
   "Fonds d'urgence": 'Emergency fund',
   'Épargne actions': 'Stock savings',
   'Prêt pour dépannage': 'Emergency loan',
+
+  // ---------- Portefeuilles (wallets.js + en-tête index.html) ----------
+  '+ Nouveau portefeuille': '+ New wallet',
+  'Liquidités': 'Cash & liquid assets',
+  'Nom du portefeuille': 'Wallet name',
+  'Ex: BNP Paribas, Orange Money…': 'E.g. BNP Paribas, Orange Money…',
+  "Seuil d'alerte de solde bas (optionnel)": 'Low balance alert threshold (optional)',
+  'Ex: 50': 'E.g. 50',
+  'Créer le portefeuille': 'Create the wallet',
+  'Modifier le portefeuille': 'Edit wallet',
+  'Nouveau portefeuille': 'New wallet',
+  'Portefeuille mis à jour.': 'Wallet updated.',
+  'Portefeuille créé.': 'Wallet created.',
+  'Compte bancaire': 'Bank account',
+  "Portefeuille d'investissement": 'Investment wallet',
+  'Épargne spécifique': 'Dedicated savings',
+  'Requête réseau échouée': 'Network request failed',
+  'Réponse inattendue du service': 'Unexpected response from the service',
+  'Taux de change': 'Exchange rates',
+  'Aucune devise étrangère utilisée. Devise de base : <strong>{base}</strong>.': 'No foreign currency in use. Base currency: <strong>{base}</strong>.',
+  'Taux de change (devise de base : {base})': 'Exchange rates (base currency: {base})',
+  'Actualiser via internet': 'Refresh online',
+  '{count} taux ne sont pas encore confirmés (valeur 1:1 par défaut, presque certainement fausse). Corrigez-les ci-dessous pour un patrimoine net exact.':
+    '{count} rates are not yet confirmed (defaulted to 1:1, almost certainly wrong). Fix them below for an accurate net worth.',
+  "Un taux n'est pas encore confirmé (valeur 1:1 par défaut, presque certainement fausse). Corrigez-le ci-dessous pour un patrimoine net exact.":
+    'One rate is not yet confirmed (defaulted to 1:1, almost certainly wrong). Fix it below for an accurate net worth.',
+  'non confirmé': 'unconfirmed',
+  'Récupération…': 'Fetching…',
+  '{count} taux mis à jour.': '{count} rate(s) updated.',
+  'Introuvables : {codes} (à saisir manuellement).': 'Not found: {codes} (enter manually).',
+  'Aucun taux trouvé pour vos devises ({codes}) — saisissez-les manuellement.': 'No rate found for your currencies ({codes}) — enter them manually.',
+  'Récupération impossible (hors-ligne ou service indisponible). Vous pouvez toujours saisir les taux manuellement.':
+    'Fetch not possible (offline or service unavailable). You can still enter rates manually.',
+  'Taux de {code} mis à jour.': '{code} rate updated.',
+  'Aucun portefeuille pour le moment. Créez votre premier compte bancaire, mobile money ou espèces.':
+    'No wallet yet. Create your first bank account, mobile money, or cash wallet.',
+  'Supprimer définitivement "{name}" ? Ce portefeuille n\'a aucune transaction, la suppression est possible.':
+    'Permanently delete "{name}"? This wallet has no transactions, deletion is possible.',
+  'Portefeuille supprimé.': 'Wallet deleted.',
+  'Portefeuille archivé.': 'Wallet archived.',
+  'Portefeuille désarchivé.': 'Wallet unarchived.',
 };

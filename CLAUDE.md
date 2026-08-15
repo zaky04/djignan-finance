@@ -1187,13 +1187,23 @@ que certains écrans resteront en français le temps du reste du chantier.
 - ✅ Mode démo et assistant de configuration (lot 14, voir entrée ci-dessous) : bandeau, contenu du
   jeu de données de démonstration, assistant d'onboarding complet (7 étapes).
 
-**Chantier d'internationalisation FR/EN terminé** (15 août 2026, lots 1 à 14) : toutes les vues, tous
-les modules, l'assistant de configuration et le mode démo sont traduits. Reste volontairement non
-traduit (décisions déjà prises, documentées à chaque lot concerné) : les messages d'erreur internes
-des bibliothèques tierces (Firebase SDK, `err.message` brut), le sélecteur de langue lui-même
-(intentionnellement toujours bilingue), et tout texte de données utilisateur (noms de portefeuilles,
-notes de transaction, noms de catégories déjà créées avant un changement de langue, etc. — jamais
-traduit rétroactivement, par conception).
+**⚠️ Le lot 14 avait été annoncé à tort comme la fin du chantier.** L'auteur a demandé une
+vérification directe ("tu es sûr que l'app est totalement bilingue jusque là?") — un audit
+systématique (recherche de `import.*i18n` manquant + recherche de chaînes accentuées hors
+commentaires) a révélé plusieurs trous réels, corrigés dans les lots 15-18 ci-dessous :
+- **`wallets.js` (écran Portefeuilles) n'avait jamais été touché** — absent de la checklist depuis le
+  début du chantier, alors que c'est un des écrans les plus utilisés de l'app. Corrigé au lot 15.
+- `notifications.js` (notifications système OS), `backup.js` (erreurs d'import/export), le
+  `cancelText` par défaut de `confirmDialog()` (`utils.js` — affectait TOUTES les boîtes de
+  confirmation de l'app), et deux labels de graphiques (`ledger.js`, `charts.js`) — corrigés aux
+  lots 16-18.
+
+Cette mésaventure est documentée ici volontairement : la bonne méthode pour vérifier qu'un chantier
+de traduction est complet n'est pas de se fier à une checklist construite au fil de l'eau (celle du
+lot 1, écrite de mémoire en listant les éléments du menu, avait simplement omis Portefeuilles), mais
+de lister tous les fichiers du projet et vérifier lesquels importent (ou devraient importer)
+`i18n.js` — c'est exactement l'audit (`grep` sur chaque fichier `js/**/*.js`) qui a débusqué
+`wallets.js` ainsi que les autres trous listés ci-dessus, en quelques minutes.
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
 navigation mobile, écran de verrouillage (titre/sous-titre/aria-labels) et tableau de bord entier
@@ -1638,6 +1648,29 @@ puis même parcours complet rejoué en français pour confirmer l'absence de ré
 console.
 
 `CACHE_VERSION` : `v65` → `v66`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 15/N : Portefeuilles, trou comblé)
+
+Écran converti : **Portefeuilles** (`wallets.js`) — cartes patrimoine (reste à vivre, patrimoine net,
+composition), cartes de portefeuille, formulaire, panneau des taux de change (récupération en ligne
+incluse). Ce module avait été **complètement oublié** de la checklist depuis le lot 1 — voir la note
+d'avertissement plus haut dans ce fichier pour le contexte de sa découverte. Aucune collision
+`t`/variable (vérifié par `grep`) — import direct. `WALLET_TYPES` : mêmes conventions que
+`ASSET_CLASSES` (investments.js) — clés jamais traduites, valeurs traduites à l'usage. Beaucoup de
+réutilisation de clés déjà posées par les lots précédents (Reste à vivre, Patrimoine net global,
+Composition du patrimoine, Créances, Dettes, Investissements, Portefeuilles, tous depuis le lot 1 ou
+les lots Budgets/Dettes/Comptes gardés).
+
+~40 nouvelles entrées de dictionnaire, 0 doublon (828 clés au total).
+
+Testé FR→EN→FR de bout en bout avec des données réelles (mode démo re-semé) : cartes patrimoine et
+portefeuille, formulaire (tous les types de portefeuille traduits, « Mobile Money » gardé tel quel —
+marque, pas un libellé générique), panneau des taux avec un portefeuille EUR ajouté pour forcer
+l'affichage du panneau (badge "unconfirmed", saisie manuelle testée avec toast "EUR rate updated."
+confirmé), suppression réelle d'un portefeuille de test (confirmation + toast "Wallet deleted."
+vérifiés), nettoyage puis retour en français confirmé sans régression. Aucune erreur console.
+
+`CACHE_VERSION` : `v66` → `v67`.
 
 ## 7. Pistes prioritaires non traitées
 
