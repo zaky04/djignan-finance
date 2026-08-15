@@ -1169,7 +1169,8 @@ que certains écrans resteront en français le temps du reste du chantier.
 - ✅ Budgets (lot 3, voir entrée ci-dessous) : les 5 onglets (Budgets du mois, Budgets annuels,
   Catégories, Récurrences, Règles) et leurs modales.
 - ✅ Épargne (lot 4, voir entrée ci-dessous) : objectifs, contributions, archivage.
-- ⬜ Investissements, Dettes & créances, Outils, Rapports, Partage,
+- ✅ Investissements (lot 5, voir entrée ci-dessous) : cartes, historique, comparatif de rendement.
+- ⬜ Dettes & créances, Outils, Rapports, Partage,
   Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit), Recherche globale,
   mode démo, onboarding.
 
@@ -1309,6 +1310,33 @@ suppression réelle testée de bout en bout (toast "Goal deleted." confirmé), r
 sans régression.
 
 `CACHE_VERSION` : `v55` → `v56`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 5/N : Investissements)
+
+Écran converti : **Investissements** (`investments.js`) — cartes (capital net, valeur actuelle,
+dividendes, ROI, rendement annualisé), formulaire investissement, modale historique
+(apports/retraits/dividendes/valorisations), comparatif de rendement par classe d'actif, filtre
+Tous/Actifs financiers/Biens physiques. `ASSET_CLASSES`/`ENTRY_TYPE_LABELS` : les **clés** de ces
+deux objets sont des valeurs stockées en base (`inv.assetClass`, `entry.type`), jamais traduites —
+seules leurs **valeurs** (libellés affichés) passent par `t(...)`, à l'usage, jamais à la déclaration
+de l'objet (même distinction que `DEFAULT_CATEGORIES`/`FREQ_LABELS` des lots précédents).
+
+**Oubli du lot 1 corrigé au passage** : `renderNetWorthTrendChart()` (`charts.js`) prend un libellé de
+jeu de données Chart.js (visible en infobulle) avec un défaut `'Valeur nette'` codé en dur — jamais
+traduit, y compris depuis `dashboard.js` (déjà converti au lot 1). Le tableau de bord passait par ce
+défaut sans jamais le surcharger. → `dashboard.js` passe maintenant explicitement `tr('Valeur nette')`
+au lieu de compter sur le défaut de `charts.js` (qui reste en français par défaut — `charts.js`
+lui-même n'est pas encore dans le périmètre du chantier, mais chaque appelant peut déjà passer un
+libellé traduit).
+
+~50 nouvelles entrées de dictionnaire, 0 doublon (335 clés au total).
+
+Testé FR→EN→FR : cartes d'investissement (classe d'actif traduite en badge, ex. "Stocks", montants),
+modale Nouvel investissement (toutes les classes d'actif), modale Historique (titre interpolé avec le
+nom de l'investissement, types d'entrée traduits dans la liste et le formulaire), tableau de
+comparatif de rendement, filtres, aucune erreur console.
+
+`CACHE_VERSION` : `v56` → `v57`.
 
 ## 7. Pistes prioritaires non traitées
 

@@ -271,7 +271,7 @@ export async function renderDashboard() {
 
   if (panels.charts) {
     renderExpensesByCategoryChart('chart-expenses-category', expensesByCategory, currency);
-    renderNetWorthTrendChart('chart-net-worth-trend', netWorthHistory, currency);
+    renderNetWorthTrendChart('chart-net-worth-trend', netWorthHistory, currency, tr('Valeur nette'));
     renderBudgetVsActualChart('chart-budget-vs-actual', budgetVsActual, currency);
 
     const flows = expensesByCategory.map((c, i) => ({ label: c.label, value: c.value, color: c.color || PALETTE[i % PALETTE.length] }));

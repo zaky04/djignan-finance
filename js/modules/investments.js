@@ -9,7 +9,11 @@ import { investmentValueAsOf, getExchangeRates, computeInvestmentValueHistory } 
 import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { renderNetWorthTrendChart } from '../charts.js';
+import { t } from '../i18n.js';
 
+// Les valeurs (libellés affichés) sont traduites à l'usage via t(...), jamais les clés
+// (immobilier/actions/...) : ces clés sont les valeurs stockées en base (inv.assetClass), pas du
+// texte d'interface.
 const ASSET_CLASSES = {
   immobilier: 'Immobilier',
   actions: 'Actions',
@@ -27,6 +31,8 @@ const ASSET_CLASSES = {
 const PHYSICAL_ASSET_CLASSES = ['immobilier', 'flotte'];
 let assetFilter = 'all'; // 'all' | 'physical' | 'financial'
 
+// Mêmes conventions que ASSET_CLASSES ci-dessus : les clés sont stockées en base (entry.type), les
+// valeurs (libellés) sont traduites à l'usage via t(...).
 const ENTRY_TYPE_LABELS = { contribution: 'Apport', withdrawal: 'Retrait', dividend: 'Dividende', valuation: 'Valorisation' };
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
@@ -52,40 +58,40 @@ function investmentCardHtml(inv, metrics) {
     <div class="summary-card" data-investment-id="${inv.id}">
       <div class="card-title-row">
         <div>
-          <span class="badge badge-accent">${escapeHtml(ASSET_CLASSES[inv.assetClass] || inv.assetClass)}</span>
+          <span class="badge badge-accent">${escapeHtml(t(ASSET_CLASSES[inv.assetClass] || inv.assetClass))}</span>
           <div style="font-weight:700;font-size:14.5px;margin-top:6px;">${escapeHtml(inv.name)}</div>
         </div>
         <div class="card-actions">
-          <button type="button" class="icon-btn" data-action="history" aria-label="Historique / Ajouter" title="Historique / Ajouter">${HISTORY_ICON}</button>
-          <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
-          <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
+          <button type="button" class="icon-btn" data-action="history" aria-label="${t('Historique / Ajouter')}" title="${t('Historique / Ajouter')}">${HISTORY_ICON}</button>
+          <button type="button" class="icon-btn" data-action="edit" aria-label="${t('Modifier')}" title="${t('Modifier')}">${EDIT_ICON}</button>
+          <button type="button" class="icon-btn" data-action="delete" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
         </div>
       </div>
-      <div class="stat-row"><span class="stat-row-label">Capital net investi</span><span class="amount" data-value="${metrics.netInvested}">${formatCurrency(metrics.netInvested, inv.currency)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Valeur actuelle</span><span class="amount" data-value="${metrics.currentValue}">${formatCurrency(metrics.currentValue, inv.currency)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Dividendes perçus</span><span class="amount" data-value="${metrics.dividends}">${formatCurrency(metrics.dividends, inv.currency)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Plus/moins-value + revenus</span><span class="badge ${positive ? 'badge-pos' : 'badge-neg'}">${positive ? '+' : ''}${formatCurrency(metrics.gain, inv.currency)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">ROI global</span><span class="badge ${metrics.roiPct >= 0 ? 'badge-pos' : 'badge-neg'}">${formatPercent(metrics.roiPct)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Rendement annualisé</span><span class="badge ${metrics.annualizedYieldPct >= 0 ? 'badge-pos' : 'badge-neg'}">${formatPercent(metrics.annualizedYieldPct)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${t('Capital net investi')}</span><span class="amount" data-value="${metrics.netInvested}">${formatCurrency(metrics.netInvested, inv.currency)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${t('Valeur actuelle')}</span><span class="amount" data-value="${metrics.currentValue}">${formatCurrency(metrics.currentValue, inv.currency)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${t('Dividendes perçus')}</span><span class="amount" data-value="${metrics.dividends}">${formatCurrency(metrics.dividends, inv.currency)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${t('Plus/moins-value + revenus')}</span><span class="badge ${positive ? 'badge-pos' : 'badge-neg'}">${positive ? '+' : ''}${formatCurrency(metrics.gain, inv.currency)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${t('ROI global')}</span><span class="badge ${metrics.roiPct >= 0 ? 'badge-pos' : 'badge-neg'}">${formatPercent(metrics.roiPct)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${t('Rendement annualisé')}</span><span class="badge ${metrics.annualizedYieldPct >= 0 ? 'badge-pos' : 'badge-neg'}">${formatPercent(metrics.annualizedYieldPct)}</span></div>
     </div>`;
 }
 
 function investmentFormHtml(inv, defaultCurrency) {
   return `
     <form id="investment-form">
-      <div class="form-row"><label>Nom</label><input type="text" name="name" required maxlength="60" value="${escapeHtml(inv?.name || '')}" placeholder="Ex: Appartement Cocody, Actions Total…"></div>
-      <div class="form-row"><label>Classe d'actif</label>
-        <select name="assetClass">${Object.entries(ASSET_CLASSES).map(([k, l]) => `<option value="${k}" ${inv?.assetClass === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <div class="form-row"><label>${t('Nom')}</label><input type="text" name="name" required maxlength="60" value="${escapeHtml(inv?.name || '')}" placeholder="${t('Ex: Appartement Cocody, Actions Total…')}"></div>
+      <div class="form-row"><label>${t("Classe d'actif")}</label>
+        <select name="assetClass">${Object.entries(ASSET_CLASSES).map(([k, l]) => `<option value="${k}" ${inv?.assetClass === k ? 'selected' : ''}>${t(l)}</option>`).join('')}</select>
       </div>
-      <div class="form-row"><label>Devise</label>${currencySelectHtml(inv?.currency || defaultCurrency)}</div>
-      <div class="form-row"><label>Capital investi initial</label><input type="number" step="0.01" min="0" name="capitalInvested" required value="${inv?.capitalInvested ?? ''}"></div>
-      <button type="submit" class="btn btn-primary btn-block">${inv ? 'Enregistrer' : "Créer l'investissement"}</button>
+      <div class="form-row"><label>${t('Devise')}</label>${currencySelectHtml(inv?.currency || defaultCurrency)}</div>
+      <div class="form-row"><label>${t('Capital investi initial')}</label><input type="number" step="0.01" min="0" name="capitalInvested" required value="${inv?.capitalInvested ?? ''}"></div>
+      <button type="submit" class="btn btn-primary btn-block">${inv ? t('Enregistrer') : t("Créer l'investissement")}</button>
     </form>`;
 }
 
 async function openInvestmentModal(inv = null) {
   const defaultCurrency = inv ? inv.currency : await getSetting('baseCurrency', 'EUR');
-  const modal = openModal(investmentFormHtml(inv, defaultCurrency), { title: inv ? "Modifier l'investissement" : 'Nouvel investissement' });
+  const modal = openModal(investmentFormHtml(inv, defaultCurrency), { title: inv ? t("Modifier l'investissement") : t('Nouvel investissement') });
   wireCurrencySelect(modal.el);
   modal.el.querySelector('#investment-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -102,7 +108,7 @@ async function openInvestmentModal(inv = null) {
     await dbPut(STORES.INVESTMENTS, record);
     await logAudit({ entityType: 'investment', entityId: record.id, action: inv ? 'update' : 'create', before, after: record });
     modal.close();
-    showToast(inv ? 'Investissement mis à jour.' : 'Investissement créé.');
+    showToast(inv ? t('Investissement mis à jour.') : t('Investissement créé.'));
     notifyDataChanged('investments');
   });
 }
@@ -112,26 +118,26 @@ async function openHistoryModal(inv) {
 
   const modal = openModal(`
     <form id="entry-form" style="margin-bottom:16px;">
-      <div class="form-row"><label>Type</label>
-        <select name="type">${Object.entries(ENTRY_TYPE_LABELS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
+      <div class="form-row"><label>${t('Type')}</label>
+        <select name="type">${Object.entries(ENTRY_TYPE_LABELS).map(([k, l]) => `<option value="${k}">${t(l)}</option>`).join('')}</select>
       </div>
-      <div class="form-row"><label>Montant</label><input type="number" step="0.01" min="0" name="amount" required></div>
-      <div class="form-row"><label>Date</label><input type="date" name="date" value="${todayISO()}" required></div>
-      <div class="form-row"><label>Note (optionnel)</label><input type="text" name="note" maxlength="140"></div>
-      <button type="submit" class="btn btn-primary btn-block">Ajouter</button>
+      <div class="form-row"><label>${t('Montant')}</label><input type="number" step="0.01" min="0" name="amount" required></div>
+      <div class="form-row"><label>${t('Date')}</label><input type="date" name="date" value="${todayISO()}" required></div>
+      <div class="form-row"><label>${t('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
+      <button type="submit" class="btn btn-primary btn-block">${t('Ajouter')}</button>
     </form>
     <div id="entry-list">
       ${entries.length ? entries.map((e) => `
         <div class="tx-row" data-entry-id="${e.id}">
           <div class="tx-main">
-            <div class="tx-title">${ENTRY_TYPE_LABELS[e.type]}${e.note ? ' · ' + escapeHtml(e.note) : ''}</div>
+            <div class="tx-title">${t(ENTRY_TYPE_LABELS[e.type])}${e.note ? ' · ' + escapeHtml(e.note) : ''}</div>
             <div class="tx-sub">${formatDate(e.date)}</div>
           </div>
           <div class="tx-amount">${formatCurrency(e.amount, inv.currency)}</div>
-          <div class="card-actions"><button type="button" class="icon-btn" data-action="delete-entry" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button></div>
-        </div>`).join('') : '<div class="empty-state">Aucun historique pour le moment.</div>'}
+          <div class="card-actions"><button type="button" class="icon-btn" data-action="delete-entry" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button></div>
+        </div>`).join('') : `<div class="empty-state">${t('Aucun historique pour le moment.')}</div>`}
     </div>
-  `, { title: `Historique — ${inv.name}` });
+  `, { title: t('Historique — {name}', { name: inv.name }) });
 
   modal.el.querySelector('#entry-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -147,7 +153,7 @@ async function openHistoryModal(inv) {
     await dbAdd(STORES.INVESTMENT_ENTRIES, entry);
     await logAudit({ entityType: 'investmentEntry', entityId: entry.id, action: 'create', after: entry });
     modal.close();
-    showToast('Entrée ajoutée.');
+    showToast(t('Entrée ajoutée.'));
     notifyDataChanged('investments');
   });
 
@@ -155,12 +161,12 @@ async function openHistoryModal(inv) {
     const btn = e.target.closest('[data-action="delete-entry"]');
     if (!btn) return;
     const entryId = e.target.closest('[data-entry-id]').dataset.entryId;
-    const ok = await confirmDialog('Supprimer cette entrée d\'historique ?', { danger: true, confirmText: 'Supprimer' });
+    const ok = await confirmDialog(t("Supprimer cette entrée d'historique ?"), { danger: true, confirmText: t('Supprimer') });
     if (ok) {
       await dbDelete(STORES.INVESTMENT_ENTRIES, entryId);
       await logAudit({ entityType: 'investmentEntry', entityId, action: 'delete' });
       modal.close();
-      showToast('Entrée supprimée.');
+      showToast(t('Entrée supprimée.'));
       notifyDataChanged('investments');
     }
   });
@@ -179,18 +185,18 @@ function renderYieldTable(rows, baseCurrency, rates) {
     acc.weightedYield += r.metrics.annualizedYieldPct * Math.max(netInvestedBase, 0);
   }
   const lines = [...byClass.entries()].map(([key, acc]) => ({
-    label: ASSET_CLASSES[key] || key,
+    label: t(ASSET_CLASSES[key] || key),
     netInvested: acc.netInvested,
     currentValue: acc.currentValue,
     yieldPct: acc.netInvested ? acc.weightedYield / acc.netInvested : 0,
   }));
-  if (!lines.length) return '<div class="empty-state">Ajoutez des investissements pour voir le comparatif de rendement.</div>';
+  if (!lines.length) return `<div class="empty-state">${t('Ajoutez des investissements pour voir le comparatif de rendement.')}</div>`;
 
   return `
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
         <thead><tr style="text-align:left;color:var(--text-muted);">
-          <th style="padding:8px 6px;">Classe d'actif</th><th style="padding:8px 6px;">Capital net</th><th style="padding:8px 6px;">Valeur actuelle</th><th style="padding:8px 6px;">Rendement annualisé</th>
+          <th style="padding:8px 6px;">${t("Classe d'actif")}</th><th style="padding:8px 6px;">${t('Capital net')}</th><th style="padding:8px 6px;">${t('Valeur actuelle')}</th><th style="padding:8px 6px;">${t('Rendement annualisé')}</th>
         </tr></thead>
         <tbody>
           ${lines.map((l) => `
@@ -211,7 +217,7 @@ export async function renderInvestments() {
   const [investments, entries, { rates, baseCurrency }] = await Promise.all([dbGetAll(STORES.INVESTMENTS), dbGetAll(STORES.INVESTMENT_ENTRIES), getExchangeRates()]);
 
   if (!investments.length) {
-    container.innerHTML = '<div class="empty-state">Aucun investissement suivi. Ajoutez votre premier actif (immobilier, actions, business…).</div>';
+    container.innerHTML = `<div class="empty-state">${t('Aucun investissement suivi. Ajoutez votre premier actif (immobilier, actions, business…).')}</div>`;
     return;
   }
 
@@ -224,17 +230,17 @@ export async function renderInvestments() {
 
   container.innerHTML = `
     <div class="tabs-bar" style="margin-bottom:16px;">
-      <button type="button" class="tab-btn ${assetFilter === 'all' ? 'is-active' : ''}" data-asset-filter="all">Tous</button>
-      <button type="button" class="tab-btn ${assetFilter === 'financial' ? 'is-active' : ''}" data-asset-filter="financial">Actifs financiers</button>
-      <button type="button" class="tab-btn ${assetFilter === 'physical' ? 'is-active' : ''}" data-asset-filter="physical">Biens physiques</button>
+      <button type="button" class="tab-btn ${assetFilter === 'all' ? 'is-active' : ''}" data-asset-filter="all">${t('Tous')}</button>
+      <button type="button" class="tab-btn ${assetFilter === 'financial' ? 'is-active' : ''}" data-asset-filter="financial">${t('Actifs financiers')}</button>
+      <button type="button" class="tab-btn ${assetFilter === 'physical' ? 'is-active' : ''}" data-asset-filter="physical">${t('Biens physiques')}</button>
     </div>
-    <div class="grid-cards" style="margin-bottom:18px;">${rows.length ? rows.map((r) => investmentCardHtml(r.inv, r.metrics)).join('') : '<div class="empty-state">Aucun actif dans cette catégorie.</div>'}</div>
+    <div class="grid-cards" style="margin-bottom:18px;">${rows.length ? rows.map((r) => investmentCardHtml(r.inv, r.metrics)).join('') : `<div class="empty-state">${t('Aucun actif dans cette catégorie.')}</div>`}</div>
     <div class="chart-card" style="margin-bottom:18px;">
-      <h3>Évolution de la valeur du portefeuille</h3>
+      <h3>${t('Évolution de la valeur du portefeuille')}</h3>
       <div class="chart-canvas-wrap"><canvas id="chart-investments-trend"></canvas></div>
     </div>
     <div class="panel">
-      <div class="panel-header"><h3>Comparatif de rendement par classe d'actif</h3></div>
+      <div class="panel-header"><h3>${t("Comparatif de rendement par classe d'actif")}</h3></div>
       ${renderYieldTable(rows, baseCurrency, rates)}
     </div>`;
 
@@ -243,7 +249,7 @@ export async function renderInvestments() {
   });
 
   const history = await computeInvestmentValueHistory(6);
-  renderNetWorthTrendChart('chart-investments-trend', history, baseCurrency, 'Valeur du portefeuille');
+  renderNetWorthTrendChart('chart-investments-trend', history, baseCurrency, t('Valeur du portefeuille'));
 }
 
 export function initInvestmentsModule() {
@@ -263,13 +269,13 @@ export function initInvestmentsModule() {
     } else if (btn.dataset.action === 'edit') {
       openInvestmentModal(inv);
     } else if (btn.dataset.action === 'delete') {
-      const ok = await confirmDialog(`Supprimer l'investissement "${inv.name}" et tout son historique ?`, { danger: true, confirmText: 'Supprimer' });
+      const ok = await confirmDialog(t('Supprimer l\'investissement "{name}" et tout son historique ?', { name: inv.name }), { danger: true, confirmText: t('Supprimer') });
       if (ok) {
         const entries = (await dbGetAll(STORES.INVESTMENT_ENTRIES)).filter((en) => en.investmentId === inv.id);
         for (const en of entries) await dbDelete(STORES.INVESTMENT_ENTRIES, en.id);
         await dbDelete(STORES.INVESTMENTS, inv.id);
         await logAudit({ entityType: 'investment', entityId: inv.id, action: 'delete', before: inv });
-        showToast('Investissement supprimé.');
+        showToast(t('Investissement supprimé.'));
         notifyDataChanged('investments');
       }
     }
