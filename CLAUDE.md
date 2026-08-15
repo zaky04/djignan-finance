@@ -1172,7 +1172,8 @@ que certains écrans resteront en français le temps du reste du chantier.
 - ✅ Investissements (lot 5, voir entrée ci-dessous) : cartes, historique, comparatif de rendement.
 - ✅ Dettes & créances (lot 6, voir entrée ci-dessous) : cartes, formulaires, simulateur
   Avalanche/Boule de neige.
-- ⬜ Outils, Rapports, Partage, Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà
+- ✅ Outils (lot 7, voir entrée ci-dessous) : les 8 outils stratégiques.
+- ⬜ Rapports, Partage, Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà
   traduit), Recherche globale, mode démo, onboarding.
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
@@ -1372,6 +1373,33 @@ remboursement, simulateur (résultat normal avec ordre de remboursement traduit 
 test explicite de non-régression sur `ensureDebtCategoryId` décrit ci-dessus. Aucune erreur console.
 
 `CACHE_VERSION` : `v57` → `v58`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 7/N : Outils)
+
+Écran converti : **Outils** (`tools.js`) — les 8 outils stratégiques (simulateur de trajectoire
+patrimoniale, calculateur d'inflation, fonds d'urgence, impact d'un achat important, enveloppes
+50/30/20, abonnements non déclarés, détection d'anomalies, journal d'audit). Piège `t`/variable
+reproduit à l'identique : `t` utilisé comme nom de variable pour un outil (`{html, wire}`) dans
+`renderTools()` et pour une transaction dans `renderAnomalyTool()` — import aliasé `tr` dès le début.
+`ACTION_LABELS`/`ENTRY_TYPE_LABELS`-style : mêmes conventions que les lots précédents (clés
+non traduites, valeurs traduites à l'usage).
+
+**Oubli distinct trouvé et corrigé au passage** : `formatDateTime()` (journal d'audit) appelait
+`new Intl.DateTimeFormat('fr-FR', ...)` en dur — jamais passé par `getLanguage()`, contrairement à
+`formatDate()`/`formatCurrency()`/`formatMonthLabel()` (`utils.js`, déjà corrigés au lot 1). Les
+horodatages du journal d'audit restaient donc au format français même en mode anglais.
+→ `intlLocale()` (`utils.js`) — jusqu'ici une fonction privée non exportée — est maintenant exportée
+et réutilisée ici plutôt que de dupliquer sa logique. Vérifié : horodatage affiché en `8/15/26, 10:22
+PM` (anglais) puis `15/08/2026 22:22` (français) pour la même entrée, aller-retour correct.
+
+~65 nouvelles entrées de dictionnaire, 0 doublon (447 clés au total).
+
+Testé FR→EN→FR : les 8 panneaux (titres, labels, résultats calculés en direct pour chacun — dont le
+mode crédit du simulateur d'achat avec taux d'intérêt non nul, vérifiant l'interpolation imbriquée
+« (including {amount} in interest) »), le journal d'audit (libellés d'action + horodatages
+bilingues), aucune erreur console.
+
+`CACHE_VERSION` : `v58` → `v59`.
 
 ## 7. Pistes prioritaires non traitées
 

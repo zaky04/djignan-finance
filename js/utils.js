@@ -12,7 +12,7 @@ export function uuid() {
 /** Locale Intl à utiliser pour les nombres/dates : dépend de la langue choisie (Paramètres), pas
     figée sur le français — un montant/une date doivent suivre la langue de l'interface, pas
     seulement les libellés autour. i18n.js ne réimporte rien de ce fichier (pas de cycle). */
-function intlLocale() {
+export function intlLocale() {
   return getLanguage() === 'en' ? 'en-US' : 'fr-FR';
 }
 

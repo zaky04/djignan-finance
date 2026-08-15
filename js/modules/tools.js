@@ -7,7 +7,11 @@
 
 import { STORES, dbGetAll, getSetting } from '../db.js';
 import { computeMonthSummary, computeLiquidBalance, computeNetWorth, detectRecurringCandidates } from '../ledger.js';
-import { formatCurrency, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, convertAmount, localISODate } from '../utils.js';
+import { formatCurrency, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, convertAmount, localISODate, intlLocale } from '../utils.js';
+// Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour un outil (objet
+// {html, wire}) dans renderTools() et pour une transaction dans renderAnomalyTool() — même piège
+// documenté dans dashboard.js/transactions.js/debts.js.
+import { t as tr } from '../i18n.js';
 
 function panel(title, bodyHtml, id) {
   return `<div class="panel" style="grid-column:1/-1;margin-bottom:18px;" ${id ? `id="${id}"` : ''}>
@@ -24,13 +28,13 @@ async function renderWealthTrajectoryTool() {
 
   const body = `
     <div class="filters-bar" style="margin-bottom:14px;">
-      <div class="form-row" style="margin:0;"><label>Épargne mensuelle (${escapeHtml(currency)})</label><input type="number" id="wt-savings" value="${defaultMonthlySavings}" step="10"></div>
-      <div class="form-row" style="margin:0;"><label>Rendement annuel attendu (%)</label><input type="number" id="wt-return" value="4" step="0.1"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('Épargne mensuelle ({currency})', { currency: escapeHtml(currency) })}</label><input type="number" id="wt-savings" value="${defaultMonthlySavings}" step="10"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('Rendement annuel attendu (%)')}</label><input type="number" id="wt-return" value="4" step="0.1"></div>
     </div>
     <div id="wt-results" class="grid-cards"></div>
-    <p style="font-size:12px;color:var(--text-faint);margin-top:10px;">Projection à partir du patrimoine net actuel (${formatCurrency(total, currency)}), en supposant un rendement composé constant et une épargne mensuelle régulière.</p>`;
+    <p style="font-size:12px;color:var(--text-faint);margin-top:10px;">${tr('Projection à partir du patrimoine net actuel ({amount}), en supposant un rendement composé constant et une épargne mensuelle régulière.', { amount: formatCurrency(total, currency) })}</p>`;
 
-  const html = panel("Simulateur de trajectoire patrimoniale (1, 3, 5 ans)", body, 'tool-wealth-trajectory');
+  const html = panel(tr("Simulateur de trajectoire patrimoniale (1, 3, 5 ans)"), body, 'tool-wealth-trajectory');
 
   function compute() {
     const el = document.getElementById('tool-wealth-trajectory');
@@ -46,7 +50,7 @@ async function renderWealthTrajectoryTool() {
     });
     el.querySelector('#wt-results').innerHTML = results.map((r2) => `
       <div class="summary-card">
-        <div class="summary-card-label">Dans ${r2.years} an${r2.years > 1 ? 's' : ''}</div>
+        <div class="summary-card-label">${r2.years > 1 ? tr('Dans {years} ans', { years: r2.years }) : tr('Dans {years} an', { years: r2.years })}</div>
         <div class="summary-card-value">${formatCurrency(r2.value, currency)}</div>
       </div>`).join('');
   }
@@ -59,12 +63,12 @@ async function renderInflationTool() {
   const { baseCurrency } = await getExchangeRatesSafe();
   const body = `
     <div class="filters-bar" style="margin-bottom:14px;">
-      <div class="form-row" style="margin:0;"><label>Montant (${escapeHtml(baseCurrency)})</label><input type="number" id="inf-amount" value="1000" step="10"></div>
-      <div class="form-row" style="margin:0;"><label>Inflation annuelle (%)</label><input type="number" id="inf-rate" value="3" step="0.1"></div>
-      <div class="form-row" style="margin:0;"><label>Durée (années)</label><input type="number" id="inf-years" value="10" step="1"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('Montant ({currency})', { currency: escapeHtml(baseCurrency) })}</label><input type="number" id="inf-amount" value="1000" step="10"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('Inflation annuelle (%)')}</label><input type="number" id="inf-rate" value="3" step="0.1"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('Durée (années)')}</label><input type="number" id="inf-years" value="10" step="1"></div>
     </div>
     <div id="inf-results"></div>`;
-  const html = panel('Calculateur d\'inflation & pouvoir d\'achat', body, 'tool-inflation');
+  const html = panel(tr("Calculateur d'inflation & pouvoir d'achat"), body, 'tool-inflation');
 
   function compute() {
     const el = document.getElementById('tool-inflation');
@@ -76,8 +80,8 @@ async function renderInflationTool() {
     const loss = amount - realValue;
     const lossPct = amount ? (loss / amount) * 100 : 0;
     el.querySelector('#inf-results').innerHTML = `
-      <div class="stat-row"><span class="stat-row-label">Pouvoir d'achat réel dans ${years} an(s)</span><span>${formatCurrency(realValue, baseCurrency)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Perte de valeur</span><span class="badge badge-neg">-${formatCurrency(loss, baseCurrency)} (${formatPercent(lossPct)})</span></div>`;
+      <div class="stat-row"><span class="stat-row-label">${tr("Pouvoir d'achat réel dans {years} an(s)", { years })}</span><span>${formatCurrency(realValue, baseCurrency)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${tr('Perte de valeur')}</span><span class="badge badge-neg">-${formatCurrency(loss, baseCurrency)} (${formatPercent(lossPct)})</span></div>`;
   }
   return { html, wire: () => { document.getElementById('tool-inflation').addEventListener('input', compute); compute(); } };
 }
@@ -99,13 +103,13 @@ async function renderEmergencyFundTool() {
 
   const body = `
     <div class="filters-bar" style="margin-bottom:14px;">
-      <div class="form-row" style="margin:0;"><label>Dépenses mensuelles moyennes (${escapeHtml(currency)})</label><input type="number" id="ef-expenses" value="${Math.round(avgExpenses)}" step="10"></div>
-      <div class="form-row" style="margin:0;"><label>Mois de couverture souhaités</label>
-        <select id="ef-months"><option value="3">3 mois</option><option value="6" selected>6 mois</option><option value="12">12 mois</option></select>
+      <div class="form-row" style="margin:0;"><label>${tr('Dépenses mensuelles moyennes ({currency})', { currency: escapeHtml(currency) })}</label><input type="number" id="ef-expenses" value="${Math.round(avgExpenses)}" step="10"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('Mois de couverture souhaités')}</label>
+        <select id="ef-months"><option value="3">${tr('{n} mois', { n: 3 })}</option><option value="6" selected>${tr('{n} mois', { n: 6 })}</option><option value="12">${tr('{n} mois', { n: 12 })}</option></select>
       </div>
     </div>
     <div id="ef-results"></div>`;
-  const html = panel("Calculateur de fonds d'urgence", body, 'tool-emergency-fund');
+  const html = panel(tr("Calculateur de fonds d'urgence"), body, 'tool-emergency-fund');
 
   function compute() {
     const el = document.getElementById('tool-emergency-fund');
@@ -116,10 +120,10 @@ async function renderEmergencyFundTool() {
     const autonomyMonths = expenses ? liquid / expenses : 0;
     const gap = Math.max(0, target - liquid);
     el.querySelector('#ef-results').innerHTML = `
-      <div class="stat-row"><span class="stat-row-label">Liquidités actuelles (portefeuilles)</span><span>${formatCurrency(liquid, currency)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Objectif (${months} mois)</span><span>${formatCurrency(target, currency)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Autonomie actuelle</span><span class="badge ${autonomyMonths >= months ? 'badge-pos' : 'badge-neg'}">${autonomyMonths.toFixed(1)} mois</span></div>
-      ${gap > 0 ? `<div class="stat-row"><span class="stat-row-label">Montant à épargner pour atteindre l'objectif</span><span>${formatCurrency(gap, currency)}</span></div>` : '<div class="alert alert-info" style="margin-top:8px;">Objectif de fonds d\'urgence atteint !</div>'}`;
+      <div class="stat-row"><span class="stat-row-label">${tr('Liquidités actuelles (portefeuilles)')}</span><span>${formatCurrency(liquid, currency)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${tr('Objectif ({months} mois)', { months })}</span><span>${formatCurrency(target, currency)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${tr('Autonomie actuelle')}</span><span class="badge ${autonomyMonths >= months ? 'badge-pos' : 'badge-neg'}">${tr('{n} mois', { n: autonomyMonths.toFixed(1) })}</span></div>
+      ${gap > 0 ? `<div class="stat-row"><span class="stat-row-label">${tr("Montant à épargner pour atteindre l'objectif")}</span><span>${formatCurrency(gap, currency)}</span></div>` : `<div class="alert alert-info" style="margin-top:8px;">${tr("Objectif de fonds d'urgence atteint !")}</div>`}`;
   }
   return { html, wire: () => { document.getElementById('tool-emergency-fund').addEventListener('input', compute); compute(); } };
 }
@@ -139,18 +143,18 @@ async function renderPurchaseImpactTool() {
 
   const body = `
     <div class="filters-bar" style="margin-bottom:14px;">
-      <div class="form-row" style="margin:0;"><label>Montant de l'achat (${escapeHtml(currency)})</label><input type="number" id="pi-amount" value="1000" step="10" min="0"></div>
-      <div class="form-row" style="margin:0;"><label>Mode de financement</label>
+      <div class="form-row" style="margin:0;"><label>${tr("Montant de l'achat ({currency})", { currency: escapeHtml(currency) })}</label><input type="number" id="pi-amount" value="1000" step="10" min="0"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('Mode de financement')}</label>
         <select id="pi-mode">
-          <option value="cash">Comptant (sur liquidités)</option>
-          <option value="credit">Crédit / paiement échelonné</option>
+          <option value="cash">${tr('Comptant (sur liquidités)')}</option>
+          <option value="credit">${tr('Crédit / paiement échelonné')}</option>
         </select>
       </div>
-      <div class="form-row" id="pi-duration-row" style="margin:0;display:none;"><label>Durée (mois)</label><input type="number" id="pi-duration" value="12" min="1" step="1"></div>
-      <div class="form-row" id="pi-rate-row" style="margin:0;display:none;"><label>Taux d'intérêt annuel % (optionnel)</label><input type="number" id="pi-rate" value="0" min="0" step="0.1"></div>
+      <div class="form-row" id="pi-duration-row" style="margin:0;display:none;"><label>${tr('Durée (mois)')}</label><input type="number" id="pi-duration" value="12" min="1" step="1"></div>
+      <div class="form-row" id="pi-rate-row" style="margin:0;display:none;"><label>${tr("Taux d'intérêt annuel % (optionnel)")}</label><input type="number" id="pi-rate" value="0" min="0" step="0.1"></div>
     </div>
     <div id="pi-results"></div>`;
-  const html = panel("Simulateur d'impact d'un achat important", body, 'tool-purchase-impact');
+  const html = panel(tr("Simulateur d'impact d'un achat important"), body, 'tool-purchase-impact');
 
   function compute() {
     const el = document.getElementById('tool-purchase-impact');
@@ -166,12 +170,12 @@ async function renderPurchaseImpactTool() {
       const currentAutonomy = avgExpenses ? liquid / avgExpenses : 0;
       const newAutonomy = avgExpenses ? newLiquid / avgExpenses : 0;
       resultsHtml = `
-        <div class="stat-row"><span class="stat-row-label">Liquidités actuelles</span><span>${formatCurrency(liquid, currency)}</span></div>
-        <div class="stat-row"><span class="stat-row-label">Liquidités après achat</span><span class="badge ${newLiquid >= 0 ? 'badge-pos' : 'badge-neg'}">${formatCurrency(newLiquid, currency)}</span></div>
-        <div class="stat-row"><span class="stat-row-label">Autonomie du fonds d'urgence</span><span>${currentAutonomy.toFixed(1)} mois → <span class="badge ${newAutonomy >= 3 ? 'badge-pos' : 'badge-neg'}">${newAutonomy.toFixed(1)} mois</span></span></div>
+        <div class="stat-row"><span class="stat-row-label">${tr('Liquidités actuelles')}</span><span>${formatCurrency(liquid, currency)}</span></div>
+        <div class="stat-row"><span class="stat-row-label">${tr('Liquidités après achat')}</span><span class="badge ${newLiquid >= 0 ? 'badge-pos' : 'badge-neg'}">${formatCurrency(newLiquid, currency)}</span></div>
+        <div class="stat-row"><span class="stat-row-label">${tr("Autonomie du fonds d'urgence")}</span><span>${tr('{n} mois', { n: currentAutonomy.toFixed(1) })} → <span class="badge ${newAutonomy >= 3 ? 'badge-pos' : 'badge-neg'}">${tr('{n} mois', { n: newAutonomy.toFixed(1) })}</span></span></div>
         ${newLiquid < 0
-          ? '<div class="alert alert-danger" style="margin-top:8px;">Cet achat dépasserait vos liquidités actuelles.</div>'
-          : (newAutonomy < 3 ? '<div class="alert alert-warn" style="margin-top:8px;">Votre fonds d\'urgence passerait sous 3 mois de couverture.</div>' : '')}`;
+          ? `<div class="alert alert-danger" style="margin-top:8px;">${tr('Cet achat dépasserait vos liquidités actuelles.')}</div>`
+          : (newAutonomy < 3 ? `<div class="alert alert-warn" style="margin-top:8px;">${tr("Votre fonds d'urgence passerait sous 3 mois de couverture.")}</div>` : '')}`;
     } else {
       const months = parseFloat(el.querySelector('#pi-duration').value) || 1;
       const rate = parseFloat(el.querySelector('#pi-rate').value) || 0;
@@ -180,11 +184,11 @@ async function renderPurchaseImpactTool() {
       const totalInterest = totalCost - amount;
       const newNetSavings = summary.netSavings - payment;
       resultsHtml = `
-        <div class="stat-row"><span class="stat-row-label">Mensualité</span><span>${formatCurrency(payment, currency)}</span></div>
-        <div class="stat-row"><span class="stat-row-label">Coût total</span><span>${formatCurrency(totalCost, currency)}${totalInterest > 0.5 ? ` (dont ${formatCurrency(totalInterest, currency)} d'intérêts)` : ''}</span></div>
-        <div class="stat-row"><span class="stat-row-label">Épargne nette mensuelle actuelle</span><span>${formatCurrency(summary.netSavings, currency)}</span></div>
-        <div class="stat-row"><span class="stat-row-label">Épargne nette mensuelle après mensualité</span><span class="badge ${newNetSavings >= 0 ? 'badge-pos' : 'badge-neg'}">${formatCurrency(newNetSavings, currency)}</span></div>
-        ${newNetSavings < 0 ? '<div class="alert alert-danger" style="margin-top:8px;">Cette mensualité dépasserait votre épargne nette actuelle : vos dépenses excéderaient vos revenus.</div>' : ''}`;
+        <div class="stat-row"><span class="stat-row-label">${tr('Mensualité')}</span><span>${formatCurrency(payment, currency)}</span></div>
+        <div class="stat-row"><span class="stat-row-label">${tr('Coût total')}</span><span>${formatCurrency(totalCost, currency)}${totalInterest > 0.5 ? ` ${tr("(dont {amount} d'intérêts)", { amount: formatCurrency(totalInterest, currency) })}` : ''}</span></div>
+        <div class="stat-row"><span class="stat-row-label">${tr('Épargne nette mensuelle actuelle')}</span><span>${formatCurrency(summary.netSavings, currency)}</span></div>
+        <div class="stat-row"><span class="stat-row-label">${tr('Épargne nette mensuelle après mensualité')}</span><span class="badge ${newNetSavings >= 0 ? 'badge-pos' : 'badge-neg'}">${formatCurrency(newNetSavings, currency)}</span></div>
+        ${newNetSavings < 0 ? `<div class="alert alert-danger" style="margin-top:8px;">${tr('Cette mensualité dépasserait votre épargne nette actuelle : vos dépenses excéderaient vos revenus.')}</div>` : ''}`;
     }
     el.querySelector('#pi-results').innerHTML = resultsHtml;
   }
@@ -206,14 +210,14 @@ async function renderEnvelopeTool() {
 
   const body = `
     <div class="filters-bar" style="margin-bottom:14px;">
-      <div class="form-row" style="margin:0;"><label>Revenu mensuel (${escapeHtml(summary.currency)})</label><input type="number" id="env-income" value="${income}" step="10"></div>
-      <div class="form-row" style="margin:0;"><label>% Besoins essentiels</label><input type="number" id="env-needs" value="50" step="1"></div>
-      <div class="form-row" style="margin:0;"><label>% Envies / loisirs</label><input type="number" id="env-wants" value="30" step="1"></div>
-      <div class="form-row" style="margin:0;"><label>% Épargne / dettes</label><input type="number" id="env-savings" value="20" step="1"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('Revenu mensuel ({currency})', { currency: escapeHtml(summary.currency) })}</label><input type="number" id="env-income" value="${income}" step="10"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('% Besoins essentiels')}</label><input type="number" id="env-needs" value="50" step="1"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('% Envies / loisirs')}</label><input type="number" id="env-wants" value="30" step="1"></div>
+      <div class="form-row" style="margin:0;"><label>${tr('% Épargne / dettes')}</label><input type="number" id="env-savings" value="20" step="1"></div>
     </div>
     <div id="env-results" class="grid-cards"></div>
-    <p id="env-warning" class="alert alert-warn" style="display:none;margin-top:10px;">Les pourcentages ne totalisent pas 100%.</p>`;
-  const html = panel('Système de budgets par enveloppes (méthode 50/30/20)', body, 'tool-envelope');
+    <p id="env-warning" class="alert alert-warn" style="display:none;margin-top:10px;">${tr('Les pourcentages ne totalisent pas 100%.')}</p>`;
+  const html = panel(tr('Système de budgets par enveloppes (méthode 50/30/20)'), body, 'tool-envelope');
 
   function compute() {
     const el = document.getElementById('tool-envelope');
@@ -226,9 +230,9 @@ async function renderEnvelopeTool() {
     el.querySelector('#env-warning').style.display = Math.abs(totalPct - 100) > 0.5 ? 'block' : 'none';
 
     const rows = [
-      { label: 'Besoins essentiels', pct: needsPct },
-      { label: 'Envies / loisirs', pct: wantsPct },
-      { label: 'Épargne / remboursement dettes', pct: savingsPct },
+      { label: tr('Besoins essentiels'), pct: needsPct },
+      { label: tr('Envies / loisirs'), pct: wantsPct },
+      { label: tr('Épargne / remboursement dettes'), pct: savingsPct },
     ];
     el.querySelector('#env-results').innerHTML = rows.map((r) => `
       <div class="summary-card">
@@ -243,11 +247,11 @@ async function renderEnvelopeTool() {
 async function renderSubscriptionsTool() {
   const { candidates, totalMonthly, currency } = await detectRecurringCandidates();
   const body = candidates.length
-    ? `<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">Détectés par similarité de note + montant sur au moins 2 mois distincts — vérifiez avant de les déclarer en Récurrences (Budgets &gt; Récurrences) pour un suivi précis.</p>
-       ${candidates.map((c) => `<div class="stat-row"><span class="stat-row-label">${escapeHtml(c.note)} <span class="badge" style="margin-left:6px;">${c.occurrences} mois</span></span><span>${formatCurrency(c.avgAmount, currency)}/mois</span></div>`).join('')}
-       <div class="stat-row" style="border-top:2px solid var(--border);margin-top:6px;padding-top:10px;font-weight:700;"><span class="stat-row-label">Total mensuel estimé</span><span>${formatCurrency(totalMonthly, currency)}</span></div>`
-    : '<div class="empty-state">Aucun abonnement non déclaré détecté pour le moment.</div>';
-  const html = panel('Abonnements & paiements récurrents détectés', body);
+    ? `<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">${tr('Détectés par similarité de note + montant sur au moins 2 mois distincts — vérifiez avant de les déclarer en Récurrences (Budgets &gt; Récurrences) pour un suivi précis.')}</p>
+       ${candidates.map((c) => `<div class="stat-row"><span class="stat-row-label">${escapeHtml(c.note)} <span class="badge" style="margin-left:6px;">${tr('{n} mois', { n: c.occurrences })}</span></span><span>${tr('{amount}/mois', { amount: formatCurrency(c.avgAmount, currency) })}</span></div>`).join('')}
+       <div class="stat-row" style="border-top:2px solid var(--border);margin-top:6px;padding-top:10px;font-weight:700;"><span class="stat-row-label">${tr('Total mensuel estimé')}</span><span>${formatCurrency(totalMonthly, currency)}</span></div>`
+    : `<div class="empty-state">${tr('Aucun abonnement non déclaré détecté pour le moment.')}</div>`;
+  const html = panel(tr('Abonnements & paiements récurrents détectés'), body);
   return { html, wire: () => {} };
 }
 
@@ -282,12 +286,12 @@ async function renderAnomalyTool() {
   const body = anomalies.length
     ? anomalies.map(([date, v]) => {
       const pctAbove = mean ? ((v - mean) / mean) * 100 : 0;
-      return `<div class="stat-row"><span class="stat-row-label">${date}</span><span>${formatCurrency(v, baseCurrency)} <span class="badge badge-neg">+${pctAbove.toFixed(0)}% vs moyenne</span></span></div>`;
+      return `<div class="stat-row"><span class="stat-row-label">${date}</span><span>${formatCurrency(v, baseCurrency)} <span class="badge badge-neg">${tr('+{pct}% vs moyenne', { pct: pctAbove.toFixed(0) })}</span></span></div>`;
     }).join('')
-    : '<div class="empty-state">Aucune anomalie détectée sur les 90 derniers jours.</div>';
+    : `<div class="empty-state">${tr('Aucune anomalie détectée sur les 90 derniers jours.')}</div>`;
 
-  const html = panel('Analyse des habitudes & détection d\'anomalies (90 derniers jours)',
-    `<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">Moyenne journalière : ${formatCurrency(mean, baseCurrency)} · Écart-type : ${formatCurrency(stdev, baseCurrency)}. Un jour est signalé si ses dépenses dépassent la moyenne + 2 écarts-types.</p>${body}`);
+  const html = panel(tr("Analyse des habitudes & détection d'anomalies (90 derniers jours)"),
+    `<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">${tr('Moyenne journalière : {mean} · Écart-type : {stdev}. Un jour est signalé si ses dépenses dépassent la moyenne + 2 écarts-types.', { mean: formatCurrency(mean, baseCurrency), stdev: formatCurrency(stdev, baseCurrency) })}</p>${body}`);
   return { html, wire: () => {} };
 }
 
@@ -301,8 +305,11 @@ async function getExchangeRatesSafe() {
 function formatDateTime(iso) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'short', timeStyle: 'short' }).format(d);
+  return new Intl.DateTimeFormat(intlLocale(), { dateStyle: 'short', timeStyle: 'short' }).format(d);
 }
+// Valeurs traduites à l'usage via tr(...), pas à la déclaration — mêmes conventions que
+// ASSET_CLASSES/ENTRY_TYPE_LABELS (investments.js) : les clés (create/update/delete) sont les
+// valeurs stockées en base (logAudit action), jamais traduites.
 const ACTION_LABELS = { create: 'Création', update: 'Modification', delete: 'Suppression' };
 
 async function renderAuditLogTool() {
@@ -311,10 +318,10 @@ async function renderAuditLogTool() {
     ? `<div style="max-height:420px;overflow-y:auto;">${rows.map((r) => `
         <div class="stat-row">
           <span class="stat-row-label">${formatDateTime(r.timestamp)} · ${escapeHtml(r.entityType)}</span>
-          <span class="badge ${r.action === 'delete' ? 'badge-neg' : r.action === 'create' ? 'badge-pos' : 'badge-accent'}">${ACTION_LABELS[r.action] || r.action}${r.note ? ' — ' + escapeHtml(r.note) : ''}</span>
+          <span class="badge ${r.action === 'delete' ? 'badge-neg' : r.action === 'create' ? 'badge-pos' : 'badge-accent'}">${tr(ACTION_LABELS[r.action] || r.action)}${r.note ? ' — ' + escapeHtml(r.note) : ''}</span>
         </div>`).join('')}</div>`
-    : '<div class="empty-state">Aucune activité enregistrée pour le moment.</div>';
-  const html = panel("Journal d'audit (150 dernières actions)", body);
+    : `<div class="empty-state">${tr('Aucune activité enregistrée pour le moment.')}</div>`;
+  const html = panel(tr("Journal d'audit (150 dernières actions)"), body);
   return { html, wire: () => {} };
 }
 
@@ -322,7 +329,7 @@ async function renderAuditLogTool() {
 export async function renderTools() {
   const container = document.getElementById('tools-content');
   if (!container) return;
-  container.innerHTML = '<div class="empty-state">Chargement des outils…</div>';
+  container.innerHTML = `<div class="empty-state">${tr('Chargement des outils…')}</div>`;
 
   const tools = await Promise.all([
     renderWealthTrajectoryTool(),
@@ -335,8 +342,8 @@ export async function renderTools() {
     renderAuditLogTool(),
   ]);
 
-  container.innerHTML = tools.map((t) => t.html).join('');
-  tools.forEach((t) => t.wire());
+  container.innerHTML = tools.map((tool) => tool.html).join('');
+  tools.forEach((tool) => tool.wire());
 }
 
 export function initToolsModule() {
