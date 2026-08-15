@@ -327,11 +327,11 @@
       <!-- TRANSACTIONS -->
       <section id="view-transactions" class="view" data-view="transactions" hidden>
         <div class="view-header">
-          <h2>Transactions</h2>
+          <h2 data-i18n="Transactions">Transactions</h2>
           <div style="display:flex;gap:8px;">
-            <button id="transaction-bulk-toggle-btn" class="btn btn-ghost">Sélection multiple</button>
-            <button id="transaction-reconcile-btn" class="btn btn-ghost">Rapprochement</button>
-            <button id="transaction-add-btn" class="btn btn-primary">+ Nouvelle transaction</button>
+            <button id="transaction-bulk-toggle-btn" class="btn btn-ghost" data-i18n="Sélection multiple">Sélection multiple</button>
+            <button id="transaction-reconcile-btn" class="btn btn-ghost" data-i18n="Rapprochement">Rapprochement</button>
+            <button id="transaction-add-btn" class="btn btn-primary" data-i18n="+ Nouvelle transaction">+ Nouvelle transaction</button>
           </div>
         </div>
         <div id="transactions-filters" class="filters-bar"></div>
@@ -456,65 +456,65 @@
   <div class="modal-backdrop" data-modal="quick-add">
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="qa-title">
       <div class="modal-header">
-        <h3 id="qa-title">Saisie express</h3>
-        <button class="icon-btn modal-close" aria-label="Fermer">
+        <h3 id="qa-title" data-i18n="Saisie express">Saisie express</h3>
+        <button class="icon-btn modal-close" aria-label="Fermer" data-i18n-aria-label="Fermer">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6Z"/></svg>
         </button>
       </div>
       <form id="quick-add-form" class="modal-body">
         <div class="segmented" data-field="type">
-          <button type="button" class="segmented-btn is-active" data-value="expense">Dépense</button>
-          <button type="button" class="segmented-btn" data-value="income">Recette</button>
-          <button type="button" class="segmented-btn" data-value="transfer">Transfert</button>
+          <button type="button" class="segmented-btn is-active" data-value="expense" data-i18n="Dépense">Dépense</button>
+          <button type="button" class="segmented-btn" data-value="income" data-i18n="Recette">Recette</button>
+          <button type="button" class="segmented-btn" data-value="transfer" data-i18n="Transfert">Transfert</button>
         </div>
         <div class="form-row" data-field="amountRow">
-          <label>Montant</label>
+          <label data-i18n="Montant">Montant</label>
           <input type="number" step="0.01" min="0" name="amount" required inputmode="decimal" placeholder="0.00">
         </div>
         <div class="form-row">
-          <label>Portefeuille</label>
+          <label data-i18n="Portefeuille">Portefeuille</label>
           <select name="walletId" required></select>
         </div>
         <div class="form-row" data-field="targetWalletRow" hidden>
-          <label>Vers le portefeuille</label>
+          <label data-i18n="Vers le portefeuille">Vers le portefeuille</label>
           <select name="targetWalletId"></select>
         </div>
         <div class="form-row" data-field="categoryRow">
-          <label>Catégorie</label>
+          <label data-i18n="Catégorie">Catégorie</label>
           <select name="categoryId" required></select>
         </div>
         <div class="form-row" data-field="splitToggleRow">
-          <button type="button" id="qa-split-toggle" class="link-btn" style="font-size:13px;">Diviser en plusieurs catégories</button>
+          <button type="button" id="qa-split-toggle" class="link-btn" style="font-size:13px;" data-i18n="Diviser en plusieurs catégories">Diviser en plusieurs catégories</button>
         </div>
         <div data-field="splitRows" hidden>
           <div id="qa-split-list"></div>
-          <button type="button" id="qa-split-add" class="btn btn-ghost" style="margin:4px 0 10px;">+ Ajouter une catégorie</button>
-          <div id="qa-split-total" style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Total : 0.00</div>
+          <button type="button" id="qa-split-add" class="btn btn-ghost" style="margin:4px 0 10px;" data-i18n="+ Ajouter une catégorie">+ Ajouter une catégorie</button>
+          <div id="qa-split-total" style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;" data-i18n="Total : 0.00">Total : 0.00</div>
         </div>
         <div class="form-row">
-          <label>Date</label>
+          <label data-i18n="Date">Date</label>
           <input type="date" name="date" required>
         </div>
         <div class="form-row">
-          <label>Note (optionnel)</label>
-          <input type="text" name="note" maxlength="140" placeholder="Ex: Courses supermarché">
+          <label data-i18n="Note (optionnel)">Note (optionnel)</label>
+          <input type="text" name="note" maxlength="140" placeholder="Ex: Courses supermarché" data-i18n-placeholder="Ex: Courses supermarché">
         </div>
         <div class="form-row">
-          <label>Étiquettes (optionnel, séparées par des virgules)</label>
-          <input type="text" name="tags" maxlength="140" placeholder="Ex: pro, remboursable">
+          <label data-i18n="Étiquettes (optionnel, séparées par des virgules)">Étiquettes (optionnel, séparées par des virgules)</label>
+          <input type="text" name="tags" maxlength="140" placeholder="Ex: pro, remboursable" data-i18n-placeholder="Ex: pro, remboursable">
         </div>
         <div class="form-row">
-          <label>Justificatif photo (optionnel)</label>
+          <label data-i18n="Justificatif photo (optionnel)">Justificatif photo (optionnel)</label>
           <input type="file" name="receipt" accept="image/*" capture="environment">
           <div id="qa-receipt-preview" style="margin-top:8px;" hidden>
-            <img id="qa-receipt-preview-img" alt="Aperçu du justificatif" style="max-width:120px;max-height:120px;border-radius:8px;border:1px solid var(--border);display:block;">
+            <img id="qa-receipt-preview-img" alt="Aperçu du justificatif" data-i18n-alt="Aperçu du justificatif" style="max-width:120px;max-height:120px;border-radius:8px;border:1px solid var(--border);display:block;">
             <div style="display:flex;gap:14px;align-items:center;margin-top:6px;">
-              <button type="button" id="qa-receipt-scan" class="link-btn" style="font-size:12.5px;">Scanner le montant</button>
-              <button type="button" id="qa-receipt-remove" class="link-btn" style="font-size:12.5px;">Retirer le justificatif</button>
+              <button type="button" id="qa-receipt-scan" class="link-btn" style="font-size:12.5px;" data-i18n="Scanner le montant">Scanner le montant</button>
+              <button type="button" id="qa-receipt-remove" class="link-btn" style="font-size:12.5px;" data-i18n="Retirer le justificatif">Retirer le justificatif</button>
             </div>
           </div>
         </div>
-        <button type="submit" class="btn btn-primary btn-block">Enregistrer</button>
+        <button type="submit" class="btn btn-primary btn-block" data-i18n="Enregistrer">Enregistrer</button>
       </form>
     </div>
   </div>

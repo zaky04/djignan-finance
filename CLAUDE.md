@@ -2,7 +2,7 @@
 
 > Ce fichier sert de mémoire du projet pour toute personne (ou IA) qui reprend le développement.
 > À tenir à jour à chaque session de travail significative : ce qui a été fait, pourquoi, et ce qui reste ouvert.
-> Dernière mise à jour : **13 août 2026**.
+> Dernière mise à jour : **15 août 2026**.
 
 ## 1. C'est quoi ce projet
 
@@ -1164,7 +1164,9 @@ que certains écrans resteront en français le temps du reste du chantier.
 **État d'avancement** (à tenir à jour à chaque lot suivant) :
 - ✅ Infrastructure (`i18n.js`), châssis de l'app (menu, barre du haut, bas de page mobile, écran de
   verrouillage), tableau de bord complet, formatage devises/dates/mois.
-- ⬜ Transactions, Budgets, Épargne, Investissements, Dettes & créances, Outils, Rapports, Partage,
+- ✅ Transactions (lot 2, voir entrée du 15 août 2026 ci-dessous) : modale Saisie express (y compris
+  mode scindé, scan de justificatif), rapprochement bancaire, liste + filtres, sélection multiple.
+- ⬜ Budgets, Épargne, Investissements, Dettes & créances, Outils, Rapports, Partage,
   Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit), Recherche globale,
   mode démo, onboarding.
 
@@ -1177,6 +1179,75 @@ rendu et vérifié (options FR/EN, la bonne présélectionnée). Les 24 assertio
 `test/ledger.test.html` passent toujours.
 
 `CACHE_VERSION` : `v52` → `v53` (nouveau fichier `js/i18n.js` ajouté à `APP_SHELL`).
+
+**Deux clarifications tranchées avec l'auteur avant ce lot** (question posée, réponse explicite) :
+- « Comptes gardés » → traduit **« Managed accounts »** (pas de traduction littérale plus
+  maladroite envisagée un temps).
+- Les catégories par défaut doivent-elles se créer en anglais pour une toute nouvelle installation
+  déjà en anglais ? → **Oui, uniquement à la création, jamais rétroactivement** pour une catégorie
+  déjà existante (confirme le choix déjà fait par construction dans `t(c.name)` à l'insertion).
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 2/N : Transactions)
+
+Suite du chantier « par étapes, écran par écran » (l'auteur a explicitement demandé de continuer la
+traduction avant de pousser le lot 1, avec invitation à poser des questions de clarification en cours
+de route). Écran converti cette fois : **Transactions**, dans son ensemble — modale Saisie express
+(y compris mode scindé et scan de justificatif), rapprochement bancaire, liste filtrée, sélection
+multiple, journal d'audit associé.
+
+**Piège `t`/variable déjà connu, reproduit à l'identique** (voir lot 1) : `transactions.js` utilise
+`t` comme nom de paramètre pour une transaction dans plusieurs fonctions (`txRowHtml(t)`,
+`reconTxRowHtml(t, currency)`, une `const t` locale dans le handler de clic de
+`initTransactionsModule`). Vérifié par `grep` avant d'écrire l'import, import aliasé directement
+`import { t as tr, applyStaticTranslations } from '../i18n.js';` — pas eu besoin de repasser derrière
+cette fois (contrairement au lot 1 sur `dashboard.js`, où l'erreur avait été commise puis corrigée).
+
+**`<template>` et traduction statique** : `tpl-modal-quick-add` (`index.html`) a reçu ses attributs
+`data-i18n`/`data-i18n-aria-label`/`data-i18n-placeholder` comme n'importe quel HTML statique — mais
+le contenu d'un `<template>` n'existe pas dans le `document` avant clonage, donc le passage unique
+d'`applyStaticTranslations()` au boot ne les touche jamais. `openQuickAdd()` (déjà correct depuis
+avant ce lot) rappelle `applyStaticTranslations()` juste après avoir inséré le clone dans le DOM.
+
+**Nouveau : `data-i18n-alt`** — le justificatif photo prévisualisé (`<img id="qa-receipt-preview-img"
+alt="...">`) est le premier cas de texte statique traduisible porté par un attribut `alt`, que les
+trois mécanismes existants (`data-i18n`, `-aria-label`, `-title`, `-placeholder`) ne couvraient pas.
+Ajouté `data-i18n-alt` à `applyStaticTranslations()` (`i18n.js`), même principe que les autres.
+
+**Décision de traduction notable : le mot « Annuler » sert à deux rôles distincts dans l'app** — le
+bouton Annuler par défaut de `confirmDialog()` (`utils.js`, pas encore traduit à ce stade du chantier)
+ET le libellé d'action « annuler » sur les toasts de restauration après suppression (ce fichier, et au
+moins `kept-accounts.js`/`debts.js` à convertir plus tard). Comme la clé de traduction est le texte
+français lui-même, les deux usages partagent inévitablement la même entrée de dictionnaire. Choix fait
+ici : `'Annuler': 'Undo'` (le rôle activement câblé dans ce lot). **Piège posé pour la suite** : si
+`confirmDialog()` est traduit un jour, ne PAS le faire passer par cette même clé `'Annuler'` (il lui
+faudrait `'Cancel'`) — prévoir un mécanisme séparé pour son `cancelText` par défaut. Commentaire laissé
+en place dans `i18n.js` à côté de l'entrée pour ne pas se faire piéger.
+
+**Notes d'audit traduites à la création, comme les catégories par défaut** — les chaînes passées à
+`logAudit({..., note: ...})` dans ce fichier (« Transaction scindée », « Catégorisation groupée »,
+« Pointée (groupé) », etc.) sont lues et affichées telles quelles par l'écran Outils > Journal d'audit
+(`tools.js`, pas encore converti). Enveloppées dans `tr(...)` au même titre que le reste : une note
+créée en anglais reste en anglais dans le journal même après un retour au français, exactement le même
+principe que les catégories par défaut (traduction au moment de l'écriture, jamais de ré-traduction
+rétroactive d'une donnée déjà en base).
+
+**Nouvelles entrées de dictionnaire** : ~95 nouvelles clés (`i18n.js`), section « Transactions »
+— vérifié par script qu'aucune ne duplique une clé existante (`js/i18n.js`, dictionnaire à plat,
+188 clés au total après ce lot).
+
+Testé dans le navigateur, bascule FR→EN→FR complète : modale Saisie express (labels, segmented
+Dépense/Recette/Transfert, mode scindé, placeholders, bouton Enregistrer), rapprochement bancaire
+(formulaire, résultat calculé avec écart réel, liste de transactions non pointées, action « Pointer »),
+liste + filtres (mois au format anglais « August 2026 », sélecteurs, état vide), sélection multiple
+(barre d'actions, modale de recatégorisation groupée, suppression groupée avec confirmation + toast
+« Undo »), et le journal d'audit (`STORES.AUDIT_LOG` lu directement) confirmant que les notes créées en
+anglais (« Bulk deletion », « Reconciled (assisted reconciliation)) y restent affichées telles quelles.
+Retour en français vérifié à la fois par re-vérouillage (écran de PIN redevenu « Déverrouiller
+GeoFinance ») et par rendu direct des fonctions du module (`renderTransactions()`, `openQuickAdd()`) :
+tout le texte français d'origine, y compris le formatage de date (« Août 2026 »), identique à avant le
+chantier — aucune régression sur le chemin non traduit.
+
+`CACHE_VERSION` : `v53` → `v54`.
 
 ## 7. Pistes prioritaires non traitées
 

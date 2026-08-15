@@ -12,7 +12,7 @@
      modules) : envelopper chaque chaîne dans t('...').
    - Texte statique dans index.html (menu, barre du haut, écran de
      verrouillage) : attributs data-i18n="texte français" (contenu texte),
-     data-i18n-aria-label / data-i18n-title / data-i18n-placeholder
+     data-i18n-aria-label / data-i18n-title / data-i18n-placeholder / data-i18n-alt
      (attributs) — appliqués par applyStaticTranslations() au démarrage.
    ========================================================================== */
 
@@ -47,6 +47,7 @@ export function applyStaticTranslations() {
   document.querySelectorAll('[data-i18n-aria-label]').forEach((el) => { el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel)); });
   document.querySelectorAll('[data-i18n-title]').forEach((el) => { el.setAttribute('title', t(el.dataset.i18nTitle)); });
   document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => { el.setAttribute('placeholder', t(el.dataset.i18nPlaceholder)); });
+  document.querySelectorAll('[data-i18n-alt]').forEach((el) => { el.setAttribute('alt', t(el.dataset.i18nAlt)); });
 }
 
 /** Traduit une chaîne française, avec substitution optionnelle de
@@ -82,7 +83,7 @@ const EN = {
   'Rapports': 'Reports',
   'Partage': 'Shared expenses',
   'Partage de dépenses': 'Shared expenses',
-  'Comptes gardés': 'Kept accounts',
+  'Comptes gardés': 'Managed accounts',
   'Paramètres': 'Settings',
   'Verrouiller': 'Lock',
   'Contribuer / contact': 'Contribute / contact',
@@ -111,6 +112,20 @@ const EN = {
   'Échec de la vérification biométrique.': 'Biometric verification failed.',
   'Biométrie indisponible ou annulée.': 'Biometrics unavailable or cancelled.',
   'Trop de tentatives. Réessayez dans {s}s.': 'Too many attempts. Try again in {s}s.',
+
+  // ---------- Catégories par défaut (DEFAULT_CATEGORIES, db.js) ----------
+  // Traduites au moment de la CRÉATION (seedDefaultsIfNeeded/seedDemoData), jamais après coup : une
+  // catégorie déjà créée par un utilisateur (par défaut ou renommée) reste telle quelle même s'il
+  // change de langue ensuite — seule l'interface se traduit, jamais les données déjà en place.
+  'Salaire': 'Salary',
+  'Autres revenus': 'Other income',
+  'Alimentation': 'Food',
+  'Logement': 'Housing',
+  'Transport': 'Transport',
+  'Loisirs': 'Leisure',
+  'Santé': 'Health',
+  'Abonnements': 'Subscriptions',
+  'Autres dépenses': 'Other expenses',
 
   // ---------- Tableau de bord (dashboard.js) ----------
   'Bonjour': 'Good morning',
@@ -155,4 +170,114 @@ const EN = {
   'Aucun budget défini pour ce mois — allez dans Budgets pour en attribuer': 'No budget set for this month — go to Budgets to allocate one',
   '{amount} non affecté': '{amount} unallocated',
   'Budgets > revenu de {amount}': 'Budgets exceed income by {amount}',
+
+  // ---------- Transactions (transactions.js + template Saisie express, index.html) ----------
+  'Sélection multiple': 'Multi-select',
+  'Rapprochement': 'Reconciliation',
+  '+ Nouvelle transaction': '+ New transaction',
+  'Fermer': 'Close',
+  'Dépense': 'Expense',
+  'Recette': 'Income',
+  'Transfert': 'Transfer',
+  'Montant': 'Amount',
+  'Portefeuille': 'Wallet',
+  'Vers le portefeuille': 'To wallet',
+  'Catégorie': 'Category',
+  'Diviser en plusieurs catégories': 'Split into multiple categories',
+  '+ Ajouter une catégorie': '+ Add a category',
+  'Total : 0.00': 'Total: 0.00',
+  'Date': 'Date',
+  'Note (optionnel)': 'Note (optional)',
+  'Ex: Courses supermarché': 'E.g. Grocery shopping',
+  'Étiquettes (optionnel, séparées par des virgules)': 'Tags (optional, comma-separated)',
+  'Ex: pro, remboursable': 'E.g. work, reimbursable',
+  'Justificatif photo (optionnel)': 'Receipt photo (optional)',
+  'Aperçu du justificatif': 'Receipt preview',
+  'Scanner le montant': 'Scan amount',
+  'Retirer le justificatif': 'Remove receipt',
+  'Enregistrer': 'Save',
+  'Analyse en cours…': 'Scanning…',
+  "Montant détecté : {amount} — vérifiez avant d'enregistrer.": 'Detected amount: {amount} — check it before saving.',
+  'Montant détecté : {amount} — ajoutez-le manuellement à une ligne (mode scindé).': 'Detected amount: {amount} — add it manually to a line (split mode).',
+  'Aucun montant détecté sur cette photo, saisissez-le manuellement.': 'No amount detected on this photo, enter it manually.',
+  'Échec de la lecture automatique. Saisissez le montant manuellement.': 'Automatic reading failed. Enter the amount manually.',
+  'Total : {sum}': 'Total: {sum}',
+  'Retirer': 'Remove',
+  'Revenir à une seule catégorie': 'Back to a single category',
+  "Créez un portefeuille d'abord": 'Create a wallet first',
+  'Aucune catégorie (créez-en dans Budgets)': 'No category (create one in Budgets)',
+  'Modifier la transaction': 'Edit transaction',
+  'Transfert entre portefeuilles': 'Transfer between wallets',
+  'Créez au moins un portefeuille avant de saisir une transaction.': 'Create at least one wallet before entering a transaction.',
+  'Choisissez deux portefeuilles différents.': 'Choose two different wallets.',
+  'Ajoutez au moins deux lignes avec un montant.': 'Add at least two lines with an amount.',
+  'Transaction scindée': 'Split transaction',
+  '{count} transactions créées (scindées).': '{count} transactions created (split).',
+  'Transaction modifiée.': 'Transaction updated.',
+  'Transaction enregistrée.': 'Transaction saved.',
+  'Dépense {ratio}x plus élevée que votre moyenne habituelle pour {catName} (~{average}).': 'Expense {ratio}x higher than your usual average for {catName} (~{average}).',
+  'Dépense {ratio}x plus élevée que votre moyenne habituelle (~{average}).': 'Expense {ratio}x higher than your usual average (~{average}).',
+  'Pointer': 'Reconcile',
+  'Date du relevé': 'Statement date',
+  'Solde de clôture du relevé': 'Statement closing balance',
+  "Calculer l'écart": 'Calculate the difference',
+  'Rapprochement bancaire': 'Bank reconciliation',
+  'Solde pointé (app)': 'Reconciled balance (app)',
+  'Solde du relevé': 'Statement balance',
+  'Écart': 'Difference',
+  'Rapprochement exact, aucun écart.': 'Exact match, no difference.',
+  "{count} transaction(s) non pointée(s) jusqu'à cette date — pointez celles qui apparaissent sur le relevé pour résorber l'écart :":
+    "{count} unreconciled transaction(s) up to this date — reconcile the ones that appear on your statement to resolve the difference:",
+  "Aucune transaction non pointée sur cette période — l'écart provient peut-être d'une transaction manquante ou d'une date de relevé incorrecte.":
+    'No unreconciled transactions in this period — the difference may come from a missing transaction or an incorrect statement date.',
+  'Pointée (rapprochement assisté)': 'Reconciled (assisted reconciliation)',
+  'Voir le justificatif': 'View receipt',
+  'Pointée (cliquer pour annuler)': 'Reconciled (click to undo)',
+  'Marquer comme pointée': 'Mark as reconciled',
+  'Modifier': 'Edit',
+  'Supprimer': 'Delete',
+  'Aucune transaction pour ces filtres.': 'No transactions for these filters.',
+  'Nouvelle catégorie pour {count} transaction(s)': 'New category for {count} transaction(s)',
+  'Appliquer': 'Apply',
+  'Changer la catégorie': 'Change category',
+  'Catégorisation groupée': 'Bulk categorization',
+  '{count} transaction(s) recatégorisée(s).': '{count} transaction(s) recategorized.',
+  'Pointée (groupé)': 'Reconciled (bulk)',
+  'Dépointée (groupé)': 'Unreconciled (bulk)',
+  '{count} transaction(s) mise(s) à jour.': '{count} transaction(s) updated.',
+  'Supprimer {count} transaction(s) sélectionnée(s) ?': 'Delete {count} selected transaction(s)?',
+  'Suppression groupée': 'Bulk deletion',
+  '{count} transaction(s) supprimée(s).': '{count} transaction(s) deleted.',
+  // 'Annuler' sert à la fois de bouton "Annuler" (confirmDialog, utils.js — pas encore traduit) et de
+  // libellé "Annuler" sur les toasts d'annulation après suppression (ici et dans plusieurs autres
+  // modules) — le même mot français couvre naturellement Cancel et Undo, mais la clé de traduction est
+  // unique. Choix fait ici : 'Undo', car c'est l'usage qu'on câble activement dans ce lot (toasts de
+  // restauration). Si confirmDialog est traduit un jour, NE PAS le faire passer par cette même clé
+  // 'Annuler' (il lui faudrait 'Cancel') — utiliser un mécanisme séparé pour son cancelText.
+  'Annuler': 'Undo',
+  'Restaurée (annulation groupée)': 'Restored (bulk undo)',
+  '{count} transaction(s) restaurée(s).': '{count} transaction(s) restored.',
+  '{count} sélectionnée(s)': '{count} selected',
+  'Tout désélectionner': 'Deselect all',
+  'Tout sélectionner': 'Select all',
+  'Marquer pointées': 'Mark as reconciled',
+  'Marquer non pointées': 'Mark as unreconciled',
+  'Mois précédent': 'Previous month',
+  'Mois suivant': 'Next month',
+  'Tous les portefeuilles': 'All wallets',
+  'Toutes catégories': 'All categories',
+  'Tous types': 'All types',
+  'Recettes': 'Income',
+  'Dépenses': 'Expenses',
+  'Transferts': 'Transfers',
+  'Rapprochement : toutes': 'Reconciliation: all',
+  'Pointées': 'Reconciled',
+  'Non pointées': 'Unreconciled',
+  'Justificatif': 'Receipt',
+  'Pointée': 'Reconciled',
+  'Dépointée': 'Unreconciled',
+  'Supprimer cette transaction ?': 'Delete this transaction?',
+  'Transaction supprimée.': 'Transaction deleted.',
+  'Transaction restaurée.': 'Transaction restored.',
+  'Restaurée (annulation)': 'Restored (undo)',
 };

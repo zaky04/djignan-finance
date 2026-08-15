@@ -166,8 +166,12 @@ function wireGlobalChrome() {
 async function seedDefaultsIfNeeded() {
   const categories = await dbGetAll(STORES.CATEGORIES);
   if (categories.length === 0) {
+    // t(c.name) : traduit le nom dans la langue courante SEULEMENT au moment de la création (un
+    // nouvel utilisateur anglophone démarre avec "Food"/"Housing"...) — jamais après coup, une
+    // catégorie déjà créée (par défaut ou renommée) ne doit jamais changer toute seule si la langue
+    // change ensuite, voir i18n.js.
     for (const c of DEFAULT_CATEGORIES) {
-      await dbAdd(STORES.CATEGORIES, { id: uuid(), parentId: null, createdAt: new Date().toISOString(), ...c });
+      await dbAdd(STORES.CATEGORIES, { id: uuid(), parentId: null, createdAt: new Date().toISOString(), ...c, name: t(c.name) });
     }
   }
   const base = await getSetting('baseCurrency');

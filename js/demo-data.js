@@ -10,6 +10,7 @@
 
 import { STORES, dbBulkPut, wipeUserData, setSetting, DEFAULT_CATEGORIES } from './db.js';
 import { uuid, localISODate } from './utils.js';
+import { t } from './i18n.js';
 
 function daysAgo(n) {
   const d = new Date();
@@ -47,7 +48,7 @@ export async function seedDemoData() {
   // au tout premier boot, voir app.js) — on ne peut pas compter dessus ici. DEFAULT_CATEGORIES (db.js)
   // est la même liste que seedDefaultsIfNeeded() utilise, partagée pour que les deux ne dérivent
   // jamais l'une de l'autre en silence.
-  const categories = DEFAULT_CATEGORIES.map((c) => ({ id: uuid(), parentId: null, createdAt: now, ...c }));
+  const categories = DEFAULT_CATEGORIES.map((c) => ({ id: uuid(), parentId: null, createdAt: now, ...c, name: t(c.name) }));
   await dbBulkPut(STORES.CATEGORIES, categories);
   const cat = (name) => categories.find((c) => c.name === name)?.id || null;
 

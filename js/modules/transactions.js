@@ -10,6 +10,10 @@ import { getEnrichedTransactions, guessCategoryId, checkUnusualExpense } from '.
 import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { extractAmountFromImage } from '../ocr.js';
+// Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
+// plusieurs fonctions (txRowHtml(t), reconTxRowHtml(t), et une const t locale dans le handler de
+// clic de initTransactionsModule) — voir le même piège documenté dans dashboard.js.
+import { t as tr, applyStaticTranslations } from '../i18n.js';
 
 const TX_ICONS = {
   income: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 20V6M6 12l6-6 6 6"/></svg>',
@@ -35,6 +39,11 @@ export function openQuickAdd({ editTransaction = null } = {}) {
   const root = document.getElementById('modal-root');
   root.appendChild(tpl.content.cloneNode(true));
   const backdrop = root.querySelector('.modal-backdrop[data-modal="quick-add"]');
+  // Le contenu d'un <template> n'est pas dans le document tant qu'il n'est pas cloné — les
+  // attributs data-i18n dessus n'ont donc jamais été traduits par le passage unique
+  // d'applyStaticTranslations() au démarrage (auth.js). On le relance ici, sur le clone qui vient
+  // d'être inséré dans le vrai document.
+  applyStaticTranslations();
 
   function close() {
     backdrop.remove();
@@ -90,21 +99,21 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     const source = receiptInput.files[0] || (!receiptRemoved && editTransaction?.receiptBlob) || null;
     if (!source) return;
     const originalLabel = receiptScanBtn.textContent;
-    receiptScanBtn.textContent = 'Analyse en cours…';
+    receiptScanBtn.textContent = tr('Analyse en cours…');
     receiptScanBtn.disabled = true;
     try {
       const amount = await extractAmountFromImage(source);
       if (amount != null && !splitMode) {
         form.elements.amount.value = amount.toFixed(2);
-        showToast(`Montant détecté : ${amount.toFixed(2)} — vérifiez avant d'enregistrer.`);
+        showToast(tr("Montant détecté : {amount} — vérifiez avant d'enregistrer.", { amount: amount.toFixed(2) }));
       } else if (amount != null) {
-        showToast(`Montant détecté : ${amount.toFixed(2)} — ajoutez-le manuellement à une ligne (mode scindé).`);
+        showToast(tr('Montant détecté : {amount} — ajoutez-le manuellement à une ligne (mode scindé).', { amount: amount.toFixed(2) }));
       } else {
-        showToast('Aucun montant détecté sur cette photo, saisissez-le manuellement.');
+        showToast(tr('Aucun montant détecté sur cette photo, saisissez-le manuellement.'));
       }
     } catch (err) {
       console.warn('[OCR]', err);
-      showToast("Échec de la lecture automatique. Saisissez le montant manuellement.");
+      showToast(tr('Échec de la lecture automatique. Saisissez le montant manuellement.'));
     } finally {
       receiptScanBtn.textContent = originalLabel;
       receiptScanBtn.disabled = false;
@@ -114,7 +123,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
   function updateSplitTotal() {
     const rows = [...splitList.querySelectorAll('[data-split-row]')];
     const sum = rows.reduce((s, row) => s + (parseFloat(row.querySelector('.split-amount').value) || 0), 0);
-    splitTotalEl.textContent = `Total : ${sum.toFixed(2)}`;
+    splitTotalEl.textContent = tr('Total : {sum}', { sum: sum.toFixed(2) });
   }
 
   function addSplitRow(categoryId = '') {
@@ -124,7 +133,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     row.innerHTML = `
       <select class="split-category" style="flex:2;"></select>
       <input type="number" step="0.01" min="0" class="split-amount" placeholder="0.00" style="flex:1;">
-      <button type="button" class="icon-btn split-remove" aria-label="Retirer">${DELETE_ICON}</button>`;
+      <button type="button" class="icon-btn split-remove" aria-label="${tr('Retirer')}">${DELETE_ICON}</button>`;
     splitList.appendChild(row);
     row.querySelector('.split-category').innerHTML = categorySelect.innerHTML;
     if (categoryId) row.querySelector('.split-category').value = categoryId;
@@ -137,7 +146,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     amountRow.hidden = splitMode;
     categoryRow.hidden = splitMode || currentType === 'transfer';
     splitRowsWrap.hidden = !splitMode;
-    splitToggleBtn.textContent = splitMode ? 'Revenir à une seule catégorie' : 'Diviser en plusieurs catégories';
+    splitToggleBtn.textContent = splitMode ? tr('Revenir à une seule catégorie') : tr('Diviser en plusieurs catégories');
     form.elements.amount.required = !splitMode;
     categorySelect.required = !splitMode && currentType !== 'transfer';
     if (splitMode && !splitList.children.length) {
@@ -153,7 +162,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
   async function populateWallets() {
     const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
     const opts = wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
-    walletSelect.innerHTML = opts || '<option value="">Créez un portefeuille d\'abord</option>';
+    walletSelect.innerHTML = opts || `<option value="">${tr("Créez un portefeuille d'abord")}</option>`;
     targetWalletSelect.innerHTML = opts;
   }
 
@@ -167,7 +176,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
         html += `<option value="${child.id}">— ${escapeHtml(child.name)}</option>`;
       }
     }
-    categorySelect.innerHTML = html || '<option value="">Aucune catégorie (créez-en dans Budgets)</option>';
+    categorySelect.innerHTML = html || `<option value="">${tr('Aucune catégorie (créez-en dans Budgets)')}</option>`;
   }
 
   function setType(type) {
@@ -179,7 +188,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     splitToggleRow.hidden = type === 'transfer';
     targetWalletSelect.required = type === 'transfer';
     categorySelect.required = type !== 'transfer' && !splitMode;
-    titleEl.textContent = editTransaction ? 'Modifier la transaction' : (type === 'transfer' ? 'Transfert entre portefeuilles' : 'Saisie express');
+    titleEl.textContent = editTransaction ? tr('Modifier la transaction') : (type === 'transfer' ? tr('Transfert entre portefeuilles') : tr('Saisie express'));
     if (type !== 'transfer') {
       populateCategories().then(() => {
         splitList.querySelectorAll('.split-category').forEach((sel) => {
@@ -234,8 +243,8 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     const walletId = fd.get('walletId');
     const targetWalletId = type === 'transfer' ? fd.get('targetWalletId') : null;
 
-    if (!walletId) { showToast('Créez au moins un portefeuille avant de saisir une transaction.'); return; }
-    if (type === 'transfer' && walletId === targetWalletId) { showToast('Choisissez deux portefeuilles différents.'); return; }
+    if (!walletId) { showToast(tr('Créez au moins un portefeuille avant de saisir une transaction.')); return; }
+    if (type === 'transfer' && walletId === targetWalletId) { showToast(tr('Choisissez deux portefeuilles différents.')); return; }
 
     const receiptBlob = receiptInput.files[0] || (receiptRemoved ? null : editTransaction?.receiptBlob || null);
 
@@ -246,7 +255,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
           amount: parseFloat(row.querySelector('.split-amount').value) || 0,
         }))
         .filter((r) => r.amount > 0);
-      if (rows.length < 2) { showToast('Ajoutez au moins deux lignes avec un montant.'); return; }
+      if (rows.length < 2) { showToast(tr('Ajoutez au moins deux lignes avec un montant.')); return; }
 
       const splitGroupId = uuid();
       const date = fd.get('date');
@@ -259,10 +268,10 @@ export function openQuickAdd({ editTransaction = null } = {}) {
           reconciled: false, splitGroupId, createdAt: new Date().toISOString(),
         };
         await dbAdd(STORES.TRANSACTIONS, splitRecord);
-        await logAudit({ entityType: 'transaction', entityId: splitRecord.id, action: 'create', after: splitRecord, note: 'Transaction scindée' });
+        await logAudit({ entityType: 'transaction', entityId: splitRecord.id, action: 'create', after: splitRecord, note: tr('Transaction scindée') });
       }
       close();
-      showToast(`${rows.length} transactions créées (scindées).`);
+      showToast(tr('{count} transactions créées (scindées).', { count: rows.length }));
       notifyDataChanged('transactions');
       return;
     }
@@ -285,14 +294,19 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     await dbPut(STORES.TRANSACTIONS, record);
     await logAudit({ entityType: 'transaction', entityId: record.id, action: editTransaction ? 'update' : 'create', before, after: record });
     close();
-    showToast(editTransaction ? 'Transaction modifiée.' : 'Transaction enregistrée.');
+    showToast(editTransaction ? tr('Transaction modifiée.') : tr('Transaction enregistrée.'));
     notifyDataChanged('transactions');
 
     if (record.type === 'expense' && record.categoryId) {
       const warning = await checkUnusualExpense(record.categoryId, record.amount, record.walletId, record.id);
       if (warning) {
         const catName = (categorySelect.selectedOptions[0]?.textContent || '').replace(/^—\s*/, '').trim();
-        showToast(`Dépense ${(Math.round(warning.ratio * 10) / 10)}x plus élevée que votre moyenne habituelle${catName ? ` pour ${catName}` : ''} (~${formatCurrency(warning.average, warning.currency)}).`, { duration: 6000 });
+        const ratio = Math.round(warning.ratio * 10) / 10;
+        const average = formatCurrency(warning.average, warning.currency);
+        const message = catName
+          ? tr('Dépense {ratio}x plus élevée que votre moyenne habituelle pour {catName} (~{average}).', { ratio, catName, average })
+          : tr('Dépense {ratio}x plus élevée que votre moyenne habituelle (~{average}).', { ratio, average });
+        showToast(message, { duration: 6000 });
       }
     }
   });
@@ -324,7 +338,7 @@ async function reconciledBalanceAsOf(walletId, cutoffDate) {
 
 function reconTxRowHtml(t, currency) {
   const isTransfer = t.type === 'transfer';
-  const title = isTransfer ? `${t.wallet?.name || '—'} → ${t.targetWallet?.name || '—'}` : (t.category?.name || 'Sans catégorie');
+  const title = isTransfer ? `${t.wallet?.name || '—'} → ${t.targetWallet?.name || '—'}` : (t.category?.name || tr('Sans catégorie'));
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   return `
@@ -334,27 +348,27 @@ function reconTxRowHtml(t, currency) {
         <div class="tx-sub">${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
       </div>
       <div class="tx-amount amount ${cls}">${sign}${formatCurrency(t.amount, currency)}</div>
-      <button type="button" class="btn btn-ghost" data-recon-tx="${t.id}" style="padding:4px 10px;font-size:12.5px;">Pointer</button>
+      <button type="button" class="btn btn-ghost" data-recon-tx="${t.id}" style="padding:4px 10px;font-size:12.5px;">${tr('Pointer')}</button>
     </div>`;
 }
 
 function openReconciliationModal() {
   const modal = openModal(`
     <div class="form-row">
-      <label>Portefeuille</label>
+      <label>${tr('Portefeuille')}</label>
       <select id="recon-wallet"></select>
     </div>
     <div class="form-row">
-      <label>Date du relevé</label>
+      <label>${tr('Date du relevé')}</label>
       <input type="date" id="recon-date" value="${todayISO()}">
     </div>
     <div class="form-row">
-      <label>Solde de clôture du relevé</label>
+      <label>${tr('Solde de clôture du relevé')}</label>
       <input type="number" step="0.01" id="recon-balance" inputmode="decimal" placeholder="0.00">
     </div>
-    <button type="button" class="btn btn-primary btn-block" id="recon-calc">Calculer l'écart</button>
+    <button type="button" class="btn btn-primary btn-block" id="recon-calc">${tr("Calculer l'écart")}</button>
     <div id="recon-result" style="margin-top:16px;"></div>
-  `, { title: 'Rapprochement bancaire' });
+  `, { title: tr('Rapprochement bancaire') });
 
   const walletSelect = modal.el.querySelector('#recon-wallet');
   const dateInput = modal.el.querySelector('#recon-date');
@@ -376,16 +390,16 @@ function openReconciliationModal() {
 
     resultEl.innerHTML = `
       <div class="panel" style="margin-bottom:12px;">
-        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px;"><span>Solde pointé (app)</span><strong>${formatCurrency(reconciled, wallet.currency)}</strong></div>
-        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px;"><span>Solde du relevé</span><strong>${formatCurrency(statementBalance, wallet.currency)}</strong></div>
-        <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:${isBalanced ? 'var(--pos)' : 'var(--neg)'};"><span>Écart</span><strong>${formatCurrency(diff, wallet.currency)}</strong></div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px;"><span>${tr('Solde pointé (app)')}</span><strong>${formatCurrency(reconciled, wallet.currency)}</strong></div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px;"><span>${tr('Solde du relevé')}</span><strong>${formatCurrency(statementBalance, wallet.currency)}</strong></div>
+        <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:${isBalanced ? 'var(--pos)' : 'var(--neg)'};"><span>${tr('Écart')}</span><strong>${formatCurrency(diff, wallet.currency)}</strong></div>
       </div>
       ${isBalanced
-        ? '<p class="empty-state" style="padding:8px 0;">✓ Rapprochement exact, aucun écart.</p>'
+        ? `<p class="empty-state" style="padding:8px 0;">✓ ${tr('Rapprochement exact, aucun écart.')}</p>`
         : unreconciled.length
-          ? `<p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">${unreconciled.length} transaction(s) non pointée(s) jusqu'à cette date — pointez celles qui apparaissent sur le relevé pour résorber l'écart :</p>
+          ? `<p style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">${tr('{count} transaction(s) non pointée(s) jusqu\'à cette date — pointez celles qui apparaissent sur le relevé pour résorber l\'écart :', { count: unreconciled.length })}</p>
              <div id="recon-tx-list">${unreconciled.map((t) => reconTxRowHtml(t, wallet.currency)).join('')}</div>`
-          : '<p class="empty-state" style="padding:8px 0;">Aucune transaction non pointée sur cette période — l\'écart provient peut-être d\'une transaction manquante ou d\'une date de relevé incorrecte.</p>'
+          : `<p class="empty-state" style="padding:8px 0;">${tr("Aucune transaction non pointée sur cette période — l'écart provient peut-être d'une transaction manquante ou d'une date de relevé incorrecte.")}</p>`
       }`;
 
     resultEl.querySelectorAll('[data-recon-tx]').forEach((btn) => {
@@ -397,7 +411,7 @@ function openReconciliationModal() {
         const before = { ...t };
         t.reconciled = true;
         await dbPut(STORES.TRANSACTIONS, t);
-        await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: 'Pointée (rapprochement assisté)' });
+        await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: tr('Pointée (rapprochement assisté)') });
         notifyDataChanged('transactions');
         renderResult();
       });
@@ -422,8 +436,8 @@ let visibleIds = [];
 
 function txRowHtml(t) {
   const isTransfer = t.type === 'transfer';
-  const title = isTransfer ? `${t.wallet?.name || '—'} → ${t.targetWallet?.name || '—'}` : (t.category?.name || 'Sans catégorie');
-  const sub = `${escapeHtml(t.wallet?.name || '')} · ${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}${t.splitGroupId ? ' · Scindée' : ''}`;
+  const title = isTransfer ? `${t.wallet?.name || '—'} → ${t.targetWallet?.name || '—'}` : (t.category?.name || tr('Sans catégorie'));
+  const sub = `${escapeHtml(t.wallet?.name || '')} · ${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}${t.splitGroupId ? ' · ' + tr('Scindée') : ''}`;
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   const currency = t.wallet?.currency || 'EUR';
@@ -443,12 +457,12 @@ function txRowHtml(t) {
       </div>
       <div class="tx-amount amount ${cls}" data-value="${t.amount}">${sign}${formatCurrency(t.amount, currency)}</div>
       <div class="card-actions">
-        ${t.receiptBlob ? `<button type="button" class="icon-btn" data-action="view-receipt" aria-label="Voir le justificatif" title="Voir le justificatif">${RECEIPT_ICON}</button>` : ''}
-        <button type="button" class="icon-btn" data-action="reconcile" aria-label="${t.reconciled ? 'Pointée (cliquer pour annuler)' : 'Marquer comme pointée'}" title="${t.reconciled ? 'Pointée (cliquer pour annuler)' : 'Marquer comme pointée'}" style="color:${t.reconciled ? 'var(--pos)' : 'var(--text-faint)'}">
+        ${t.receiptBlob ? `<button type="button" class="icon-btn" data-action="view-receipt" aria-label="${tr('Voir le justificatif')}" title="${tr('Voir le justificatif')}">${RECEIPT_ICON}</button>` : ''}
+        <button type="button" class="icon-btn" data-action="reconcile" aria-label="${t.reconciled ? tr('Pointée (cliquer pour annuler)') : tr('Marquer comme pointée')}" title="${t.reconciled ? tr('Pointée (cliquer pour annuler)') : tr('Marquer comme pointée')}" style="color:${t.reconciled ? 'var(--pos)' : 'var(--text-faint)'}">
           ${t.reconciled ? CHECK_CIRCLE : EMPTY_CIRCLE}
         </button>
-        <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
-        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="edit" aria-label="${tr('Modifier')}" title="${tr('Modifier')}">${EDIT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="${tr('Supprimer')}" title="${tr('Supprimer')}">${DELETE_ICON}</button>
       </div>
     </div>`;
 }
@@ -467,7 +481,7 @@ async function renderList() {
   visibleIds = rows.map((r) => r.id);
   for (const id of [...selectedIds]) { if (!visibleIds.includes(id)) selectedIds.delete(id); }
 
-  container.innerHTML = rows.length ? rows.map(txRowHtml).join('') : '<div class="tx-empty">Aucune transaction pour ces filtres.</div>';
+  container.innerHTML = rows.length ? rows.map(txRowHtml).join('') : `<div class="tx-empty">${tr('Aucune transaction pour ces filtres.')}</div>`;
 
   if (bulkMode) {
     container.querySelectorAll('[data-tx-select]').forEach((cb) => {
@@ -497,9 +511,9 @@ async function openBulkCategorizeModal() {
     return `<option value="${r.id}">${escapeHtml(r.name)}</option>${children}`;
   }).join('');
   const modal = openModal(`
-    <div class="form-row"><label>Nouvelle catégorie pour ${selectedIds.size} transaction(s)</label><select id="bulk-category-select">${optionsHtml}</select></div>
-    <button type="button" class="btn btn-primary btn-block" id="bulk-category-confirm">Appliquer</button>
-  `, { title: 'Changer la catégorie' });
+    <div class="form-row"><label>${tr('Nouvelle catégorie pour {count} transaction(s)', { count: selectedIds.size })}</label><select id="bulk-category-select">${optionsHtml}</select></div>
+    <button type="button" class="btn btn-primary btn-block" id="bulk-category-confirm">${tr('Appliquer')}</button>
+  `, { title: tr('Changer la catégorie') });
 
   modal.el.querySelector('#bulk-category-confirm').addEventListener('click', async () => {
     const categoryId = modal.el.querySelector('#bulk-category-select').value;
@@ -510,10 +524,10 @@ async function openBulkCategorizeModal() {
       const before = { ...t };
       t.categoryId = categoryId;
       await dbPut(STORES.TRANSACTIONS, t);
-      await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: 'Catégorisation groupée' });
+      await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: tr('Catégorisation groupée') });
     }
     modal.close();
-    showToast(`${selectedIds.size} transaction(s) recatégorisée(s).`);
+    showToast(tr('{count} transaction(s) recatégorisée(s).', { count: selectedIds.size }));
     notifyDataChanged('transactions');
   });
 }
@@ -526,15 +540,15 @@ async function bulkSetReconciled(reconciled) {
     const before = { ...t };
     t.reconciled = reconciled;
     await dbPut(STORES.TRANSACTIONS, t);
-    await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: reconciled ? 'Pointée (groupé)' : 'Dépointée (groupé)' });
+    await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: reconciled ? tr('Pointée (groupé)') : tr('Dépointée (groupé)') });
   }
-  showToast(`${selectedIds.size} transaction(s) mise(s) à jour.`);
+  showToast(tr('{count} transaction(s) mise(s) à jour.', { count: selectedIds.size }));
   notifyDataChanged('transactions');
 }
 
 async function bulkDelete() {
   const count = selectedIds.size;
-  const ok = await confirmDialog(`Supprimer ${count} transaction(s) sélectionnée(s) ?`, { danger: true, confirmText: 'Supprimer' });
+  const ok = await confirmDialog(tr('Supprimer {count} transaction(s) sélectionnée(s) ?', { count }), { danger: true, confirmText: tr('Supprimer') });
   if (!ok) return;
   const all = await dbGetAll(STORES.TRANSACTIONS);
   const deleted = [];
@@ -543,18 +557,18 @@ async function bulkDelete() {
     if (!t) continue;
     deleted.push(t);
     await dbDelete(STORES.TRANSACTIONS, id);
-    await logAudit({ entityType: 'transaction', entityId: id, action: 'delete', before: t, note: 'Suppression groupée' });
+    await logAudit({ entityType: 'transaction', entityId: id, action: 'delete', before: t, note: tr('Suppression groupée') });
   }
   selectedIds.clear();
   notifyDataChanged('transactions');
-  showToast(`${deleted.length} transaction(s) supprimée(s).`, {
-    actionLabel: 'Annuler',
+  showToast(tr('{count} transaction(s) supprimée(s).', { count: deleted.length }), {
+    actionLabel: tr('Annuler'),
     onAction: async () => {
       for (const t of deleted) {
         await dbAdd(STORES.TRANSACTIONS, t);
-        await logAudit({ entityType: 'transaction', entityId: t.id, action: 'create', after: t, note: 'Restaurée (annulation groupée)' });
+        await logAudit({ entityType: 'transaction', entityId: t.id, action: 'create', after: t, note: tr('Restaurée (annulation groupée)') });
       }
-      showToast(`${deleted.length} transaction(s) restaurée(s).`);
+      showToast(tr('{count} transaction(s) restaurée(s).', { count: deleted.length }));
       notifyDataChanged('transactions');
     },
   });
@@ -569,13 +583,13 @@ async function renderBulkBar() {
   const allSelected = visibleIds.length > 0 && count === visibleIds.length;
   bar.innerHTML = `
     <div class="filters-bar" style="align-items:center;background:var(--surface-alt);border-radius:10px;padding:8px 12px;">
-      <span style="font-size:13px;font-weight:700;">${count} sélectionnée(s)</span>
-      <button type="button" class="btn btn-ghost" id="bulk-select-all">${allSelected ? 'Tout désélectionner' : 'Tout sélectionner'}</button>
+      <span style="font-size:13px;font-weight:700;">${tr('{count} sélectionnée(s)', { count })}</span>
+      <button type="button" class="btn btn-ghost" id="bulk-select-all">${allSelected ? tr('Tout désélectionner') : tr('Tout sélectionner')}</button>
       ${count ? `
-        <button type="button" class="btn btn-ghost" id="bulk-categorize">Changer la catégorie</button>
-        <button type="button" class="btn btn-ghost" id="bulk-reconcile">Marquer pointées</button>
-        <button type="button" class="btn btn-ghost" id="bulk-unreconcile">Marquer non pointées</button>
-        <button type="button" class="btn btn-danger" id="bulk-delete">Supprimer</button>
+        <button type="button" class="btn btn-ghost" id="bulk-categorize">${tr('Changer la catégorie')}</button>
+        <button type="button" class="btn btn-ghost" id="bulk-reconcile">${tr('Marquer pointées')}</button>
+        <button type="button" class="btn btn-ghost" id="bulk-unreconcile">${tr('Marquer non pointées')}</button>
+        <button type="button" class="btn btn-danger" id="bulk-delete">${tr('Supprimer')}</button>
       ` : ''}
     </div>`;
 
@@ -597,22 +611,22 @@ async function renderFiltersBar() {
 
   bar.innerHTML = `
     <div style="display:flex;align-items:center;gap:4px;">
-      <button type="button" class="icon-btn" id="tx-prev-month" aria-label="Mois précédent">‹</button>
+      <button type="button" class="icon-btn" id="tx-prev-month" aria-label="${tr('Mois précédent')}">‹</button>
       <strong style="min-width:130px;text-align:center;display:inline-block;">${formatMonthLabel(filters.monthKey)}</strong>
-      <button type="button" class="icon-btn" id="tx-next-month" aria-label="Mois suivant">›</button>
+      <button type="button" class="icon-btn" id="tx-next-month" aria-label="${tr('Mois suivant')}">›</button>
     </div>
-    <select id="tx-filter-wallet"><option value="">Tous les portefeuilles</option>${wallets.map((w) => `<option value="${w.id}" ${filters.walletId === w.id ? 'selected' : ''}>${escapeHtml(w.name)}</option>`).join('')}</select>
-    <select id="tx-filter-category"><option value="">Toutes catégories</option>${categories.map((c) => `<option value="${c.id}" ${filters.categoryId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>
+    <select id="tx-filter-wallet"><option value="">${tr('Tous les portefeuilles')}</option>${wallets.map((w) => `<option value="${w.id}" ${filters.walletId === w.id ? 'selected' : ''}>${escapeHtml(w.name)}</option>`).join('')}</select>
+    <select id="tx-filter-category"><option value="">${tr('Toutes catégories')}</option>${categories.map((c) => `<option value="${c.id}" ${filters.categoryId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>
     <select id="tx-filter-type">
-      <option value="">Tous types</option>
-      <option value="income" ${filters.type === 'income' ? 'selected' : ''}>Recettes</option>
-      <option value="expense" ${filters.type === 'expense' ? 'selected' : ''}>Dépenses</option>
-      <option value="transfer" ${filters.type === 'transfer' ? 'selected' : ''}>Transferts</option>
+      <option value="">${tr('Tous types')}</option>
+      <option value="income" ${filters.type === 'income' ? 'selected' : ''}>${tr('Recettes')}</option>
+      <option value="expense" ${filters.type === 'expense' ? 'selected' : ''}>${tr('Dépenses')}</option>
+      <option value="transfer" ${filters.type === 'transfer' ? 'selected' : ''}>${tr('Transferts')}</option>
     </select>
     <select id="tx-filter-reconciled">
-      <option value="">Rapprochement : toutes</option>
-      <option value="yes" ${filters.reconciled === 'yes' ? 'selected' : ''}>Pointées</option>
-      <option value="no" ${filters.reconciled === 'no' ? 'selected' : ''}>Non pointées</option>
+      <option value="">${tr('Rapprochement : toutes')}</option>
+      <option value="yes" ${filters.reconciled === 'yes' ? 'selected' : ''}>${tr('Pointées')}</option>
+      <option value="no" ${filters.reconciled === 'no' ? 'selected' : ''}>${tr('Non pointées')}</option>
     </select>`;
 
   bar.querySelector('#tx-prev-month').onclick = () => { filters.monthKey = monthKeyOffset(filters.monthKey, -1); renderTransactions(); };
@@ -643,27 +657,27 @@ export function initTransactionsModule() {
     if (!t) return;
 
     if (btn.dataset.action === 'view-receipt') {
-      if (t.receiptBlob) openModal(`<img src="${URL.createObjectURL(t.receiptBlob)}" alt="Justificatif" style="max-width:100%;border-radius:8px;display:block;">`, { title: 'Justificatif' });
+      if (t.receiptBlob) openModal(`<img src="${URL.createObjectURL(t.receiptBlob)}" alt="${tr('Justificatif')}" style="max-width:100%;border-radius:8px;display:block;">`, { title: tr('Justificatif') });
     } else if (btn.dataset.action === 'reconcile') {
       const before = { ...t };
       t.reconciled = !t.reconciled;
       await dbPut(STORES.TRANSACTIONS, t);
-      await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: t.reconciled ? 'Pointée' : 'Dépointée' });
+      await logAudit({ entityType: 'transaction', entityId: t.id, action: 'update', before, after: t, note: t.reconciled ? tr('Pointée') : tr('Dépointée') });
       renderList();
     } else if (btn.dataset.action === 'edit') {
       openQuickAdd({ editTransaction: t });
     } else if (btn.dataset.action === 'delete') {
-      const ok = await confirmDialog('Supprimer cette transaction ?', { danger: true, confirmText: 'Supprimer' });
+      const ok = await confirmDialog(tr('Supprimer cette transaction ?'), { danger: true, confirmText: tr('Supprimer') });
       if (ok) {
         await dbDelete(STORES.TRANSACTIONS, txId);
         await logAudit({ entityType: 'transaction', entityId: txId, action: 'delete', before: t });
         notifyDataChanged('transactions');
-        showToast('Transaction supprimée.', {
-          actionLabel: 'Annuler',
+        showToast(tr('Transaction supprimée.'), {
+          actionLabel: tr('Annuler'),
           onAction: async () => {
             await dbAdd(STORES.TRANSACTIONS, t);
-            await logAudit({ entityType: 'transaction', entityId: t.id, action: 'create', after: t, note: 'Restaurée (annulation)' });
-            showToast('Transaction restaurée.');
+            await logAudit({ entityType: 'transaction', entityId: t.id, action: 'create', after: t, note: tr('Restaurée (annulation)') });
+            showToast(tr('Transaction restaurée.'));
             notifyDataChanged('transactions');
           },
         });
