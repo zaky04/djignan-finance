@@ -184,7 +184,10 @@ export async function checkWeeklyCloudBackupReminder() {
   const snoozedUntil = await getSetting('cloudBackupSnoozedUntil');
   const snoozeCount = await getSetting('cloudBackupSnoozeCount', 0);
   const now = Date.now();
-  const urgent = snoozeCount >= CLOUD_BACKUP_SNOOZE_LIMIT;
+  // > (pas >=) : même correctif que checkWeeklyBackupReminder() (backup.js) — sinon le 3e clic
+  // "Plus tard" (qui pose le répit de 24h) se voit annulé immédiatement par le passage en mode
+  // urgent avant que ce répit n'ait eu la moindre chance de s'écouler.
+  const urgent = snoozeCount > CLOUD_BACKUP_SNOOZE_LIMIT;
   if (!urgent && snoozedUntil && now < new Date(snoozedUntil).getTime()) return;
 
   const last = await getSetting('lastCloudBackupAt');

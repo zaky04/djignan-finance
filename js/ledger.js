@@ -416,13 +416,21 @@ export async function computeEnvelopeCarryover(categoryId, monthKey) {
   const priorBudgets = budgets.filter((b) => b.categoryId === categoryId && b.month < monthKey && !b.period);
   let carry = 0;
   for (const b of priorBudgets) {
+    // debtId exclu, comme dans tous les autres agrégats mensuels de ce fichier (computeMonthSummary,
+    // computeBudgetVsActual, computeCategoryActuals...) : un mouvement de dette/créance catégorisé
+    // "Prêt"/"Créance" n'est pas une dépense discrétionnaire. Cet oubli faisait diverger le report
+    // d'enveloppe (qui l'incluait) de l'"actual" réellement affiché à l'écran (qui l'exclut déjà).
     const actual = transactions
-      .filter((t) => t.type === 'expense' && t.categoryId === categoryId && (t.date || '').startsWith(b.month))
+      .filter((t) => t.type === 'expense' && t.categoryId === categoryId && !t.debtId && (t.date || '').startsWith(b.month))
       .reduce((sum, t) => sum + toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency), 0);
     carry += (b.limit || 0) - actual;
   }
   return carry;
 }
+
+// Préfixe exact posé par generateDueRecurring() (budgets.js) sur chaque transaction qu'elle génère
+// automatiquement — voir plus bas pourquoi il faut le retirer avant de comparer à recurringNames.
+const RECURRING_NOTE_PREFIX = 'récurrence : ';
 
 /** Détecte les paiements récurrents non déclarés en Récurrences : même note + montant similaire
     apparaissant sur au moins 2 mois distincts. Exclut ce qui correspond déjà à une récurrence active. */
@@ -436,7 +444,12 @@ export async function detectRecurringCandidates() {
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.note || !t.note.trim()) continue;
     const noteKey = t.note.trim().toLowerCase();
-    if (recurringNames.has(noteKey)) continue;
+    // Les transactions générées automatiquement par une récurrence active portent la note
+    // "Récurrence : {nom}" (budgets.js), pas juste "{nom}" — comparer noteKey tel quel à
+    // recurringNames ne matchait donc JAMAIS ces transactions, et cette fonction re-proposait en
+    // permanence les récurrences déjà déclarées comme si elles ne l'étaient pas.
+    const strippedKey = noteKey.startsWith(RECURRING_NOTE_PREFIX) ? noteKey.slice(RECURRING_NOTE_PREFIX.length) : noteKey;
+    if (recurringNames.has(noteKey) || recurringNames.has(strippedKey)) continue;
     const amtBase = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     const key = `${noteKey}::${Math.round(amtBase)}`;
     if (!groups.has(key)) groups.set(key, { note: t.note.trim(), amounts: [], months: new Set() });

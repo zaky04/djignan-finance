@@ -17,12 +17,17 @@ export const CURRENCIES = ['XOF', 'XAF', 'EUR', 'USD', 'GBP', 'CAD', 'CHF', 'MAD
  */
 export function currencySelectHtml(selected = 'EUR', name = 'currency') {
   const codes = CURRENCIES.includes(selected) || !selected ? CURRENCIES : [selected, ...CURRENCIES];
+  // escapeHtml() sur `c` : `selected` (donc potentiellement le code ajouté à `codes` ci-dessus) peut
+  // venir d'une donnée stockée (wallet.currency, etc.) plutôt que de la saisie normale (bornée à 3
+  // caractères par readCurrencyValue) — un import CSV/JSON ne passe PAS par cette contrainte et peut
+  // injecter une valeur arbitraire dans currency. Sans échappement ici, cette valeur atterrirait telle
+  // quelle dans un attribut HTML (value="...") la prochaine fois que ce portefeuille est modifié.
   return `
-    <select name="${name}" data-currency-select>
-      ${codes.map((c) => `<option value="${c}" ${c === selected ? 'selected' : ''}>${c}</option>`).join('')}
+    <select name="${escapeHtml(name)}" data-currency-select>
+      ${codes.map((c) => `<option value="${escapeHtml(c)}" ${c === selected ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
       <option value="__other__">Autre devise…</option>
     </select>
-    <input type="text" name="${name}Other" maxlength="3" placeholder="Code devise (ex: BRL)" data-currency-other
+    <input type="text" name="${escapeHtml(name)}Other" maxlength="3" placeholder="Code devise (ex: BRL)" data-currency-other
       style="display:none;margin-top:8px;text-transform:uppercase;">`;
 }
 
@@ -94,14 +99,23 @@ export function formatDate(dateStr, options = { day: '2-digit', month: 'short', 
   return new Intl.DateTimeFormat('fr-FR', options).format(d);
 }
 
+// Devises sans sous-unité usuelle (XOF/XAF : pas de centime en usage courant, JPY : pas de sen) —
+// sans forcer 0 décimale explicitement, un montant non entier (ex: conversion de devise, partage
+// entre participants) s'affichait avec des décimales ("1 234,5 F CFA") au lieu de la convention
+// habituelle ("1 235 F CFA"). maximumFractionDigits seul ne suffit pas : Intl choisit le nombre MINIMUM
+// de décimales à partir des sous-unités propres à la devise, qui vaut déjà 0 pour XOF/XAF/JPY —
+// le problème n'est donc pas le minimum par défaut mais le maximum fixé à 2 pour toutes les devises
+// sans distinction, qui laisse passer jusqu'à 2 décimales même quand la devise n'en a normalement pas.
+const ZERO_DECIMAL_CURRENCIES = new Set(['XOF', 'XAF', 'JPY']);
 const currencyFormatters = new Map();
 export function formatCurrency(amount, currency = 'EUR') {
   const key = currency;
   if (!currencyFormatters.has(key)) {
+    const fractionDigits = ZERO_DECIMAL_CURRENCIES.has(currency) ? 0 : 2;
     try {
-      currencyFormatters.set(key, new Intl.NumberFormat('fr-FR', { style: 'currency', currency, maximumFractionDigits: 2 }));
+      currencyFormatters.set(key, new Intl.NumberFormat('fr-FR', { style: 'currency', currency, minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }));
     } catch {
-      currencyFormatters.set(key, new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }));
+      currencyFormatters.set(key, new Intl.NumberFormat('fr-FR', { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }));
     }
   }
   const n = Number(amount) || 0;

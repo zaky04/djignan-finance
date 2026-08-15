@@ -154,9 +154,13 @@ export async function exportTransactionsCsv(monthKey = null) {
   const header = ['Date', 'Type', 'Portefeuille', 'Vers portefeuille', 'Catégorie', 'Montant', 'Devise', 'Note', 'Pointée'];
   const lines = [header.join(';')];
   for (const t of rows) {
+    // csvEscape() appliqué une seule fois, via le .map() final : l'appeler aussi individuellement
+    // sur wallet/targetWallet/category/note ci-dessus doublait l'échappement (un nom contenant un
+    // ";" ressortait entouré de guillemets QUADRUPLÉS, `"""nom"""`, et se réimportait avec des
+    // guillemets littéraux au lieu du nom d'origine).
     lines.push([
-      t.date, t.type, csvEscape(t.wallet?.name || ''), csvEscape(t.targetWallet?.name || ''),
-      csvEscape(t.category?.name || ''), t.amount, t.wallet?.currency || '', csvEscape(t.note || ''), t.reconciled ? 'Oui' : 'Non',
+      t.date, t.type, t.wallet?.name || '', t.targetWallet?.name || '',
+      t.category?.name || '', t.amount, t.wallet?.currency || '', t.note || '', t.reconciled ? 'Oui' : 'Non',
     ].map(csvEscape).join(';'));
   }
   const suffix = monthKey || 'historique-complet';
@@ -228,7 +232,11 @@ export async function importGeoFinanceCsvRows(rows) {
     if (!name) return null;
     let w = wallets.find((x) => x.name.toLowerCase() === name.toLowerCase());
     if (!w) {
-      w = { id: uuid(), name, type: 'bank', currency: currency || 'EUR', initialBalance: 0, archived: false, createdAt: new Date().toISOString() };
+      // Même contrainte que readCurrencyValue() (utils.js) applique à la saisie normale (3
+      // caractères max, majuscules) : un CSV importé ne passe pas par ce chemin, donc sans borne
+      // ici une colonne devise malveillante/corrompue atterrirait telle quelle dans wallet.currency.
+      const safeCurrency = (currency || 'EUR').toString().toUpperCase().slice(0, 3) || 'EUR';
+      w = { id: uuid(), name, type: 'bank', currency: safeCurrency, initialBalance: 0, archived: false, createdAt: new Date().toISOString() };
       wallets.push(w); walletsChanged = true;
     }
     return w;
@@ -409,7 +417,12 @@ export async function checkWeeklyBackupReminder() {
   const snoozedUntil = await getSetting('backupSnoozedUntil');
   const snoozeCount = await getSetting('backupSnoozeCount', 0);
   const now = Date.now();
-  const urgent = snoozeCount >= BACKUP_SNOOZE_LIMIT;
+  // > (pas >=) : "au-delà de 3 reports" doit laisser le 3e report lui-même bénéficier de son répit
+  // de 24h. Avec >=, le clic "Plus tard" qui fait passer snoozeCount à 3 se voyait immédiatement
+  // annulé : urgent devenait vrai avant même que le délai qu'il venait de poser ait eu la moindre
+  // chance de s'écouler, donc la modale (en mode urgent, sans bouton "Plus tard") réapparaissait
+  // au tout prochain démarrage au lieu d'attendre les 24h.
+  const urgent = snoozeCount > BACKUP_SNOOZE_LIMIT;
   if (!urgent && snoozedUntil && now < new Date(snoozedUntil).getTime()) return;
   const lastMs = last ? new Date(last).getTime() : 0;
   const sevenDaysMs = 7 * 24 * 3600 * 1000;

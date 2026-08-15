@@ -211,6 +211,13 @@ export function initLockScreen({ onUnlock }) {
   let firstEntry = '';
   let expectedLength = 6;
   let throttledUntil = 0;
+  // Empêche deux vérifications (PIN ou biométrique) de tourner en même temps : verifyPin() est un
+  // calcul PBKDF2 de plusieurs dizaines/centaines de ms pendant lequel le clavier reste cliquable
+  // (backspace + un nouveau chiffre suffit à redéclencher handleDigit avant que le premier appel ne
+  // résolve). Sans ce verrou, deux verifyPin() concurrents lisent le même failedAttempts avant que
+  // l'un ou l'autre n'écrive sa mise à jour — l'incrément est perdu, sous-comptant les échecs réels
+  // et retardant le blocage anti-brute-force qu'ils sont censés déclencher.
+  let verifying = false;
 
   function renderDots(maxLen) {
     dots.forEach((dot, i) => {
@@ -311,21 +318,26 @@ export function initLockScreen({ onUnlock }) {
     if (mode === 'unlock') {
       buffer += d;
       renderDots(expectedLength);
-      if (buffer.length === expectedLength) {
-        const ok = await verifyPin(buffer);
-        if (ok) {
-          throttledUntil = 0;
-          await setSetting('pinThrottledUntil', 0);
-          onUnlock();
-        } else {
-          const attempts = await getSetting('failedAttempts', 0);
-          shakeError('Code PIN incorrect.');
-          if (attempts >= MAX_ATTEMPTS_BEFORE_THROTTLE) {
-            throttledUntil = Date.now() + THROTTLE_MS;
-            await setSetting('pinThrottledUntil', throttledUntil);
-            showThrottleError();
+      if (buffer.length === expectedLength && !verifying) {
+        verifying = true;
+        try {
+          const ok = await verifyPin(buffer);
+          if (ok) {
+            throttledUntil = 0;
+            await setSetting('pinThrottledUntil', 0);
+            onUnlock();
+          } else {
+            const attempts = await getSetting('failedAttempts', 0);
+            shakeError('Code PIN incorrect.');
+            if (attempts >= MAX_ATTEMPTS_BEFORE_THROTTLE) {
+              throttledUntil = Date.now() + THROTTLE_MS;
+              await setSetting('pinThrottledUntil', throttledUntil);
+              showThrottleError();
+            }
+            setTimeout(clearBuffer, 400);
           }
-          setTimeout(clearBuffer, 400);
+        } finally {
+          verifying = false;
         }
       }
     }
@@ -346,9 +358,25 @@ export function initLockScreen({ onUnlock }) {
         enterConfirmMode();
         return;
       }
-      if (mode === 'unlock') {
-        verifyBiometric().then((ok) => { if (ok) onUnlock(); else shakeError('Échec de la vérification biométrique.'); })
-          .catch(() => shakeError('Biométrie indisponible ou annulée.'));
+      if (mode === 'unlock' && !verifying) {
+        verifying = true;
+        verifyBiometric()
+          .then(async (ok) => {
+            if (ok) {
+              // Une identité prouvée biométriquement doit lever le blocage PIN au même titre qu'un
+              // PIN correct : sans ça, un utilisateur throttlé après 5 échecs de PIN qui se
+              // déverrouille par empreinte reste bloqué au PIN au verrouillage suivant (throttledUntil
+              // et failedAttempts n'étaient jamais réinitialisés par le chemin biométrique).
+              throttledUntil = 0;
+              await setSetting('pinThrottledUntil', 0);
+              await setSetting('failedAttempts', 0);
+              onUnlock();
+            } else {
+              shakeError('Échec de la vérification biométrique.');
+            }
+          })
+          .catch(() => shakeError('Biométrie indisponible ou annulée.'))
+          .finally(() => { verifying = false; });
       }
       return;
     }

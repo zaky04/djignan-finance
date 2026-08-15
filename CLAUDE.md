@@ -102,6 +102,35 @@ Ou via `.claude/launch.json` (config `geofinance`, port 8123) avec les outils de
 | 4 | ~~Import CSV générique silencieux sur montant invalide~~ | **Résolu le 14 août 2026** — voir §6. | — |
 | 5 | Pas de doc de vision/roadmap versionnée | Avant ce fichier, aucun README/CLAUDE.md n'existait — la vision produit ne se lisait que dans les messages de commit. | Résolu par ce fichier (à maintenir) |
 
+**Trouvé lors de la revue de bugs du 15 août 2026 (au-delà du diff du jour, voir §6) — corrigé sur-le-champ :**
+
+| # | Sujet | Détail | Sévérité |
+|---|---|---|---|
+| 6 | ~~XSS via `currencySelectHtml()`~~ | **Corrigé** — `utils.js` interpolait un code devise non échappé dans un attribut HTML ; un import CSV/JSON pouvait y injecter du HTML/JS arbitraire (contournait la limite de 3 caractères que la saisie normale impose). | Résolu |
+| 7 | ~~`formatCurrency()` affichait des décimales pour XOF/XAF~~ | **Corrigé** — `"1 234,5 F CFA"` au lieu de `"1 235 F CFA"` sur tout montant non entier, alors que ce sont des devises sans sous-unité usuelle (marché cible de l'app). | Résolu |
+| 8 | ~~Export CSV : double échappement~~ | **Corrigé** — `exportTransactionsCsv` appelait `csvEscape` deux fois sur 4 colonnes ; un nom contenant `;` ressortait avec des guillemets quadruplés, cassant le ré-import. | Résolu |
+| 9 | ~~`detectRecurringCandidates` n'excluait jamais les récurrences actives~~ | **Corrigé** — comparait la note brute (`"Récurrence : Loyer"`) au nom de la récurrence (`"loyer"`), qui ne correspondent jamais ; re-proposait en boucle des récurrences déjà déclarées. | Résolu |
+| 10 | ~~`computeEnvelopeCarryover` incluait les mouvements de dette/créance~~ | **Corrigé** — seul agrégat mensuel du fichier sans le filtre `!t.debtId` que tous ses voisins appliquent ; divergeait de l'"actual" réellement affiché. | Résolu |
+| 11 | ~~Course critique sur le compteur d'échecs PIN~~ | **Corrigé** (`auth.js`) — deux `verifyPin()` concurrents (backspace + nouveau chiffre pendant qu'un calcul PBKDF2 est en cours) pouvaient sous-compter `failedAttempts`, retardant le blocage anti-brute-force. Verrou `verifying` ajouté. | Résolu |
+| 12 | ~~Déverrouillage biométrique ne levait pas le blocage PIN~~ | **Corrigé** (`auth.js`) — un utilisateur throttlé après 5 échecs de PIN qui se déverrouillait par empreinte restait bloqué au PIN au verrouillage suivant. | Résolu |
+| 13 | ~~Rappel de sauvegarde (local ET cloud) : 3e report annulé par lui-même~~ | **Corrigé** (`backup.js`, `firebase-sync.js`) — `>=` au lieu de `>` faisait passer le mode "urgent" avant que le répit de 24h du 3e clic "Plus tard" n'ait eu la moindre chance de s'écouler. | Résolu |
+
+**Trouvé mais volontairement pas corrigé cette session — à prioriser avec l'auteur :**
+
+| # | Sujet | Détail | Sévérité |
+|---|---|---|---|
+| 14 | `parseFlexibleNumber` (import CSV générique) mélit un séparateur de milliers pour une décimale | `"1,234,567"` (US, sans point) devient `1.234` — perte de magnitude silencieuse. Nécessite une vraie heuristique (ou un choix explicite du format par l'utilisateur), pas un correctif d'une ligne. | Moyenne-Haute |
+| 15 | `dbBulkPut`/`importAllData` non atomiques entre stores | Une ligne malformée en cours d'import (backup forgé/corrompu) peut laisser la base dans un état "moitié ancien, moitié nouveau" jamais voulu, sans indiquer à l'utilisateur quels stores ont réussi. | Moyenne |
+| 16 | `isDuplicateTransaction` (dédoublonnage import) : clé = portefeuille+date+type+montant | Deux dépenses identiques et légitimes le même jour (ex: deux cafés à 3,50€) sont silencieusement fusionnées à l'import ; les virements ne comparent pas `targetWalletId`. | Moyenne |
+| 17 | `upgrade()` (`db.js`) n'ajoute jamais un index à un store déjà existant | Si une future version ajoute un index sur un store existant, les utilisateurs déjà installés ne l'obtiendront jamais (`createIndex` n'est appelé que dans la branche "store tout neuf") — bombe à retardement, pas un bug actif aujourd'hui. | Info (à surveiller) |
+| 18 | `computeEnvelopeCarryover` casse la chaîne sur un mois intermédiaire sans budget | Si janvier a un budget mais février non (bien que dépensé), le report de mars ignore complètement les dépenses de février. | Faible-Moyenne |
+| 19 | Réception d'un justificatif corrompu abandonne tout l'import | `deserializeReceiptsForImport` (`backup.js`) n'a pas de `try/catch` par ligne — une seule photo corrompue fait échouer toute la restauration au lieu de sauter ce justificatif. | Faible-Moyenne |
+| 20 | Échec de sauvegarde automatique (File System Access) jamais signalé | `runAutoBackupIfConfigured` avale les erreurs d'écriture (dossier supprimé, quota) avec un simple `console.warn` — l'utilisateur peut croire être protégé alors que rien n'est écrit depuis longtemps. | Moyenne |
+| 21 | `openModal()` : une touche Échap ferme TOUTES les modales empilées, pas juste la dernière | Chaque modale enregistre son propre listener sans notion de pile — deux `confirmDialog` accidentellement superposées se ferment ensemble sur un seul Échap. | Faible |
+| 22 | `parseFlexibleDate` suppose toujours JJ/MM/AAAA | Un relevé au format US (MM/DD/YYYY) est mal interprété silencieusement pour toute date où jour et mois sont tous deux ≤ 12 — limite documentée dans le code, mais aucun signalement si un fichier non européen est importé. | Faible |
+| 23 | `verifyPin()` n'a pas de limite anti-brute-force intégrée | Le blocage de 30s n'existe que côté clavier de l'écran de verrouillage (`auth.js`, UI) — `changePin()` (Paramètres → Changer le code PIN) appelle `verifyPin()` directement, sans aucune limite sur les tentatives d'"ancien code". | Faible-Moyenne |
+
+
 ## 6. Journal des correctifs
 
 ### 12 août 2026 — 3 correctifs de fiabilité (commit à venir)
@@ -953,6 +982,86 @@ correct (moyenne 45, montant 270, ratio 6). Le round-trip complet de `checkCloud
 de cette session pour tout ce qui touche Firebase).
 
 `CACHE_VERSION` : `v48` → `v49`.
+
+### 15 août 2026 (suite) — Revue de bugs étendue au reste de l'app (au-delà du diff du jour)
+
+Demandé par l'auteur après la revue précédente (limitée au diff du jour) : "ya til des choses encore
+à ce niveau" → étendre la chasse aux bugs aux fichiers les plus critiques jamais passés par une revue
+multi-agents comme celle qui vient d'avoir lieu — `auth.js` (PIN/biométrie), `db.js` (couche de
+données), `backup.js` (chiffrement/import/export/CSV), `ledger.js` (calculs financiers), `utils.js`
+(helpers partagés par presque tout le reste de l'app). Un agent dédié par fichier, chacun lisant le
+fichier en entier + ses appelants, sans filtrer par confiance (recall maximal). **9 bugs réels
+corrigés** (détail technique ci-dessous), **10 autres identifiés et documentés en dette technique
+§5** (voir tableau ci-dessus) pour arbitrage avec l'auteur plutôt que corrigés à l'aveugle — certains
+nécessitent un vrai choix de conception (ex: heuristique de séparateur de milliers), d'autres sont
+des correctifs plus risqués à appliquer sans plus de contexte (atomicité `importAllData`).
+
+**Corrigés :**
+
+1. **XSS via `currencySelectHtml()`** (`utils.js`) — le code devise sélectionné était interpolé sans
+   `escapeHtml()` dans un attribut HTML. La saisie normale est bornée à 3 caractères
+   (`readCurrencyValue`), mais un import CSV/JSON contourne cette contrainte entièrement
+   (`findOrCreateWallet`, `backup.js`, stockait la colonne devise telle quelle). → `escapeHtml()`
+   ajouté sur chaque valeur interpolée dans `currencySelectHtml()` ; `findOrCreateWallet` borne
+   maintenant aussi la devise importée à 3 caractères majuscules (même contrainte que la saisie
+   normale, défense en profondeur).
+2. **`formatCurrency()` affichait des décimales pour XOF/XAF** — `maximumFractionDigits: 2` fixé pour
+   toutes les devises sans distinction ; un montant non entier (conversion, partage entre
+   participants) affichait `"1 234,5 F CFA"` au lieu de `"1 235 F CFA"`, la convention pour des
+   devises sans sous-unité usuelle — direct pour le marché cible de l'app. → `ZERO_DECIMAL_CURRENCIES`
+   (XOF, XAF, JPY) : `minimumFractionDigits`/`maximumFractionDigits` fixés à 0 pour ces devises.
+3. **Export CSV : double échappement** — `exportTransactionsCsv` appelait `csvEscape` individuellement
+   sur 4 colonnes PUIS sur la ligne entière via `.map(csvEscape)`. Un nom de catégorie contenant `;`
+   ressortait entouré de guillemets quadruplés (`""""nom""""`), et se ré-important avec des guillemets
+   littéraux au lieu du nom d'origine. → Un seul passage par `.map(csvEscape)`, les appels individuels
+   retirés.
+4. **`detectRecurringCandidates` n'excluait jamais les récurrences déjà déclarées** — comparait la
+   note brute d'une transaction générée automatiquement (`"Récurrence : Loyer"`) au nom de la
+   récurrence (`"loyer"`), qui ne correspondent jamais avec un `===`/`.has()` exact — la fonction
+   re-proposait en permanence des récurrences déjà actives comme si elles ne l'étaient pas,
+   contredisant directement son propre docstring ("Exclut ce qui correspond déjà à une récurrence
+   active"). → Le préfixe `"récurrence : "` est retiré avant comparaison.
+5. **`computeEnvelopeCarryover` incluait les mouvements de dette/créance** — seul agrégat mensuel du
+   fichier sans le filtre `!t.debtId` que `computeMonthSummary`/`computeBudgetVsActual`/
+   `computeCategoryActuals` appliquent tous. Un remboursement de dette catégorisé "Prêt"/"Créance"
+   avec `envelopeMode` activé faisait diverger le report d'enveloppe de l'"actual" réellement affiché
+   à l'écran pour ce même mois/catégorie. → Filtre `!t.debtId` ajouté, cohérent avec ses voisins.
+6. **Course critique sur le compteur d'échecs PIN** (`auth.js`) — `verifyPin()` est un calcul PBKDF2
+   de plusieurs dizaines/centaines de ms ; rien n'empêchait un second appel concurrent (backspace +
+   nouveau chiffre pendant que le premier calcul tourne encore) de lire le même `failedAttempts`
+   avant que l'un ou l'autre n'écrive sa mise à jour — l'incrément se perdait, sous-comptant les
+   échecs réels et retardant le blocage anti-brute-force. → Verrou `verifying` (variable locale à
+   `initLockScreen`) empêchant tout second appel à `verifyPin()`/`verifyBiometric()` tant qu'un
+   premier est en cours.
+7. **Déverrouillage biométrique ne levait jamais le blocage PIN** (`auth.js`) — un utilisateur
+   throttlé après 5 échecs de PIN (`pinThrottledUntil` posé) qui se déverrouillait ensuite avec succès
+   par empreinte restait bloqué au PIN dès le verrouillage suivant : seul le chemin PIN réinitialisait
+   `pinThrottledUntil`/`failedAttempts`, jamais le chemin biométrique. → Le succès biométrique
+   réinitialise maintenant les deux, au même titre qu'un PIN correct.
+8. **Rappel de sauvegarde (local ET cloud) : le 3e report s'annulait lui-même** (`backup.js`,
+   `firebase-sync.js`) — `snoozeCount >= BACKUP_SNOOZE_LIMIT` (3) faisait passer le rappel en mode
+   "urgent" (sans bouton "Plus tard") dès que le compteur atteignait 3 — c'est-à-dire immédiatement
+   après le clic "Plus tard" qui vient justement de poser un répit de 24h. Le répit n'avait donc
+   jamais la moindre chance de s'écouler : le rappel réapparaissait en mode urgent au tout prochain
+   démarrage. Bug copié à l'identique dans les deux fichiers (le rappel cloud a été construit sur le
+   modèle du rappel local, voir §6 du 14 août). → `>` au lieu de `>=` dans les deux fichiers — "au-delà
+   de 3 reports" (le docstring du code) laisse maintenant le 3e lui-même bénéficier de son répit.
+
+Testé : les 24 assertions de `test/ledger.test.html` passent toujours ; `formatCurrency` vérifié pour
+XOF/XAF (entier et non entier) et EUR (décimales inchangées) ; `currencySelectHtml` vérifié avec une
+charge XSS explicite (`"><img src=x onerror=alert(1)>`) → correctement échappée ; `detectRecurringCandidates`
+vérifié avec une récurrence "Loyer" ayant généré 2 transactions → n'apparaît plus dans les candidats ;
+`computeEnvelopeCarryover` vérifié avec une transaction liée à une dette dans la catégorie testée →
+exclue du calcul (report `-300` au lieu de `-350` sans le fix, cohérent avec le montant attendu).
+
+Non re-testé en conditions réelles faute d'environnement adapté : le verrou `verifying` (nécessite de
+déclencher une vraie course sur le clavier PIN de l'app, le clavier virtuel s'étant déjà montré
+capricieux aux clics synthétiques cette session — voir §6 du 14 août) et la levée du blocage PIN par
+biométrie (nécessite un appareil avec capteur biométrique réel). Les deux corrections sont ciblées et
+de faible risque (ajout d'un verrou/reset, pas de changement de logique existante) ; à confirmer par
+l'auteur en usage réel.
+
+`CACHE_VERSION` : `v49` → `v50`.
 
 ## 7. Pistes prioritaires non traitées
 
