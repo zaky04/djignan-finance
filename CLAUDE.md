@@ -1175,7 +1175,8 @@ que certains écrans resteront en français le temps du reste du chantier.
 - ✅ Outils (lot 7, voir entrée ci-dessous) : les 8 outils stratégiques.
 - ✅ Rapports (lot 8, voir entrée ci-dessous) : bilans PDF (mensuel + annuel), export CSV, score de
   santé financière, calendrier des dépenses.
-- ⬜ Partage, Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit),
+- ✅ Partage de dépenses (lot 9, voir entrée ci-dessous) : participants, dépenses partagées, soldes.
+- ⬜ Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit),
   Recherche globale, mode démo, onboarding.
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
@@ -1439,6 +1440,25 @@ directement via `t(...)` (titre, période, résumé, patrimoine net, bilan annue
 aucune erreur console à aucune étape.
 
 `CACHE_VERSION` : `v59` → `v60`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 9/N : Partage de dépenses)
+
+Écran converti : **Partage de dépenses** (`shared.js`) — participants (dont le marquage "Moi"),
+dépenses partagées avec répartition à parts égales, soldes nets par devise, part personnelle
+automatique dans les transactions quand "Moi" fait partie du partage. Aucune collision `t`/variable
+dans ce fichier (vérifié par `grep`) — import direct.
+
+~40 nouvelles entrées de dictionnaire, 0 doublon (526 clés au total).
+
+Testé FR→EN→FR de bout en bout avec un scénario réaliste : deux participants créés (Bob, Alice),
+Alice marquée "Moi" (badge traduit), modale Nouvelle dépense partagée (tous les champs, y compris les
+sections conditionnelles "ma part"), dépense enregistrée avec toast, panneau Soldes recalculé et
+affiché ("Settled up" pour les deux participants — résultat mathématiquement correct pour le scénario
+testé), ligne de dépense partagée avec le gabarit "Paid by {payer} · {date} · Split among {names}",
+nettoyage des données de test puis retour en français vérifié identique à l'original. Aucune erreur
+console.
+
+`CACHE_VERSION` : `v60` → `v61`.
 
 ## 7. Pistes prioritaires non traitées
 
