@@ -14,6 +14,7 @@ import { checkWeeklyCloudBackupReminder, checkCloudStaleness } from './firebase-
 import { seedDemoData, clearDemoData } from './demo-data.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
+import { initI18n, t } from './i18n.js';
 
 import { renderDashboard, DASHBOARD_PANEL_DEFAULTS } from './modules/dashboard.js';
 import { renderWallets, initWalletsModule, openWalletModal } from './modules/wallets.js';
@@ -91,7 +92,7 @@ function navigateTo(view) {
     el.classList.toggle('is-active', el.dataset.viewTarget === view);
   });
   const titleEl = document.getElementById('page-title');
-  if (titleEl) titleEl.textContent = VIEW_TITLES[view] || '';
+  if (titleEl) titleEl.textContent = t(VIEW_TITLES[view] || '');
 
   VIEW_RENDERERS[view]();
   bus.emit(EVENTS.VIEW_CHANGED, view);
@@ -102,7 +103,7 @@ async function openMoreSheet() {
   const disabledViews = new Set(moduleStates.filter(([, enabled]) => !enabled).map(([view]) => view));
   const views = MORE_VIEWS.filter((v) => !disabledViews.has(v));
   const modal = openModal(
-    views.map((v) => `<button type="button" class="nav-item" style="width:100%;" data-view-target="${v}">${escapeHtml(VIEW_TITLES[v])}</button>`).join(''),
+    views.map((v) => `<button type="button" class="nav-item" style="width:100%;" data-view-target="${v}">${escapeHtml(t(VIEW_TITLES[v]))}</button>`).join(''),
     { title: 'Plus' }
   );
   modal.el.querySelectorAll('[data-view-target]').forEach((btn) => {
@@ -489,6 +490,11 @@ async function onUnlocked() {
     // (silencieux sinon : la demande peut être refusée sans avertissement, mais ça ne
     // coûte rien de la faire — c'est le principal facteur de perte de données sur mobile).
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+
+    // Avant tout le reste : traduit immédiatement le châssis statique de l'app (menu, barre du
+    // haut, bas de page mobile) et prépare t() pour tous les rendus JS qui suivent — sans ça, un
+    // utilisateur en anglais verrait un flash de français le temps que le reste du boot s'exécute.
+    await initI18n();
 
     await seedDefaultsIfNeeded();
     await migrateDebtTransactionCategories();

@@ -17,6 +17,7 @@ import { isStandalone, isIOS, isSafari, isAndroid, hasDeferredPrompt, triggerIns
 import { DASHBOARD_PANEL_DEFAULTS, BUDGET_ALERT_THRESHOLD_DEFAULTS } from './dashboard.js';
 import { escapeHtml, formatDate, CURRENCIES, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { getLanguage, setLanguage } from '../i18n.js';
 
 function hiddenFileInput(accept, onFile) {
   const input = document.createElement('input');
@@ -212,6 +213,29 @@ async function renderProfileSection(container) {
     await setSetting('userProfile', updated);
     showToast('Profil mis à jour.');
     notifyDataChanged('settings');
+  });
+}
+
+/** Langue de l'interface (FR/EN). Voir js/i18n.js pour l'état d'avancement de la traduction — un
+    écran pas encore converti reste simplement affiché en français en mode anglais, jamais une clé
+    brute ou une erreur. setLanguage() recharge la page pour appliquer la traduction partout d'un
+    coup, plutôt que de rendre chaque écran individuellement réactif à ce changement rare. */
+async function renderLanguageSection(container) {
+  const lang = getLanguage();
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>Langue / Language</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">Certains écrans pas encore traduits resteront en français. / Some screens not yet translated will stay in French.</p>
+      <div class="form-row" style="max-width:200px;">
+        <select id="language-select">
+          <option value="fr" ${lang === 'fr' ? 'selected' : ''}>Français</option>
+          <option value="en" ${lang === 'en' ? 'selected' : ''}>English</option>
+        </select>
+      </div>
+    </div>`;
+
+  container.querySelector('#language-select').addEventListener('change', async (e) => {
+    await setLanguage(e.target.value);
   });
 }
 
@@ -600,7 +624,7 @@ async function renderDashboardConfigSection(container) {
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-profile"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-cloud-backup"></div><div id="settings-credit"></div>';
+  container.innerHTML = '<div id="settings-profile"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-language"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-cloud-backup"></div><div id="settings-credit"></div>';
   await renderProfileSection(document.getElementById('settings-profile'));
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
@@ -608,6 +632,7 @@ export async function renderSettings() {
   await renderUpdateSection(document.getElementById('settings-update'));
   await renderDashboardConfigSection(document.getElementById('settings-dashboard'));
   await renderFeaturesSection(document.getElementById('settings-features'));
+  await renderLanguageSection(document.getElementById('settings-language'));
   await renderCurrencySection(document.getElementById('settings-currency'));
   await renderBackupSection(document.getElementById('settings-backup'));
   await renderCloudBackupSection(document.getElementById('settings-cloud-backup'));

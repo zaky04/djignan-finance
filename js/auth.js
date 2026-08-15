@@ -8,6 +8,7 @@
    ========================================================================== */
 
 import { getSetting, setSetting, logAudit } from './db.js';
+import { t } from './i18n.js';
 
 const PBKDF2_ITERATIONS = 150000;
 const MAX_ATTEMPTS_BEFORE_THROTTLE = 5;
@@ -242,8 +243,8 @@ export function initLockScreen({ onUnlock }) {
   async function enterSetupMode() {
     mode = 'setup';
     buffer = ''; firstEntry = '';
-    title.textContent = 'Créer votre code PIN';
-    subtitle.textContent = 'Choisissez un code à 4-6 chiffres pour protéger vos données locales.';
+    title.textContent = t('Créer votre code PIN');
+    subtitle.textContent = t('Choisissez un code à 4-6 chiffres pour protéger vos données locales.');
     errorEl.hidden = true;
     biometricBtn.hidden = true;
     renderDots(6);
@@ -253,8 +254,8 @@ export function initLockScreen({ onUnlock }) {
     mode = 'confirm';
     buffer = '';
     expectedLength = firstEntry.length;
-    title.textContent = 'Confirmez votre code PIN';
-    subtitle.textContent = 'Ressaisissez le même code pour confirmer.';
+    title.textContent = t('Confirmez votre code PIN');
+    subtitle.textContent = t('Ressaisissez le même code pour confirmer.');
     errorEl.hidden = true;
     biometricBtn.hidden = true;
     renderDots(expectedLength);
@@ -264,13 +265,13 @@ export function initLockScreen({ onUnlock }) {
     mode = 'unlock';
     buffer = '';
     expectedLength = await getPinLength();
-    title.textContent = 'Déverrouiller GeoFinance';
-    subtitle.textContent = 'Saisissez votre code PIN.';
+    title.textContent = t('Déverrouiller GeoFinance');
+    subtitle.textContent = t('Saisissez votre code PIN.');
     errorEl.hidden = true;
     renderDots(expectedLength);
     const bioAvailable = (await isBiometricAvailable()) && (await isBiometricConfigured());
     biometricBtn.innerHTML = FINGERPRINT_HTML;
-    biometricBtn.setAttribute('aria-label', 'Déverrouillage biométrique');
+    biometricBtn.setAttribute('aria-label', t('Déverrouillage biométrique'));
     biometricBtn.hidden = !bioAvailable;
     // Le blocage anti-brute-force doit survivre à un rechargement de page (sinon il suffit
     // de recharger pour l'annuler) : on le relit depuis les settings à chaque entrée en mode unlock.
@@ -280,7 +281,7 @@ export function initLockScreen({ onUnlock }) {
 
   function showThrottleError() {
     const remaining = Math.ceil((throttledUntil - Date.now()) / 1000);
-    shakeError(`Trop de tentatives. Réessayez dans ${Math.max(remaining, 1)}s.`);
+    shakeError(t('Trop de tentatives. Réessayez dans {s}s.', { s: Math.max(remaining, 1) }));
   }
 
   async function handleDigit(d) {
@@ -292,7 +293,7 @@ export function initLockScreen({ onUnlock }) {
       if (buffer.length >= 4) {
         // Bascule le bouton "empreinte" en validation (coche) dès 4 chiffres
         biometricBtn.innerHTML = CHECK_HTML;
-        biometricBtn.setAttribute('aria-label', 'Valider le code');
+        biometricBtn.setAttribute('aria-label', t('Valider le code'));
         biometricBtn.hidden = false;
       }
       if (buffer.length === 6) {
@@ -309,7 +310,7 @@ export function initLockScreen({ onUnlock }) {
           await setupPin(buffer);
           onUnlock();
         } else {
-          shakeError('Les codes ne correspondent pas. Recommencez.');
+          shakeError(t('Les codes ne correspondent pas. Recommencez.'));
           setTimeout(enterSetupMode, 700);
         }
       }
@@ -328,7 +329,7 @@ export function initLockScreen({ onUnlock }) {
             onUnlock();
           } else {
             const attempts = await getSetting('failedAttempts', 0);
-            shakeError('Code PIN incorrect.');
+            shakeError(t('Code PIN incorrect.'));
             if (attempts >= MAX_ATTEMPTS_BEFORE_THROTTLE) {
               throttledUntil = Date.now() + THROTTLE_MS;
               await setSetting('pinThrottledUntil', throttledUntil);
@@ -372,10 +373,10 @@ export function initLockScreen({ onUnlock }) {
               await setSetting('failedAttempts', 0);
               onUnlock();
             } else {
-              shakeError('Échec de la vérification biométrique.');
+              shakeError(t('Échec de la vérification biométrique.'));
             }
           })
-          .catch(() => shakeError('Biométrie indisponible ou annulée.'))
+          .catch(() => shakeError(t('Biométrie indisponible ou annulée.')))
           .finally(() => { verifying = false; });
       }
       return;

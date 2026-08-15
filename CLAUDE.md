@@ -1109,6 +1109,75 @@ assertions de `test/ledger.test.html` passent toujours (non concerné, vérifié
 
 `CACHE_VERSION` : `v51` → `v52`.
 
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 1/N : infrastructure + châssis + tableau de bord)
+
+Demandé par l'auteur : rendre l'app bilingue français/anglais. Chantier accepté **par étapes,
+écran par écran, sur plusieurs sessions** (décision explicite de l'auteur face à l'ampleur — ~8600
+lignes de JS avec le français en dur partout, pas un système de traduction centralisé à activer).
+Ce lot pose l'infrastructure et convertit le châssis de l'app + le tableau de bord ; le reste des
+écrans (Transactions, Budgets, Épargne, Investissements, Dettes, Outils, Rapports, Partage, Comptes
+gardés, Paramètres hors sélecteur de langue) **reste en français pour l'instant** — pas un bug, un
+chantier pas encore fait à ces endroits (voir "État d'avancement" ci-dessous).
+
+**Conception (`js/i18n.js`, nouveau fichier)** :
+- Pas de framework i18n, pas de clés artificielles à inventer/maintenir : **la clé de traduction EST
+  le texte français lui-même**. `t(fr)` (aliasé `tr` dans les fichiers qui utilisent déjà `t` comme
+  nom de variable, voir piège ci-dessous) renvoie la traduction anglaise si la langue courante est
+  `'en'` ET qu'une entrée existe dans le dictionnaire `EN`, sinon renvoie le français tel quel. Une
+  chaîne pas encore ajoutée au dictionnaire ne casse jamais rien — elle reste juste en français, ce
+  qui est exactement le comportement voulu pour un chantier "par étapes".
+- Substitution de variables façon gabarit (`{clé}` dans la chaîne, ex: `t('Budget "{label}" à {pct}%
+  de la limite', { label, pct })`) plutôt que concaténer des fragments traduits séparément : le
+  français et l'anglais n'ordonnent pas toujours leurs mots pareil, un gabarit entier par langue est
+  la seule façon de le garantir en général (même si dans les cas traités ici l'ordre coïncidait).
+- Deux mécanismes de traduction :
+  - JS dynamique (contenu construit dans les modules) : envelopper chaque chaîne dans `t('...')`.
+  - HTML statique (`index.html` : menu, barre du haut, écran de verrouillage, tableau de bord) :
+    attributs `data-i18n="texte français"` (contenu texte), `data-i18n-aria-label`/`data-i18n-title`/
+    `data-i18n-placeholder` (attributs) — appliqués par `applyStaticTranslations()`.
+- **Changer de langue recharge la page** (`setLanguage()`) plutôt que de rendre chaque écran
+  réactif à la volée : chaque vue reconstruit déjà tout son HTML depuis zéro à chaque rendu, un
+  rechargement complet garantit une traduction cohérente partout d'un coup pour un gain de réactivité
+  quasi nul (changer de langue est rare). `initI18n()` s'exécute tout au début du boot (`app.js`,
+  avant même `seedDefaultsIfNeeded()`) pour traduire le châssis statique avant le premier rendu —
+  évite un flash de français pour un utilisateur en anglais.
+- **Formatage des nombres/dates rendu dépendant de la langue, pas seulement les libellés** :
+  `formatCurrency()`/`formatDate()`/`formatMonthLabel()` (`utils.js`) utilisaient `Intl` figé sur
+  `'fr-FR'` — un montant en mode anglais se serait quand même affiché `"300,00 €"` (virgule
+  décimale) au lieu de `"€300.00"`. Passés à une locale dépendante de `getLanguage()`
+  (`'en-US'`/`'fr-FR'`), avec le cache de formatters de devise reclé par locale+devise (pas
+  seulement devise) pour ne jamais mélanger un formatter français et un formatter anglais. `utils.js`
+  importe `getLanguage` depuis `i18n.js`, qui n'importe rien de `utils.js` en retour — pas de cycle.
+
+**Piège rencontré** : `dashboard.js` utilise déjà `t` comme nom de paramètre pour une transaction
+(`function txRowHtml(t) {...}`). Importer la fonction de traduction sous le même nom l'aurait
+silencieusement masquée à l'intérieur de cette fonction précise — `t('Sans catégorie')` aurait
+tenté d'appeler la transaction comme une fonction (`TypeError` immédiat au premier rendu avec des
+transactions). Import aliasé `import { t as tr } from '../i18n.js';` dans ce fichier ; à vérifier
+au cas par cas dans les prochains fichiers convertis (`grep` le nom `t` utilisé comme variable
+avant d'importer tel quel).
+
+**Sélecteur de langue** : nouvelle section dans Paramètres (`renderLanguageSection`, `settings.js`),
+entre "Fonctionnalités optionnelles" et "Devise de base" — un simple `<select>` FR/EN, prévient déjà
+que certains écrans resteront en français le temps du reste du chantier.
+
+**État d'avancement** (à tenir à jour à chaque lot suivant) :
+- ✅ Infrastructure (`i18n.js`), châssis de l'app (menu, barre du haut, bas de page mobile, écran de
+  verrouillage), tableau de bord complet, formatage devises/dates/mois.
+- ⬜ Transactions, Budgets, Épargne, Investissements, Dettes & créances, Outils, Rapports, Partage,
+  Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit), Recherche globale,
+  mode démo, onboarding.
+
+Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
+navigation mobile, écran de verrouillage (titre/sous-titre/aria-labels) et tableau de bord entier
+(salutation, alertes de budget dépassé, tendances, montants, dates) vérifiés traduits correctement
+dans les deux sens ; formatage confirmé : `"300,00 €"`/`"05 août 2026"` en français devient
+`"€300.00"`/`"Aug 05, 2026"` en anglais pour les mêmes données. Sélecteur de langue dans Paramètres
+rendu et vérifié (options FR/EN, la bonne présélectionnée). Les 24 assertions de
+`test/ledger.test.html` passent toujours.
+
+`CACHE_VERSION` : `v52` → `v53` (nouveau fichier `js/i18n.js` ajouté à `APP_SHELL`).
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

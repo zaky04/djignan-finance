@@ -3,8 +3,17 @@
    Formatage devises/dates, conversion multi-devises, helpers UI génériques.
    ========================================================================== */
 
+import { getLanguage } from './i18n.js';
+
 export function uuid() {
   return crypto.randomUUID();
+}
+
+/** Locale Intl à utiliser pour les nombres/dates : dépend de la langue choisie (Paramètres), pas
+    figée sur le français — un montant/une date doivent suivre la langue de l'interface, pas
+    seulement les libellés autour. i18n.js ne réimporte rien de ce fichier (pas de cycle). */
+function intlLocale() {
+  return getLanguage() === 'en' ? 'en-US' : 'fr-FR';
 }
 
 export const CURRENCIES = ['XOF', 'XAF', 'EUR', 'USD', 'GBP', 'CAD', 'CHF', 'MAD', 'NGN', 'GHS', 'CNY', 'JPY'];
@@ -79,9 +88,11 @@ export function monthKeyOffset(monthKey, offset) {
 }
 
 const MONTHS_FR = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+const MONTHS_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 export function formatMonthLabel(monthKey) {
   const [y, m] = monthKey.split('-').map(Number);
-  return `${MONTHS_FR[m - 1]} ${y}`;
+  const months = getLanguage() === 'en' ? MONTHS_EN : MONTHS_FR;
+  return `${months[m - 1]} ${y}`;
 }
 
 export function formatDate(dateStr, options = { day: '2-digit', month: 'short', year: 'numeric' }) {
@@ -96,7 +107,7 @@ export function formatDate(dateStr, options = { day: '2-digit', month: 'short', 
     d = dateStr;
   }
   if (isNaN(d.getTime())) return '';
-  return new Intl.DateTimeFormat('fr-FR', options).format(d);
+  return new Intl.DateTimeFormat(intlLocale(), options).format(d);
 }
 
 // Devises sans sous-unité usuelle (XOF/XAF : pas de centime en usage courant, JPY : pas de sen) —
@@ -109,13 +120,14 @@ export function formatDate(dateStr, options = { day: '2-digit', month: 'short', 
 const ZERO_DECIMAL_CURRENCIES = new Set(['XOF', 'XAF', 'JPY']);
 const currencyFormatters = new Map();
 export function formatCurrency(amount, currency = 'EUR') {
-  const key = currency;
+  const locale = intlLocale();
+  const key = `${locale}:${currency}`; // la locale fait partie de la clé de cache, pas seulement la devise
   if (!currencyFormatters.has(key)) {
     const fractionDigits = ZERO_DECIMAL_CURRENCIES.has(currency) ? 0 : 2;
     try {
-      currencyFormatters.set(key, new Intl.NumberFormat('fr-FR', { style: 'currency', currency, minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }));
+      currencyFormatters.set(key, new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }));
     } catch {
-      currencyFormatters.set(key, new Intl.NumberFormat('fr-FR', { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }));
+      currencyFormatters.set(key, new Intl.NumberFormat(locale, { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }));
     }
   }
   const n = Number(amount) || 0;

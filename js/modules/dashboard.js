@@ -6,6 +6,11 @@ import { formatCurrency, formatDate, formatPercent, escapeHtml, currentMonthKey,
 import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderIncomeFlowSankey, PALETTE } from '../charts.js';
 import { getSetting } from '../db.js';
+// Aliasé en tr (pas t) : ce fichier utilise déjà `t` comme nom de paramètre pour une transaction
+// (voir txRowHtml(t)) — importer la fonction de traduction sous le même nom la masquerait
+// silencieusement à l'intérieur de cette fonction (t('Sans catégorie') appellerait alors la
+// transaction comme une fonction au lieu de traduire, TypeError immédiat).
+import { t as tr } from '../i18n.js';
 
 export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true, safeToSpend: true, netWorth: true, debtsBalance: true };
 export const BUDGET_ALERT_THRESHOLD_DEFAULTS = { warn: 70, danger: 90 };
@@ -22,7 +27,7 @@ function renderMonthTrend(elId, current, previous, currency, invert = false) {
   const diff = current - previous;
   const favorable = invert ? diff <= 0 : diff >= 0;
   const sign = diff >= 0 ? '+' : '';
-  el.textContent = `${sign}${formatCurrency(diff, currency)} vs mois dernier`;
+  el.textContent = tr('{amount} vs mois dernier', { amount: `${sign}${formatCurrency(diff, currency)}` });
   el.classList.remove('pos', 'neg');
   el.classList.add(favorable ? 'pos' : 'neg');
 }
@@ -42,7 +47,7 @@ function renderAlerts(budgetRows, thresholds, unconfirmedRates) {
     const div = document.createElement('div');
     div.className = 'alert alert-danger';
     const codes = unconfirmedRates.map((r) => r.code).join(', ');
-    div.textContent = `Taux de change non confirmé pour ${codes} (valeur 1:1 par défaut) — le patrimoine net affiché est probablement faux. À corriger dans Portefeuilles.`;
+    div.textContent = tr('Taux de change non confirmé pour {codes} (valeur 1:1 par défaut) — le patrimoine net affiché est probablement faux. À corriger dans Portefeuilles.', { codes });
     stack.appendChild(div);
   }
 
@@ -56,8 +61,8 @@ function renderAlerts(budgetRows, thresholds, unconfirmedRates) {
     const div = document.createElement('div');
     div.className = `alert alert-${level}`;
     div.textContent = r.pct >= 100
-      ? `Budget "${r.label}" dépassé (${r.pct.toFixed(0)}% utilisé)`
-      : `Budget "${r.label}" à ${r.pct.toFixed(0)}% de la limite`;
+      ? tr('Budget "{label}" dépassé ({pct}% utilisé)', { label: r.label, pct: r.pct.toFixed(0) })
+      : tr('Budget "{label}" à {pct}% de la limite', { label: r.label, pct: r.pct.toFixed(0) });
     stack.appendChild(div);
   }
 }
@@ -66,8 +71,8 @@ function txRowHtml(t) {
   const isTransfer = t.type === 'transfer';
   const title = isTransfer
     ? `${t.wallet?.name || '—'} → ${t.targetWallet?.name || '—'}`
-    : (t.category?.name || 'Sans catégorie');
-  const sub = `${escapeHtml(t.wallet?.name || '')} · ${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}${t.splitGroupId ? ' · Scindée' : ''}`;
+    : (t.category?.name || tr('Sans catégorie'));
+  const sub = `${escapeHtml(t.wallet?.name || '')} · ${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}${t.splitGroupId ? ' · ' + tr('Scindée') : ''}`;
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   const currency = t.wallet?.currency || 'EUR';
@@ -89,7 +94,7 @@ function renderRecentTransactions(rows) {
   const container = document.getElementById('dashboard-recent-transactions');
   if (!container) return;
   if (!rows.length) {
-    container.innerHTML = '<div class="tx-empty">Aucune transaction pour le moment. Utilisez « Saisie express » pour commencer.</div>';
+    container.innerHTML = `<div class="tx-empty">${tr('Aucune transaction pour le moment. Utilisez « Saisie express » pour commencer.')}</div>`;
     return;
   }
   container.innerHTML = rows.map(txRowHtml).join('');
@@ -118,7 +123,7 @@ function renderWatchCategories(budgetRows) {
     .slice(0, 3);
   container.innerHTML = top.length
     ? top.map(watchCategoryRowHtml).join('')
-    : '<div class="tx-empty">Aucun budget défini pour l\'instant.</div>';
+    : `<div class="tx-empty">${tr("Aucun budget défini pour l'instant.")}</div>`;
 }
 
 function upcomingBillRowHtml(u, currency) {
@@ -139,7 +144,7 @@ function renderUpcomingBills(upcoming, currency) {
   if (!container) return;
   container.innerHTML = upcoming.length
     ? upcoming.slice(0, 5).map((u) => upcomingBillRowHtml(u, currency)).join('')
-    : '<div class="tx-empty">Aucune échéance à venir ce mois-ci.</div>';
+    : `<div class="tx-empty">${tr('Aucune échéance à venir ce mois-ci.')}</div>`;
 }
 
 /** "Bonjour" en journée, "Bonsoir" le soir/la nuit — convention française usuelle (bascule à 18h,
@@ -147,7 +152,7 @@ function renderUpcomingBills(upcoming, currency) {
     mauvais moment de la journée n'a pas de sens. */
 function greetingWord() {
   const hour = new Date().getHours();
-  return hour >= 18 || hour < 5 ? 'Bonsoir' : 'Bonjour';
+  return tr(hour >= 18 || hour < 5 ? 'Bonsoir' : 'Bonjour');
 }
 
 export async function renderDashboard() {
@@ -200,8 +205,8 @@ export async function renderDashboard() {
     const safeTrendEl = document.getElementById('dash-safe-to-spend-trend');
     if (safeTrendEl) {
       safeTrendEl.textContent = safeToSpend >= 0
-        ? 'Après budgets réservés et échéances à venir'
-        : '⚠ Dépenses prévues supérieures aux liquidités disponibles';
+        ? tr('Après budgets réservés et échéances à venir')
+        : tr('⚠ Dépenses prévues supérieures aux liquidités disponibles');
     }
   }
 
@@ -214,9 +219,9 @@ export async function renderDashboard() {
         const diff = netWorth.total - prev;
         const sign = diff >= 0 ? '+' : '';
         const pctLabel = prev !== 0 ? ` (${sign}${((diff / Math.abs(prev)) * 100).toFixed(1)}%)` : '';
-        netWorthTrendEl.textContent = `${sign}${formatCurrency(diff, netWorth.currency)}${pctLabel} vs mois dernier`;
+        netWorthTrendEl.textContent = tr('{amount} vs mois dernier', { amount: `${sign}${formatCurrency(diff, netWorth.currency)}${pctLabel}` });
       } else {
-        netWorthTrendEl.textContent = 'Pas encore assez d\'historique';
+        netWorthTrendEl.textContent = tr("Pas encore assez d'historique");
       }
     }
   }
@@ -238,11 +243,13 @@ export async function renderDashboard() {
     // Tolérance d'un demi-centime (même convention que ledger.js/debts.js) : évite qu'un budget
     // respecté "pile" affiche "Dépassé de 0,00 €" à cause d'un résidu flottant infime.
     const remainingLabel = monthlyBudget.remaining >= -0.005
-      ? `Reste ${formatCurrency(monthlyBudget.remaining, monthlyBudget.currency)} ce mois-ci`
-      : `Dépassé de ${formatCurrency(Math.abs(monthlyBudget.remaining), monthlyBudget.currency)}`;
-    budgetTrendEl.textContent = `${formatCurrency(monthlyBudget.totalSpent, monthlyBudget.currency)} dépensé sur catégories budgétées · ${remainingLabel}`;
+      ? tr('Reste {amount} ce mois-ci', { amount: formatCurrency(monthlyBudget.remaining, monthlyBudget.currency) })
+      : tr('Dépassé de {amount}', { amount: formatCurrency(Math.abs(monthlyBudget.remaining), monthlyBudget.currency) });
+    budgetTrendEl.textContent = tr('{spent} dépensé sur catégories budgétées · {remainingLabel}', {
+      spent: formatCurrency(monthlyBudget.totalSpent, monthlyBudget.currency), remainingLabel,
+    });
   } else {
-    budgetTrendEl.textContent = 'Aucun budget défini pour ce mois — allez dans Budgets pour en attribuer';
+    budgetTrendEl.textContent = tr('Aucun budget défini pour ce mois — allez dans Budgets pour en attribuer');
   }
 
   const unallocatedBadge = document.getElementById('budget-unallocated-badge');
@@ -250,8 +257,8 @@ export async function renderDashboard() {
     const unallocated = summary.income - monthlyBudget.totalBudget;
     unallocatedBadge.hidden = false;
     unallocatedBadge.textContent = unallocated >= 0
-      ? `${formatCurrency(unallocated, monthlyBudget.currency)} non affecté`
-      : `Budgets > revenu de ${formatCurrency(Math.abs(unallocated), monthlyBudget.currency)}`;
+      ? tr('{amount} non affecté', { amount: formatCurrency(unallocated, monthlyBudget.currency) })
+      : tr('Budgets > revenu de {amount}', { amount: formatCurrency(Math.abs(unallocated), monthlyBudget.currency) });
   } else {
     unallocatedBadge.hidden = true;
   }
@@ -268,7 +275,7 @@ export async function renderDashboard() {
     renderBudgetVsActualChart('chart-budget-vs-actual', budgetVsActual, currency);
 
     const flows = expensesByCategory.map((c, i) => ({ label: c.label, value: c.value, color: c.color || PALETTE[i % PALETTE.length] }));
-    if (summary.netSavings > 0) flows.push({ label: 'Épargne nette', value: summary.netSavings, color: 'var(--pos, #16a34a)' });
+    if (summary.netSavings > 0) flows.push({ label: tr('Épargne nette'), value: summary.netSavings, color: 'var(--pos, #16a34a)' });
     renderIncomeFlowSankey('dashboard-income-flow', { income: summary.income, flows, currency });
   }
 
