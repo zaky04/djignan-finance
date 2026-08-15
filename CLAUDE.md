@@ -1176,8 +1176,9 @@ que certains écrans resteront en français le temps du reste du chantier.
 - ✅ Rapports (lot 8, voir entrée ci-dessous) : bilans PDF (mensuel + annuel), export CSV, score de
   santé financière, calendrier des dépenses.
 - ✅ Partage de dépenses (lot 9, voir entrée ci-dessous) : participants, dépenses partagées, soldes.
-- ⬜ Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit),
-  Recherche globale, mode démo, onboarding.
+- ✅ Comptes gardés (lot 10, voir entrée ci-dessous) : comptes, mouvements, archivage.
+- ⬜ Paramètres (hors sélecteur de langue lui-même, déjà traduit), Recherche globale, mode démo,
+  onboarding.
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
 navigation mobile, écran de verrouillage (titre/sous-titre/aria-labels) et tableau de bord entier
@@ -1459,6 +1460,25 @@ nettoyage des données de test puis retour en français vérifié identique à l
 console.
 
 `CACHE_VERSION` : `v60` → `v61`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 10/N : Comptes gardés)
+
+Écran converti : **Comptes gardés** (`kept-accounts.js`) — comptes (avec solde initial et devise),
+mouvements (entrées/sorties), archivage, suppression avec restauration. Aucune collision `t`/variable
+(vérifié par `grep`) — import direct. Module optionnel (activable dans Paramètres,
+`keptAccountsEnabled`) : testé directement via les fonctions du module (même limite déjà notée aux
+lots précédents pour tout ce qui nécessite de naviguer via le clavier PIN), la visibilité du bouton de
+nav lui-même n'étant pas concernée par ce chantier de traduction.
+
+~28 nouvelles entrées de dictionnaire, 0 doublon (553 clés au total).
+
+Testé FR→EN→FR de bout en bout : création d'un compte (via injection directe, formulaire vérifié
+séparément), carte de compte (devise + badge "archived"), modale de détail avec ajout d'un mouvement
+("In"/"Out", montant, note), archivage, confirmation de suppression + suppression réelle avec toast
+"Undo", nettoyage des données de test, retour en français vérifié (état vide correctement affiché).
+Aucune erreur console.
+
+`CACHE_VERSION` : `v61` → `v62`.
 
 ## 7. Pistes prioritaires non traitées
 
