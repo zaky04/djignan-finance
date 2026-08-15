@@ -913,4 +913,59 @@ const EN = {
   "Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.":
     'Type to search among your transactions, wallets, debts, savings goals, investments, managed accounts, and shared expenses.',
   'Aucun résultat.': 'No results.',
+
+  // ---------- Assistant de configuration + mode démo (app.js) ----------
+  'Passer cette étape': 'Skip this step',
+  'Bienvenue sur GeoFinance': 'Welcome to GeoFinance',
+  "Choisissez d'abord la devise dans laquelle suivre votre argent au quotidien — vous pourrez quand même créer des portefeuilles dans d'autres devises ensuite.":
+    "First choose the currency to track your everyday money in — you can still create wallets in other currencies afterward.",
+  'Devise principale': 'Main currency',
+  "Découvrir avec des données d'exemple": 'Explore with sample data',
+  'Données de démonstration chargées.': 'Sample data loaded.',
+  'Votre premier portefeuille': 'Your first wallet',
+  'Créez votre premier portefeuille (compte bancaire, mobile money, espèces…) pour commencer à suivre vos finances.':
+    'Create your first wallet (bank account, mobile money, cash…) to start tracking your finances.',
+  'Créer un portefeuille': 'Create a wallet',
+  'Votre profil': 'Your profile',
+  "Utilisé pour la salutation sur le tableau de bord et l'en-tête des rapports PDF. Reste 100% local, jamais transmis.":
+    'Used for the dashboard greeting and the PDF report header. Stays 100% local, never transmitted.',
+  'Personnalisez votre tableau de bord': 'Customize your dashboard',
+  'Choisissez les panneaux affichés sur le tableau de bord (modifiable à tout moment dans Paramètres).':
+    'Choose the panels shown on the dashboard (changeable anytime in Settings).',
+  'Modules optionnels': 'Optional modules',
+  "Activez ce qui s'applique à votre usage (modifiable à tout moment dans Paramètres).":
+    'Enable what applies to your usage (changeable anytime in Settings).',
+  'Réglez le verrouillage automatique après inactivité et activez le déverrouillage biométrique.':
+    'Set the auto-lock after inactivity and enable biometric unlock.',
+  'Réglez le verrouillage automatique après inactivité.': 'Set the auto-lock after inactivity.',
+  'Activer le déverrouillage biométrique': 'Enable biometric unlock',
+  'Biométrie activée ✓': 'Biometrics enabled ✓',
+  'Rappels locaux pour vos budgets qui approchent leur limite, vos échéances proches et vos soldes bas.':
+    'Local reminders for your budgets approaching their limit, your upcoming bills, and your low balances.',
+  'Activer les notifications': 'Enable notifications',
+  'Non supportées par ce navigateur.': 'Not supported by this browser.',
+  'Passer, terminer': 'Skip, finish',
+  'Terminer': 'Finish',
+  'Étape {n} / {total}': 'Step {n} / {total}',
+  'Vous explorez des données de démonstration.': "You're exploring sample data.",
+  'Effacer et commencer avec mes données': 'Clear and start with my own data',
+  'Effacer les données de démonstration et repartir de zéro ?': 'Clear the sample data and start fresh?',
+
+  // ---------- Données de démonstration (demo-data.js) ----------
+  'Compte courant': 'Checking account',
+  'Espèces': 'Cash',
+  'Salaire juin': 'June salary',
+  'Loyer': 'Rent',
+  'Marché': 'Groceries',
+  'Essence': 'Gas',
+  'Cinéma et sorties': 'Movies and outings',
+  'Netflix + forfait mobile': 'Netflix + mobile plan',
+  'Consultation + pharmacie': 'Doctor visit + pharmacy',
+  'Vente en ligne': 'Online sale',
+  'Salaire juillet': 'July salary',
+  'Week-end entre amis': 'Weekend with friends',
+  'Imprévu': 'Unexpected expense',
+  "Fonds d'urgence": 'Emergency fund',
+  'Épargne actions': 'Stock savings',
+  'Prêt pour dépannage': 'Emergency loan',
 };

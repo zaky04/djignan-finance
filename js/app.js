@@ -232,7 +232,7 @@ function applyShortcutParams() {
     sans rien enregistrer, laissant les valeurs par défaut déjà seedées (seedDefaultsIfNeeded)
     ou les réglages par défaut de chaque module en place. */
 function skipStepButtonHtml() {
-  return '<button type="button" class="btn btn-ghost btn-block" id="ob-skip" style="margin-top:8px;">Passer cette étape</button>';
+  return `<button type="button" class="btn btn-ghost btn-block" id="ob-skip" style="margin-top:8px;">${t('Passer cette étape')}</button>`;
 }
 
 /** Assistant de configuration multi-étapes affiché une seule fois, à la toute première
@@ -251,19 +251,19 @@ async function maybeShowOnboarding() {
 
   const steps = [
     {
-      title: 'Bienvenue sur GeoFinance',
+      title: t('Bienvenue sur GeoFinance'),
       async render(el, { next }) {
         el.innerHTML = `
-          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Choisissez d'abord la devise dans laquelle suivre votre argent au quotidien — vous pourrez quand même créer des portefeuilles dans d'autres devises ensuite.</p>
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t("Choisissez d'abord la devise dans laquelle suivre votre argent au quotidien — vous pourrez quand même créer des portefeuilles dans d'autres devises ensuite.")}</p>
           <form id="ob-currency-form">
             <div class="form-row">
-              <label>Devise principale</label>
+              <label>${t('Devise principale')}</label>
               <select name="baseCurrency">${CURRENCIES.map((c) => `<option value="${c}" ${c === 'EUR' ? 'selected' : ''}>${c}</option>`).join('')}</select>
             </div>
-            <button type="submit" class="btn btn-primary btn-block">Continuer</button>
+            <button type="submit" class="btn btn-primary btn-block">${t('Continuer')}</button>
           </form>
           ${skipStepButtonHtml()}
-          <button type="button" class="btn btn-ghost btn-block" id="ob-demo" style="margin-top:8px;">Découvrir avec des données d'exemple</button>`;
+          <button type="button" class="btn btn-ghost btn-block" id="ob-demo" style="margin-top:8px;">${t("Découvrir avec des données d'exemple")}</button>`;
         el.querySelector('#ob-currency-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           await setSetting('baseCurrency', new FormData(e.target).get('baseCurrency'));
@@ -279,16 +279,16 @@ async function maybeShowOnboarding() {
           modal.close();
           notifyDataChanged('all');
           renderDemoModeBanner();
-          showToast('Données de démonstration chargées.');
+          showToast(t('Données de démonstration chargées.'));
         });
       },
     },
     {
-      title: 'Votre premier portefeuille',
+      title: t('Votre premier portefeuille'),
       async render(el, { next }) {
         el.innerHTML = `
-          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Créez votre premier portefeuille (compte bancaire, mobile money, espèces…) pour commencer à suivre vos finances.</p>
-          <button type="button" class="btn btn-primary btn-block" id="ob-wallet-create">Créer un portefeuille</button>
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t('Créez votre premier portefeuille (compte bancaire, mobile money, espèces…) pour commencer à suivre vos finances.')}</p>
+          <button type="button" class="btn btn-primary btn-block" id="ob-wallet-create">${t('Créer un portefeuille')}</button>
           ${skipStepButtonHtml()}`;
         el.querySelector('#ob-wallet-create').addEventListener('click', () => {
           // Le formulaire de portefeuille est une modale à part entière (réutilisée telle
@@ -302,17 +302,17 @@ async function maybeShowOnboarding() {
       },
     },
     {
-      title: 'Votre profil',
+      title: t('Votre profil'),
       async render(el, { next }) {
         el.innerHTML = `
-          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Utilisé pour la salutation sur le tableau de bord et l'en-tête des rapports PDF. Reste 100% local, jamais transmis.</p>
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t("Utilisé pour la salutation sur le tableau de bord et l'en-tête des rapports PDF. Reste 100% local, jamais transmis.")}</p>
           <form id="ob-profile-form">
             ${PROFILE_FIELDS.map((f) => `
               <div class="form-row">
-                <label>${escapeHtml(f.label)}</label>
+                <label>${escapeHtml(t(f.label))}</label>
                 <input type="${f.type}" name="${f.key}" maxlength="120">
               </div>`).join('')}
-            <button type="submit" class="btn btn-primary btn-block">Continuer</button>
+            <button type="submit" class="btn btn-primary btn-block">${t('Continuer')}</button>
           </form>
           ${skipStepButtonHtml()}`;
         el.querySelector('#ob-profile-form').addEventListener('submit', async (e) => {
@@ -325,17 +325,17 @@ async function maybeShowOnboarding() {
       },
     },
     {
-      title: 'Personnalisez votre tableau de bord',
+      title: t('Personnalisez votre tableau de bord'),
       async render(el, { next }) {
         el.innerHTML = `
-          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Choisissez les panneaux affichés sur le tableau de bord (modifiable à tout moment dans Paramètres).</p>
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t('Choisissez les panneaux affichés sur le tableau de bord (modifiable à tout moment dans Paramètres).')}</p>
           <form id="ob-dashboard-form">
             ${Object.entries(DASHBOARD_PANEL_LABELS).map(([key, label]) => `
               <label style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px;cursor:pointer;">
                 <input type="checkbox" name="${key}" ${DASHBOARD_PANEL_DEFAULTS[key] ? 'checked' : ''}>
-                ${escapeHtml(label)}
+                ${escapeHtml(t(label))}
               </label>`).join('')}
-            <button type="submit" class="btn btn-primary btn-block" style="margin-top:10px;">Continuer</button>
+            <button type="submit" class="btn btn-primary btn-block" style="margin-top:10px;">${t('Continuer')}</button>
           </form>
           ${skipStepButtonHtml()}`;
         el.querySelector('#ob-dashboard-form').addEventListener('submit', async (e) => {
@@ -349,18 +349,18 @@ async function maybeShowOnboarding() {
       },
     },
     {
-      title: 'Modules optionnels',
+      title: t('Modules optionnels'),
       async render(el, { next }) {
         el.innerHTML = `
-          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Activez ce qui s'applique à votre usage (modifiable à tout moment dans Paramètres).</p>
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t("Activez ce qui s'applique à votre usage (modifiable à tout moment dans Paramètres).")}</p>
           <form id="ob-modules-form">
             ${OPTIONAL_MODULES.map((mod) => `
               <label style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px;cursor:pointer;">
                 <input type="checkbox" name="${mod.key}">
-                ${escapeHtml(mod.label)}
+                ${escapeHtml(t(mod.label))}
               </label>
-              <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">${escapeHtml(mod.description)}</p>`).join('')}
-            <button type="submit" class="btn btn-primary btn-block">Continuer</button>
+              <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">${escapeHtml(t(mod.description))}</p>`).join('')}
+            <button type="submit" class="btn btn-primary btn-block">${t('Continuer')}</button>
           </form>
           ${skipStepButtonHtml()}`;
         el.querySelector('#ob-modules-form').addEventListener('submit', async (e) => {
@@ -374,26 +374,26 @@ async function maybeShowOnboarding() {
       },
     },
     {
-      title: 'Sécurité',
+      title: t('Sécurité'),
       async render(el, { next }) {
         const bioAvailable = await isBiometricAvailable();
         el.innerHTML = `
-          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Réglez le verrouillage automatique après inactivité${bioAvailable ? ' et activez le déverrouillage biométrique' : ''}.</p>
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${bioAvailable ? t('Réglez le verrouillage automatique après inactivité et activez le déverrouillage biométrique.') : t('Réglez le verrouillage automatique après inactivité.')}</p>
           <div class="form-row">
-            <label>Verrouillage automatique après inactivité</label>
-            <select id="ob-auto-lock">${AUTO_LOCK_OPTIONS.map(([v, l]) => `<option value="${v}">${escapeHtml(l)}</option>`).join('')}</select>
+            <label>${t('Verrouillage automatique après inactivité')}</label>
+            <select id="ob-auto-lock">${AUTO_LOCK_OPTIONS.map(([v, l]) => `<option value="${v}">${escapeHtml(t(l))}</option>`).join('')}</select>
           </div>
-          ${bioAvailable ? '<button type="button" class="btn btn-ghost btn-block" id="ob-bio-enable" style="margin-bottom:10px;">Activer le déverrouillage biométrique</button>' : ''}
-          <button type="button" class="btn btn-primary btn-block" id="ob-continue">Continuer</button>
+          ${bioAvailable ? `<button type="button" class="btn btn-ghost btn-block" id="ob-bio-enable" style="margin-bottom:10px;">${t('Activer le déverrouillage biométrique')}</button>` : ''}
+          <button type="button" class="btn btn-primary btn-block" id="ob-continue">${t('Continuer')}</button>
           ${skipStepButtonHtml()}`;
         el.querySelector('#ob-bio-enable')?.addEventListener('click', async (e) => {
           try {
             await registerBiometric();
-            showToast('Biométrie activée.');
-            e.target.textContent = 'Biométrie activée ✓';
+            showToast(t('Biométrie activée.'));
+            e.target.textContent = t('Biométrie activée ✓');
             e.target.disabled = true;
           } catch (err) {
-            showToast(err.message || "Échec de l'activation biométrique.");
+            showToast(err.message || t("Échec de l'activation biométrique."));
           }
         });
         el.querySelector('#ob-continue').addEventListener('click', async () => {
@@ -404,18 +404,18 @@ async function maybeShowOnboarding() {
       },
     },
     {
-      title: 'Notifications',
+      title: t('Notifications'),
       async render(el, { next }) {
         const supported = isNotificationSupported();
         el.innerHTML = `
-          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Rappels locaux pour vos budgets qui approchent leur limite, vos échéances proches et vos soldes bas.</p>
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t('Rappels locaux pour vos budgets qui approchent leur limite, vos échéances proches et vos soldes bas.')}</p>
           ${supported
-            ? '<button type="button" class="btn btn-primary btn-block" id="ob-notif-enable">Activer les notifications</button>'
-            : '<p class="empty-state" style="padding:8px 0;">Non supportées par ce navigateur.</p>'}
-          <button type="button" class="btn btn-ghost btn-block" id="ob-finish" style="margin-top:10px;">${supported ? 'Passer, terminer' : 'Terminer'}</button>`;
+            ? `<button type="button" class="btn btn-primary btn-block" id="ob-notif-enable">${t('Activer les notifications')}</button>`
+            : `<p class="empty-state" style="padding:8px 0;">${t('Non supportées par ce navigateur.')}</p>`}
+          <button type="button" class="btn btn-ghost btn-block" id="ob-finish" style="margin-top:10px;">${supported ? t('Passer, terminer') : t('Terminer')}</button>`;
         el.querySelector('#ob-notif-enable')?.addEventListener('click', async () => {
           const perm = await requestNotificationPermission();
-          if (perm === 'granted') { showToast('Notifications activées.'); await checkAndNotify(); }
+          if (perm === 'granted') { showToast(t('Notifications activées.')); await checkAndNotify(); }
           next();
         });
         el.querySelector('#ob-finish').addEventListener('click', () => next());
@@ -431,7 +431,7 @@ async function maybeShowOnboarding() {
     const step = steps[index];
     if (titleEl) titleEl.textContent = step.title;
     const body = modal.el.querySelector('.modal-body');
-    body.innerHTML = `<p style="font-size:11px;color:var(--text-faint);margin:0 0 12px;text-transform:uppercase;letter-spacing:.04em;">Étape ${index + 1} / ${steps.length}</p><div id="ob-step-content"></div>`;
+    body.innerHTML = `<p style="font-size:11px;color:var(--text-faint);margin:0 0 12px;text-transform:uppercase;letter-spacing:.04em;">${t('Étape {n} / {total}', { n: index + 1, total: steps.length })}</p><div id="ob-step-content"></div>`;
     await step.render(body.querySelector('#ob-step-content'), { next });
   }
   async function next() {
@@ -454,11 +454,11 @@ async function renderDemoModeBanner() {
   container.hidden = false;
   container.innerHTML = `
     <p class="alert alert-info" style="margin:0;">
-      Vous explorez des données de démonstration.
-      <button type="button" class="btn btn-ghost" id="demo-clear-btn" style="margin-left:8px;padding:4px 10px;">Effacer et commencer avec mes données</button>
+      ${t('Vous explorez des données de démonstration.')}
+      <button type="button" class="btn btn-ghost" id="demo-clear-btn" style="margin-left:8px;padding:4px 10px;">${t('Effacer et commencer avec mes données')}</button>
     </p>`;
   container.querySelector('#demo-clear-btn').addEventListener('click', async () => {
-    const ok = await confirmDialog('Effacer les données de démonstration et repartir de zéro ?', { confirmText: 'Effacer', danger: false });
+    const ok = await confirmDialog(t('Effacer les données de démonstration et repartir de zéro ?'), { confirmText: t('Effacer'), danger: false });
     if (!ok) return;
     await clearDemoData();
     window.location.reload();

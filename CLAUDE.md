@@ -1184,7 +1184,16 @@ que certains écrans resteront en français le temps du reste du chantier.
   push/pull, rappels, vérification de fraîcheur).
 - ✅ Recherche globale (lot 13, voir entrée ci-dessous) : `search.js` complet (index, filtres
   avancés, résultats).
-- ⬜ Mode démo, onboarding.
+- ✅ Mode démo et assistant de configuration (lot 14, voir entrée ci-dessous) : bandeau, contenu du
+  jeu de données de démonstration, assistant d'onboarding complet (7 étapes).
+
+**Chantier d'internationalisation FR/EN terminé** (15 août 2026, lots 1 à 14) : toutes les vues, tous
+les modules, l'assistant de configuration et le mode démo sont traduits. Reste volontairement non
+traduit (décisions déjà prises, documentées à chaque lot concerné) : les messages d'erreur internes
+des bibliothèques tierces (Firebase SDK, `err.message` brut), le sélecteur de langue lui-même
+(intentionnellement toujours bilingue), et tout texte de données utilisateur (noms de portefeuilles,
+notes de transaction, noms de catégories déjà créées avant un changement de langue, etc. — jamais
+traduit rétroactivement, par conception).
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
 navigation mobile, écran de verrouillage (titre/sous-titre/aria-labels) et tableau de bord entier
@@ -1585,6 +1594,50 @@ Investment), recherche sans résultat ("No results."), état vide initial, gabar
 {date}" vérifié directement via `t(...)`. Aucune erreur console.
 
 `CACHE_VERSION` : `v64` → `v65`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 14/N, dernier lot : mode démo + onboarding)
+
+Dernier lot du chantier. Fusionné volontairement en un seul lot les deux derniers éléments de la
+checklist (« mode démo » et « onboarding ») car ils sont imbriqués dans le code : le bouton
+"Découvrir avec des données d'exemple" qui déclenche le mode démo vit à l'intérieur de la toute
+première étape de l'assistant de configuration (`maybeShowOnboarding()`, `app.js`), les séparer
+proprement aurait été artificiel.
+
+**Convertis** :
+- `renderDemoModeBanner()` (`app.js`) — bandeau permanent affiché tant que `isDemoModeActive` est vrai.
+- `maybeShowOnboarding()` (`app.js`, ~205 lignes) — les 7 étapes de l'assistant (devise + bouton démo,
+  premier portefeuille, profil, tableau de bord, modules optionnels, sécurité, notifications), le
+  compteur "Étape X / Y", tous les libellés des constantes partagées (`PROFILE_FIELDS`,
+  `AUTO_LOCK_OPTIONS`, `DASHBOARD_PANEL_LABELS`, `OPTIONAL_MODULES`) désormais traduits à l'usage ici
+  aussi (elles l'étaient déjà côté `settings.js` depuis le lot 11, `app.js` était le seul appelant
+  encore en attente).
+- **`demo-data.js` — décision de ce lot** : le contenu généré (pas seulement l'écran qui le
+  déclenche) est traduit aussi, cohérent avec la décision prise pour le contenu des PDF au lot 8. Noms
+  de portefeuilles génériques (« Compte courant » → « Checking account », « Espèces » → « Cash »),
+  toutes les notes de transaction (loyer, marché, essence, etc.), le nom de l'objectif d'épargne, le
+  nom de l'investissement, la note de la créance. **Volontairement PAS traduits** : « Orange Money »
+  (vraie marque, pas un libellé générique) et « Cousin Amadou » (nom de personne) — même principe que
+  les noms propres jamais traduits ailleurs dans l'app.
+
+Aucune collision `t`/variable dans `demo-data.js` (le seul `t` local, un paramètre de callback
+`.map((t) => ...)`, n'appelle jamais la fonction de traduction dans son propre corps — vérifié).
+
+~50 nouvelles entrées de dictionnaire, 0 doublon (plusieurs réutilisations vérifiées et confirmées
+correctes : `'Continuer'`, `'Sécurité'`, `'Verrouillage automatique après inactivité'`, `'Biométrie
+activée.'`, `"Échec de l'activation biométrique."`, `'Notifications'`, `'Notifications activées.'`,
+`'Effacer'` — tous déjà justes dans ce nouveau contexte), 794 clés au total.
+
+Testé FR→EN→FR : toutes les chaînes de l'assistant vérifiées directement via `t(...)` (le clavier PIN
+rendant la navigation UI complète peu fiable, comme documenté depuis le tout premier lot — même limite
+constante sur toute la session) ; **`seedDemoData()`/`clearDemoData()` testées de bout en bout en
+conditions réelles** (pas seulement via `t()`) : jeu de données généré en anglais puis vérifié
+(portefeuilles, notes de transaction, objectif d'épargne, investissement, créance — noms propres
+« Orange Money »/« Cousin Amadou » confirmés intacts), bandeau et confirmation de suppression
+vérifiés, `clearDemoData()` confirmée (réinitialise bien `isDemoModeActive`/`onboardingCompleted`),
+puis même parcours complet rejoué en français pour confirmer l'absence de régression. Aucune erreur
+console.
+
+`CACHE_VERSION` : `v65` → `v66`.
 
 ## 7. Pistes prioritaires non traitées
 
