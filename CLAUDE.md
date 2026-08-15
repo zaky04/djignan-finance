@@ -1182,7 +1182,9 @@ que certains écrans resteront en français le temps du reste du chantier.
   (hors sauvegarde cloud, voir `firebase-sync.js` — pas encore traduit, section distincte).
 - ✅ Sauvegarde cloud (lot 12, voir entrée ci-dessous) : `firebase-sync.js` complet (connexion,
   push/pull, rappels, vérification de fraîcheur).
-- ⬜ Recherche globale, mode démo, onboarding.
+- ✅ Recherche globale (lot 13, voir entrée ci-dessous) : `search.js` complet (index, filtres
+  avancés, résultats).
+- ⬜ Mode démo, onboarding.
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
 navigation mobile, écran de verrouillage (titre/sous-titre/aria-labels) et tableau de bord entier
@@ -1564,6 +1566,25 @@ fraîcheur cloud vérifiés directement via `t(...)` (ces flux nécessitent un c
 déclencher normalement). Aucune erreur console.
 
 `CACHE_VERSION` : `v63` → `v64`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 13/N : Recherche globale)
+
+Écran converti : **Recherche globale** (`search.js`) — modale de recherche (Ctrl/Cmd+K), index en
+mémoire (transactions, portefeuilles, dettes/créances, épargne, investissements, comptes gardés,
+dépenses partagées), filtres avancés (portefeuille/catégorie/type/montant/dates). Piège `t`/variable
+reproduit à l'identique (`for (const t of transactions)` dans `collectSearchIndex()`) — import aliasé
+`tr` dès le départ. `TYPE_LABELS` : mêmes conventions que `ASSET_CLASSES`/`ENTRY_TYPE_LABELS`
+(investments.js) — clés (identifiants de type internes) jamais traduites, valeurs traduites à l'usage.
+
+~18 nouvelles entrées de dictionnaire, 1 doublon détecté et corrigé (`'Portefeuille'`, déjà présent
+depuis transactions.js — réutilisé), 750 clés au total.
+
+Testé FR→EN→FR : filtres avancés (portefeuilles/catégories peuplés dynamiquement, types), placeholder
+et aria-labels, recherche avec résultats (badges de type vérifiés pour Transaction/Wallet/Receivable/
+Investment), recherche sans résultat ("No results."), état vide initial, gabarit "Paid by {payer} ·
+{date}" vérifié directement via `t(...)`. Aucune erreur console.
+
+`CACHE_VERSION` : `v64` → `v65`.
 
 ## 7. Pistes prioritaires non traitées
 

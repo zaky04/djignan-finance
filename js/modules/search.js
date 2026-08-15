@@ -9,7 +9,14 @@
 import { STORES, dbGetAll, getSetting } from '../db.js';
 import { getEnrichedTransactions } from '../ledger.js';
 import { formatCurrency, formatDate, escapeHtml, debounce } from '../utils.js';
+// Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
+// collectSearchIndex() — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js/
+// reports-extras.js.
+import { t as tr } from '../i18n.js';
 
+// Valeurs traduites à l'usage via tr(...) (voir resultRowHtml ci-dessous), jamais ici — mêmes
+// conventions que ASSET_CLASSES (investments.js) : les clés sont des identifiants internes de type,
+// jamais du texte d'interface.
 const TYPE_LABELS = {
   transaction: 'Transaction',
   wallet: 'Portefeuille',
@@ -52,7 +59,7 @@ async function collectSearchIndex() {
     items.push({
       type: 'transaction',
       haystack: `${t.note || ''} ${t.category?.name || ''} ${t.wallet?.name || ''} ${(t.tags || []).join(' ')}`,
-      title: t.category?.name || t.note || 'Transaction',
+      title: t.category?.name || t.note || tr('Transaction'),
       sub: `${t.wallet?.name || ''} · ${formatDate(t.date)}${t.note ? ' · ' + t.note : ''}${t.tags?.length ? ' · #' + t.tags.join(' #') : ''}`,
       amount: formatCurrency(t.amount, t.wallet?.currency || 'EUR'),
       amountValue: Number(t.amount) || 0,
@@ -114,7 +121,7 @@ async function collectSearchIndex() {
       type: 'sharedExpense',
       haystack: `${exp.description} ${payer?.name || ''}`,
       title: exp.description,
-      sub: `Payé par ${payer?.name || '?'} · ${formatDate(exp.date)}`,
+      sub: tr('Payé par {payer} · {date}', { payer: payer?.name || '?', date: formatDate(exp.date) }),
       amount: formatCurrency(exp.amount, exp.currency),
       view: 'shared',
     });
@@ -126,7 +133,7 @@ async function collectSearchIndex() {
 function resultRowHtml(item) {
   return `
     <button type="button" class="search-result" data-view="${item.view}">
-      <span class="badge badge-accent search-result-badge">${TYPE_LABELS[item.type]}</span>
+      <span class="badge badge-accent search-result-badge">${tr(TYPE_LABELS[item.type])}</span>
       <span class="search-result-body">
         <span class="search-result-title">${escapeHtml(item.title)}</span>
         <span class="search-result-sub">${escapeHtml(item.sub)}</span>
@@ -143,34 +150,34 @@ export function openGlobalSearch() {
   backdrop.className = 'modal-backdrop';
   backdrop.dataset.modal = 'search';
   backdrop.innerHTML = `
-    <div class="modal-card search-modal" role="dialog" aria-modal="true" aria-label="Recherche">
+    <div class="modal-card search-modal" role="dialog" aria-modal="true" aria-label="${tr('Rechercher')}">
       <div class="search-input-row">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M10 2a8 8 0 1 0 4.9 14.3l5.4 5.4 1.4-1.4-5.4-5.4A8 8 0 0 0 10 2Zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12Z"/></svg>
-        <input type="text" id="search-input" placeholder="Rechercher une transaction, un portefeuille, une dette…" autocomplete="off">
-        <button type="button" class="icon-btn" id="search-filters-toggle" aria-label="Filtres avancés" title="Filtres avancés (montant, dates)">
+        <input type="text" id="search-input" placeholder="${tr('Rechercher une transaction, un portefeuille, une dette…')}" autocomplete="off">
+        <button type="button" class="icon-btn" id="search-filters-toggle" aria-label="${tr('Filtres avancés')}" title="${tr('Filtres avancés (montant, dates)')}">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 5h16v2H4V5Zm3 6h10v2H7v-2Zm3 6h4v2h-4v-2Z"/></svg>
         </button>
-        <button type="button" class="icon-btn modal-close" aria-label="Fermer">
+        <button type="button" class="icon-btn modal-close" aria-label="${tr('Fermer')}">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6Z"/></svg>
         </button>
       </div>
       <div id="search-advanced-filters" class="filters-bar" hidden style="padding:10px 20px;border-bottom:1px solid var(--border);">
-        <select id="search-filter-wallet"><option value="">Tous les portefeuilles</option></select>
-        <select id="search-filter-category"><option value="">Toutes catégories</option></select>
+        <select id="search-filter-wallet"><option value="">${tr('Tous les portefeuilles')}</option></select>
+        <select id="search-filter-category"><option value="">${tr('Toutes catégories')}</option></select>
         <select id="search-filter-type">
-          <option value="">Tous types</option>
-          <option value="income">Recettes</option>
-          <option value="expense">Dépenses</option>
-          <option value="transfer">Transferts</option>
+          <option value="">${tr('Tous types')}</option>
+          <option value="income">${tr('Recettes')}</option>
+          <option value="expense">${tr('Dépenses')}</option>
+          <option value="transfer">${tr('Transferts')}</option>
         </select>
-        <input type="number" step="0.01" id="search-amount-min" placeholder="Montant min">
-        <input type="number" step="0.01" id="search-amount-max" placeholder="Montant max">
-        <input type="date" id="search-date-from" title="Du">
-        <input type="date" id="search-date-to" title="Au">
-        <span style="font-size:11.5px;color:var(--text-faint);">S'applique aux transactions uniquement</span>
+        <input type="number" step="0.01" id="search-amount-min" placeholder="${tr('Montant min')}">
+        <input type="number" step="0.01" id="search-amount-max" placeholder="${tr('Montant max')}">
+        <input type="date" id="search-date-from" title="${tr('Du')}">
+        <input type="date" id="search-date-to" title="${tr('Au')}">
+        <span style="font-size:11.5px;color:var(--text-faint);">${tr("S'applique aux transactions uniquement")}</span>
       </div>
       <div id="search-results" class="search-results">
-        <div class="empty-state">Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.</div>
+        <div class="empty-state">${tr("Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.")}</div>
       </div>
     </div>`;
   root.appendChild(backdrop);
@@ -201,9 +208,9 @@ export function openGlobalSearch() {
   });
 
   Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES)]).then(([wallets, categories]) => {
-    walletEl.innerHTML = '<option value="">Tous les portefeuilles</option>'
+    walletEl.innerHTML = `<option value="">${tr('Tous les portefeuilles')}</option>`
       + wallets.filter((w) => !w.archived).map((w) => `<option value="${w.id}">${escapeHtml(w.name)}</option>`).join('');
-    categoryEl.innerHTML = '<option value="">Toutes catégories</option>'
+    categoryEl.innerHTML = `<option value="">${tr('Toutes catégories')}</option>`
       + categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
   });
 
@@ -233,13 +240,13 @@ export function openGlobalSearch() {
   const runSearch = debounce(() => {
     const q = norm(input.value).trim();
     if (!q) {
-      resultsEl.innerHTML = '<div class="empty-state">Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d\'épargne, investissements, comptes gardés et dépenses partagées.</div>';
+      resultsEl.innerHTML = `<div class="empty-state">${tr("Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.")}</div>`;
       return;
     }
     const matches = index.filter((it) => norm(it.haystack).includes(q) && passesAdvancedFilters(it)).slice(0, 40);
     resultsEl.innerHTML = matches.length
       ? matches.map(resultRowHtml).join('')
-      : '<div class="empty-state">Aucun résultat.</div>';
+      : `<div class="empty-state">${tr('Aucun résultat.')}</div>`;
   }, 120);
 
   input.addEventListener('input', runSearch);

@@ -895,4 +895,22 @@ const EN = {
   'Connecté.': 'Signed in.',
   'connexion impossible.': 'sign-in not possible.',
   'Déconnecté.': 'Signed out.',
+
+  // ---------- Recherche globale (search.js) ----------
+  'Transaction': 'Transaction',
+  'Investissement': 'Investment',
+  'Compte gardé': 'Managed account',
+  'Dépense partagée': 'Shared expense',
+  'Payé par {payer} · {date}': 'Paid by {payer} · {date}',
+  'Rechercher une transaction, un portefeuille, une dette…': 'Search for a transaction, wallet, debt…',
+  'Filtres avancés': 'Advanced filters',
+  'Filtres avancés (montant, dates)': 'Advanced filters (amount, dates)',
+  'Montant min': 'Min amount',
+  'Montant max': 'Max amount',
+  'Du': 'From',
+  'Au': 'To',
+  "S'applique aux transactions uniquement": 'Applies to transactions only',
+  "Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.":
+    'Type to search among your transactions, wallets, debts, savings goals, investments, managed accounts, and shared expenses.',
+  'Aucun résultat.': 'No results.',
 };
