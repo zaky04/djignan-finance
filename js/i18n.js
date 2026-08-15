@@ -1009,4 +1009,19 @@ const EN = {
   'Portefeuille supprimé.': 'Wallet deleted.',
   'Portefeuille archivé.': 'Wallet archived.',
   'Portefeuille désarchivé.': 'Wallet unarchived.',
+
+  // ---------- Notifications système (notifications.js) ----------
+  'Les notifications ne sont pas supportées par ce navigateur.': 'Notifications are not supported by this browser.',
+  'Recette prévue': 'Upcoming income',
+  'Facture à venir': 'Upcoming bill',
+  '{name} — {amount} le {date}': '{name} — {amount} on {date}',
+  'Dette à échéance': 'Debt due',
+  'Créance à échéance': 'Receivable due',
+  '{name} — {amount} restant le {date}': '{name} — {amount} remaining, due {date}',
+  'Solde bas': 'Low balance',
+  '{name} est passé sous {threshold} (solde actuel : {balance}).': '{name} dropped below {threshold} (current balance: {balance}).',
+  'Budget bientôt atteint': 'Budget almost reached',
+  '« {label} » est à {pct}% de sa limite mensuelle.': '"{label}" is at {pct}% of its monthly limit.',
+  'Résumé de la semaine': 'Weekly summary',
+  '{expenses} dépensé, {income} reçu · épargne nette {netSavings}.': '{expenses} spent, {income} received · net savings {netSavings}.',
 };

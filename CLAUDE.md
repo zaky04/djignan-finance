@@ -1672,6 +1672,29 @@ vérifiés), nettoyage puis retour en français confirmé sans régression. Aucu
 
 `CACHE_VERSION` : `v66` → `v67`.
 
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 16/N : notifications système, trou comblé)
+
+Deuxième trou comblé de l'audit : `notifications.js` — titres et corps de **toutes** les notifications
+système proactives (échéances récurrentes proches, dettes/créances à échéance, solde de portefeuille
+bas, budget bientôt atteint, résumé hebdomadaire). Ces notifications s'affichent via l'API
+Notification native du navigateur (pas de serveur, voir le commentaire d'en-tête du fichier) —
+totalement invisibles depuis l'écran Paramètres où j'avais pourtant déjà traduit le bouton "Activer
+les notifications" (lot 11) sans jamais ouvrir ce fichier. Aucune collision `t`/variable — import
+direct.
+
+~14 nouvelles entrées de dictionnaire, 0 doublon (841 clés au total).
+
+Testé : **limite connue** — `Notification.permission` est `denied` par défaut dans le navigateur
+automatisé de cette session (pas d'octroi possible sans geste utilisateur réel), donc `checkAndNotify()`
+ne peut pas être déclenché de bout en bout ici (même limite déjà rencontrée pour la connexion Google
+réelle). Chaque gabarit vérifié directement via `t(...)` avec des valeurs réalistes à la place, dans
+les deux langues (aller-retour FR→EN→FR confirmé après un appel explicite à `initI18n()` pour
+recharger le réglage — `setLanguage()` déclenchant un vrai rechargement de page que `javascript_exec`
+ne peut pas attendre de façon fiable). Round-trip complet à confirmer par l'auteur en usage réel, sur
+un appareil où les notifications sont autorisées.
+
+`CACHE_VERSION` : `v67` → `v68`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

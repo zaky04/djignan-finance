@@ -10,6 +10,7 @@
 import { STORES, dbGetAll, getSetting, setSetting } from './db.js';
 import { computeBudgetVsActual, getAllWalletBalances, computeSpendingBetween } from './ledger.js';
 import { formatCurrency, formatDate, currentMonthKey, percentage, todayISO, localISODate } from './utils.js';
+import { t } from './i18n.js';
 
 /** Lundi (YYYY-MM-DD) de la semaine contenant `date`. */
 function mondayOf(date) {
@@ -28,7 +29,7 @@ export function getNotificationPermission() {
 }
 
 export async function requestNotificationPermission() {
-  if (!isNotificationSupported()) throw new Error('Les notifications ne sont pas supportées par ce navigateur.');
+  if (!isNotificationSupported()) throw new Error(t('Les notifications ne sont pas supportées par ce navigateur.'));
   return Notification.requestPermission();
 }
 
@@ -82,9 +83,9 @@ export async function checkAndNotify() {
     const key = `${r.id}:${r.nextDate}`;
     if (notifiedRecurring[key]) continue;
 
-    const label = r.type === 'income' ? 'Recette prévue' : 'Facture à venir';
+    const label = r.type === 'income' ? t('Recette prévue') : t('Facture à venir');
     const ok = await fireNotification(label, {
-      body: `${r.name} — ${formatCurrency(r.amount, walletCurrency[r.walletId] || 'EUR')} le ${formatDate(r.nextDate)}`,
+      body: t('{name} — {amount} le {date}', { name: r.name, amount: formatCurrency(r.amount, walletCurrency[r.walletId] || 'EUR'), date: formatDate(r.nextDate) }),
       tag: `recurring-${key}`,
     });
     if (ok) { notifiedRecurring[key] = true; recurringChanged = true; }
@@ -100,9 +101,9 @@ export async function checkAndNotify() {
 
     const paid = debtPayments.filter((p) => p.debtId === d.id).reduce((s, p) => s + p.amount, 0);
     const remaining = Math.max(0, (d.principal || 0) - paid);
-    const label = d.type === 'debt' ? 'Dette à échéance' : 'Créance à échéance';
+    const label = d.type === 'debt' ? t('Dette à échéance') : t('Créance à échéance');
     const ok = await fireNotification(label, {
-      body: `${d.personName} — ${formatCurrency(remaining, d.currency)} restant le ${formatDate(d.dueDate)}`,
+      body: t('{name} — {amount} restant le {date}', { name: d.personName, amount: formatCurrency(remaining, d.currency), date: formatDate(d.dueDate) }),
       tag: `debt-${key}`,
     });
     if (ok) { notifiedDebts[key] = true; debtsChanged = true; }
@@ -116,8 +117,8 @@ export async function checkAndNotify() {
     if (w.archived || !w.lowBalanceThreshold) continue;
     if (w.balance < w.lowBalanceThreshold) {
       if (notifiedLowBalance[w.id]) continue;
-      const ok = await fireNotification('Solde bas', {
-        body: `${w.name} est passé sous ${formatCurrency(w.lowBalanceThreshold, w.currency)} (solde actuel : ${formatCurrency(w.balance, w.currency)}).`,
+      const ok = await fireNotification(t('Solde bas'), {
+        body: t('{name} est passé sous {threshold} (solde actuel : {balance}).', { name: w.name, threshold: formatCurrency(w.lowBalanceThreshold, w.currency), balance: formatCurrency(w.balance, w.currency) }),
         tag: `low-balance-${w.id}`,
       });
       if (ok) { notifiedLowBalance[w.id] = true; lowBalanceChanged = true; }
@@ -139,8 +140,8 @@ export async function checkAndNotify() {
     const key = `${row.categoryId}:${monthKey}`;
     if ((notifiedBudgets[key] || 0) >= tier) continue;
 
-    const ok = await fireNotification('Budget bientôt atteint', {
-      body: `« ${row.label} » est à ${pct.toFixed(0)}% de sa limite mensuelle.`,
+    const ok = await fireNotification(t('Budget bientôt atteint'), {
+      body: t('« {label} » est à {pct}% de sa limite mensuelle.', { label: row.label, pct: pct.toFixed(0) }),
       tag: `budget-${key}`,
     });
     if (ok) { notifiedBudgets[key] = tier; budgetsChanged = true; }
@@ -164,8 +165,12 @@ export async function checkAndNotify() {
 
     const weekSummary = await computeSpendingBetween(prevWeekStartStr, prevWeekEndStr);
     if (weekSummary.income > 0 || weekSummary.expenses > 0) {
-      const ok = await fireNotification('Résumé de la semaine', {
-        body: `${formatCurrency(weekSummary.expenses, weekSummary.currency)} dépensé, ${formatCurrency(weekSummary.income, weekSummary.currency)} reçu · épargne nette ${formatCurrency(weekSummary.netSavings, weekSummary.currency)}.`,
+      const ok = await fireNotification(t('Résumé de la semaine'), {
+        body: t('{expenses} dépensé, {income} reçu · épargne nette {netSavings}.', {
+          expenses: formatCurrency(weekSummary.expenses, weekSummary.currency),
+          income: formatCurrency(weekSummary.income, weekSummary.currency),
+          netSavings: formatCurrency(weekSummary.netSavings, weekSummary.currency),
+        }),
         tag: `weekly-summary-${currentWeekStart}`,
       });
       if (ok) await setSetting('lastWeeklySummaryWeek', currentWeekStart);
