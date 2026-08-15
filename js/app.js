@@ -5,7 +5,7 @@
    de données (bus d'événements).
    ========================================================================== */
 
-import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting } from './db.js';
+import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAULT_CATEGORIES } from './db.js';
 import { initLockScreen, isBiometricAvailable, registerBiometric } from './auth.js';
 import { bus, EVENTS, appState } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
@@ -165,18 +165,7 @@ function wireGlobalChrome() {
 async function seedDefaultsIfNeeded() {
   const categories = await dbGetAll(STORES.CATEGORIES);
   if (categories.length === 0) {
-    const defaults = [
-      { name: 'Salaire', type: 'income' },
-      { name: 'Autres revenus', type: 'income' },
-      { name: 'Alimentation', type: 'expense' },
-      { name: 'Logement', type: 'expense' },
-      { name: 'Transport', type: 'expense' },
-      { name: 'Loisirs', type: 'expense' },
-      { name: 'Santé', type: 'expense' },
-      { name: 'Abonnements', type: 'expense' },
-      { name: 'Autres dépenses', type: 'expense' },
-    ];
-    for (const c of defaults) {
+    for (const c of DEFAULT_CATEGORIES) {
       await dbAdd(STORES.CATEGORIES, { id: uuid(), parentId: null, createdAt: new Date().toISOString(), ...c });
     }
   }

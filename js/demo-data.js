@@ -8,7 +8,7 @@
    bon — clearDemoData() fait exactement ça.
    ========================================================================== */
 
-import { STORES, dbAdd, wipeAllData, setSetting } from './db.js';
+import { STORES, dbBulkPut, wipeUserData, setSetting, DEFAULT_CATEGORIES } from './db.js';
 import { uuid, localISODate } from './utils.js';
 
 function daysAgo(n) {
@@ -17,35 +17,38 @@ function daysAgo(n) {
   return localISODate(d);
 }
 
+/** Comme daysAgo(), mais renvoie un instant ISO complet (pas juste une date calendaire) — pour les
+    champs createdAt (des horodatages, comme new Date().toISOString() ailleurs dans l'app), pas les
+    champs date (des dates calendaires locales, comme daysAgo() ci-dessus). Un vrai objet Date passé
+    à .toISOString() ici, pas une concaténation de chaîne : contrairement à daysAgo(n) + 'Z' (piège
+    initial de cette fonction, corrigé), ça ne fabrique jamais un horodatage UTC-minuit qui ne
+    correspond pas réellement à l'instant représenté. */
+function daysAgoTimestamp(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString();
+}
+
 export async function seedDemoData() {
-  await wipeAllData();
+  // wipeUserData() (pas wipeAllData()) : préserve le PIN/biométrie de cet appareil. Le bouton qui
+  // appelle cette fonction est sur la toute première étape de l'onboarding, juste après la
+  // création du PIN — wipeAllData() aurait détruit ce PIN qu'on vient de créer (bug trouvé et
+  // corrigé lors de la revue du 15 août 2026, voir CLAUDE.md).
+  await wipeUserData();
   await setSetting('baseCurrency', 'XOF');
 
-  const walletMobileMoney = { id: uuid(), name: 'Orange Money', type: 'mobile_money', currency: 'XOF', initialBalance: 42000, archived: false, createdAt: new Date().toISOString() };
-  const walletBank = { id: uuid(), name: 'Compte courant', type: 'bank', currency: 'XOF', initialBalance: 185000, archived: false, createdAt: new Date().toISOString() };
-  const walletCash = { id: uuid(), name: 'Espèces', type: 'cash', currency: 'XOF', initialBalance: 12000, archived: false, createdAt: new Date().toISOString() };
-  for (const w of [walletMobileMoney, walletBank, walletCash]) await dbAdd(STORES.WALLETS, w);
+  const now = new Date().toISOString();
+  const walletMobileMoney = { id: uuid(), name: 'Orange Money', type: 'mobile_money', currency: 'XOF', initialBalance: 42000, archived: false, createdAt: now };
+  const walletBank = { id: uuid(), name: 'Compte courant', type: 'bank', currency: 'XOF', initialBalance: 185000, archived: false, createdAt: now };
+  const walletCash = { id: uuid(), name: 'Espèces', type: 'cash', currency: 'XOF', initialBalance: 12000, archived: false, createdAt: now };
+  await dbBulkPut(STORES.WALLETS, [walletMobileMoney, walletBank, walletCash]);
 
-  // wipeAllData() ci-dessus vide aussi CATEGORIES (créées une seule fois par seedDefaultsIfNeeded()
-  // au tout premier boot, voir app.js) — on ne peut pas compter dessus ici, il faut recréer le même
-  // jeu de catégories par défaut nous-mêmes plutôt que d'en dépendre.
-  const defaultCategories = [
-    { name: 'Salaire', type: 'income' },
-    { name: 'Autres revenus', type: 'income' },
-    { name: 'Alimentation', type: 'expense' },
-    { name: 'Logement', type: 'expense' },
-    { name: 'Transport', type: 'expense' },
-    { name: 'Loisirs', type: 'expense' },
-    { name: 'Santé', type: 'expense' },
-    { name: 'Abonnements', type: 'expense' },
-    { name: 'Autres dépenses', type: 'expense' },
-  ];
-  const categories = [];
-  for (const c of defaultCategories) {
-    const record = { id: uuid(), parentId: null, createdAt: new Date().toISOString(), ...c };
-    await dbAdd(STORES.CATEGORIES, record);
-    categories.push(record);
-  }
+  // wipeUserData() ci-dessus vide aussi CATEGORIES (créées une seule fois par seedDefaultsIfNeeded()
+  // au tout premier boot, voir app.js) — on ne peut pas compter dessus ici. DEFAULT_CATEGORIES (db.js)
+  // est la même liste que seedDefaultsIfNeeded() utilise, partagée pour que les deux ne dérivent
+  // jamais l'une de l'autre en silence.
+  const categories = DEFAULT_CATEGORIES.map((c) => ({ id: uuid(), parentId: null, createdAt: now, ...c }));
+  await dbBulkPut(STORES.CATEGORIES, categories);
   const cat = (name) => categories.find((c) => c.name === name)?.id || null;
 
   const transactions = [
@@ -68,45 +71,48 @@ export async function seedDemoData() {
     { amount: 17000, type: 'expense', categoryId: cat('Alimentation'), walletId: walletMobileMoney.id, date: daysAgo(10), note: 'Marché' },
     { amount: 5000, type: 'expense', categoryId: cat('Autres dépenses'), walletId: walletCash.id, date: daysAgo(6), note: 'Imprévu' },
     { amount: 8500, type: 'expense', categoryId: cat('Transport'), walletId: walletCash.id, date: daysAgo(3), note: 'Essence' },
-  ];
-  for (const t of transactions) {
-    await dbAdd(STORES.TRANSACTIONS, {
-      id: uuid(), targetWalletId: null, tags: [], receiptBlob: null, reconciled: false,
-      note: '', createdAt: new Date().toISOString(), ...t,
-    });
-  }
+  ].map((t) => ({
+    id: uuid(), targetWalletId: null, tags: [], receiptBlob: null, reconciled: false,
+    note: '', createdAt: now, ...t,
+  }));
+  await dbBulkPut(STORES.TRANSACTIONS, transactions);
 
   const thisMonth = localISODate().slice(0, 7);
-  await dbAdd(STORES.BUDGETS, { id: uuid(), categoryId: cat('Alimentation'), month: thisMonth, limit: 60000 });
-  await dbAdd(STORES.BUDGETS, { id: uuid(), categoryId: cat('Transport'), month: thisMonth, limit: 25000 });
-  await dbAdd(STORES.BUDGETS, { id: uuid(), categoryId: cat('Loisirs'), month: thisMonth, limit: 35000 });
+  await dbBulkPut(STORES.BUDGETS, [
+    { id: uuid(), categoryId: cat('Alimentation'), month: thisMonth, limit: 60000 },
+    { id: uuid(), categoryId: cat('Transport'), month: thisMonth, limit: 25000 },
+    { id: uuid(), categoryId: cat('Loisirs'), month: thisMonth, limit: 35000 },
+  ]);
 
-  await dbAdd(STORES.SAVINGS_GOALS, {
+  await dbBulkPut(STORES.SAVINGS_GOALS, [{
     id: uuid(), name: "Fonds d'urgence", targetAmount: 500000, currentAmount: 120000, currency: 'XOF',
-    targetDate: null, archived: false, createdAt: new Date().toISOString(),
-  });
+    targetDate: null, archived: false, createdAt: now,
+  }]);
 
   const investmentId = uuid();
-  await dbAdd(STORES.INVESTMENTS, {
+  await dbBulkPut(STORES.INVESTMENTS, [{
     id: investmentId, name: 'Épargne actions', assetClass: 'actions', currency: 'XOF',
-    capitalInvested: 200000, createdAt: daysAgo(58) + 'T00:00:00.000Z',
-  });
-  await dbAdd(STORES.INVESTMENT_ENTRIES, { id: uuid(), investmentId, type: 'valuation', amount: 215000, date: daysAgo(30) });
-  await dbAdd(STORES.INVESTMENT_ENTRIES, { id: uuid(), investmentId, type: 'valuation', amount: 228000, date: daysAgo(2) });
+    capitalInvested: 200000, createdAt: daysAgoTimestamp(58),
+  }]);
+  await dbBulkPut(STORES.INVESTMENT_ENTRIES, [
+    { id: uuid(), investmentId, type: 'valuation', amount: 215000, date: daysAgo(30) },
+    { id: uuid(), investmentId, type: 'valuation', amount: 228000, date: daysAgo(2) },
+  ]);
 
-  await dbAdd(STORES.DEBTS, {
+  await dbBulkPut(STORES.DEBTS, [{
     id: uuid(), type: 'receivable', personName: 'Cousin Amadou', principal: 30000, currency: 'XOF',
     interestRate: 0, startDate: daysAgo(20), dueDate: null, status: 'active', note: 'Prêt pour dépannage', openingTransactionId: null,
-  });
+  }]);
 
   await setSetting('isDemoModeActive', true);
 }
 
 /** Efface les données de démo et remet l'app dans l'état "jamais utilisée" (réaffiche
     l'onboarding au prochain démarrage) — appelé depuis le bandeau permanent affiché tant que
-    isDemoModeActive est vrai (voir app.js, renderDemoModeBanner). */
+    isDemoModeActive est vrai (voir app.js, renderDemoModeBanner). wipeUserData() (pas
+    wipeAllData()) : même raison que dans seedDemoData(), préserve le PIN/biométrie de cet appareil. */
 export async function clearDemoData() {
-  await wipeAllData();
+  await wipeUserData();
   await setSetting('isDemoModeActive', false);
   await setSetting('onboardingCompleted', false);
 }

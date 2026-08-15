@@ -34,6 +34,23 @@ export const STORES = {
   KEPT_ACCOUNT_ENTRIES: 'keptAccountEntries',
 };
 
+/** Catégories créées au tout premier boot (seedDefaultsIfNeeded(), app.js) et réutilisées telles
+    quelles par le mode démo (demo-data.js, qui doit les recréer lui-même car il vide STORES.
+    CATEGORIES via wipeAllData()/wipeUserData() avant de semer ses données) — un seul jeu de
+    référence pour éviter que les deux listes dérivent l'une de l'autre en silence (une catégorie
+    renommée d'un côté seulement casserait les correspondances par nom du mode démo). */
+export const DEFAULT_CATEGORIES = [
+  { name: 'Salaire', type: 'income' },
+  { name: 'Autres revenus', type: 'income' },
+  { name: 'Alimentation', type: 'expense' },
+  { name: 'Logement', type: 'expense' },
+  { name: 'Transport', type: 'expense' },
+  { name: 'Loisirs', type: 'expense' },
+  { name: 'Santé', type: 'expense' },
+  { name: 'Abonnements', type: 'expense' },
+  { name: 'Autres dépenses', type: 'expense' },
+];
+
 let dbPromise = null;
 
 function upgrade(db) {
@@ -281,4 +298,21 @@ export async function wipeAllData() {
   for (const store of Object.values(STORES)) {
     await dbClear(store);
   }
+}
+
+/** Comme wipeAllData(), mais préserve les réglages propres à CET appareil (PIN, identifiants
+    biométriques, dossier de sauvegarde auto — voir DEVICE_LOCAL_SETTING_KEYS) au lieu de tout
+    effacer sans distinction. Pour tout effacement déclenché par l'app elle-même sans intention de
+    "réinitialisation complète de l'appareil" (ex: charger/effacer les données de démonstration,
+    voir demo-data.js) — contrairement à wipeAllData(), qui reste le bon outil pour un vrai "Tout
+    supprimer" explicite côté utilisateur (settings.js), où détruire aussi le PIN est acceptable
+    puisque l'utilisateur en a été prévenu. Sans cette distinction, wipeAllData() effacerait le PIN
+    qu'un utilisateur vient tout juste de créer s'il est appelé pendant l'onboarding (juste après la
+    création du PIN) — le laissant sans code valide pour déverrouiller après le prochain
+    verrouillage, sans même un message d'erreur avant un rechargement complet de page. */
+export async function wipeUserData() {
+  const settingsRows = await dbGetAll(STORES.SETTINGS);
+  const preserved = settingsRows.filter((r) => DEVICE_LOCAL_SETTING_KEYS.has(r.key));
+  await wipeAllData();
+  for (const row of preserved) await dbPut(STORES.SETTINGS, row);
 }

@@ -139,7 +139,8 @@ export async function pushBackupToCloud(passphrase) {
   // corrompraient la sauvegarde suivante à la lecture (concaténation avec des restes obsolètes).
   existing.forEach((d) => batch.delete(d.ref));
   chunks.forEach((chunk, i) => batch.set(firestoreMod.doc(chunksRef, String(i)), { data: chunk }));
-  batch.set(firestoreMod.doc(firebaseDb, 'backups', user.uid), { chunkCount: chunks.length, updatedAt: firestoreMod.serverTimestamp() });
+  const backupDocRef = firestoreMod.doc(firebaseDb, 'backups', user.uid);
+  batch.set(backupDocRef, { chunkCount: chunks.length, updatedAt: firestoreMod.serverTimestamp() });
   await batch.commit();
 
   await markBackupDone();
@@ -151,7 +152,19 @@ export async function pushBackupToCloud(passphrase) {
   // Marque CET appareil comme à jour avec le cloud (voir checkCloudStaleness) — distinct de
   // lastCloudBackupAt (qui ne veut dire "j'ai poussé depuis ici", affiché en Paramètres) : celui-ci
   // sert uniquement à savoir si cet appareil est en retard sur le cloud, mis à jour par push ET pull.
-  await setSetting('cloudLastKnownSyncAt', new Date().toISOString());
+  // Relit le document pour récupérer l'horodatage réellement résolu côté serveur (serverTimestamp()
+  // dans le batch ci-dessus ne renvoie pas sa valeur résolue au client) : comparer une horloge
+  // serveur à une horloge serveur, jamais une horloge serveur à l'horloge locale de cet appareil —
+  // sans ça, un appareil dont l'horloge retarde même légèrement verrait son PROPRE push relu comme
+  // "plus récent" que ce qu'il vient d'enregistrer localement, et checkCloudStaleness() afficherait
+  // à tort "une sauvegarde plus récente existe sur un autre appareil" pour sa propre sauvegarde.
+  try {
+    const freshSnap = await firestoreMod.getDoc(backupDocRef);
+    const resolvedUpdatedAt = freshSnap.data()?.updatedAt;
+    await setSetting('cloudLastKnownSyncAt', resolvedUpdatedAt?.toDate ? resolvedUpdatedAt.toDate().toISOString() : new Date().toISOString());
+  } catch {
+    await setSetting('cloudLastKnownSyncAt', new Date().toISOString());
+  }
 }
 
 /* ---------- Rappel périodique de sauvegarde cloud ----------
@@ -233,6 +246,13 @@ export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
   // serveur de LA sauvegarde qu'on vient de récupérer, pas l'heure locale de fin de restauration —
   // plus précis, évite tout décalage d'horloge appareil/serveur). Voir checkCloudStaleness().
   if (updatedAt?.toDate) await setSetting('cloudLastKnownSyncAt', updatedAt.toDate().toISOString());
+  // Laisse un répit de 24h avant le prochain rappel de sauvegarde cloud (checkWeeklyCloudBackupReminder)
+  // : sans ça, un appareil qui vient de recevoir les données du cloud (via ce pull, éventuellement
+  // déclenché par la modale de fraîcheur ci-dessous) pouvait se voir aussitôt réclamer "sauvegardez
+  // maintenant" alors qu'il vient littéralement de se synchroniser — déroutant. Ne touche PAS
+  // lastCloudBackupAt (qui reste honnête sur la dernière fois qu'on a réellement poussé une
+  // sauvegarde depuis cet appareil, affiché tel quel en Paramètres).
+  await setSetting('cloudBackupSnoozedUntil', new Date(Date.now() + 24 * 3600 * 1000).toISOString());
 }
 
 /* ---------- Vérification de fraîcheur au démarrage ----------
@@ -271,7 +291,18 @@ export async function checkCloudStaleness() {
     if (!cloudUpdatedAt || cancelled) return;
 
     const localSyncAt = await getSetting('cloudLastKnownSyncAt');
-    const localMs = localSyncAt ? new Date(localSyncAt).getTime() : 0;
+    if (!localSyncAt) {
+      // Aucun repère connu pour cet appareil — soit il n'a jamais synchronisé depuis l'ajout de ce
+      // réglage (utilisateur déjà connecté au cloud AVANT cette fonctionnalité, cloudLastKnownSyncAt
+      // n'existait pas encore), soit c'est un cas limite déjà couvert ailleurs. Traiter l'absence de
+      // repère comme "en retard par défaut" avertirait à tort tout utilisateur mono-appareil de sa
+      // propre sauvegarde, la toute première fois qu'il démarre après cette mise à jour. On établit
+      // silencieusement un repère sur l'état actuel du cloud, sans alarmer — les prochains démarrages
+      // compareront correctement contre un vrai changement.
+      if (!cancelled) await setSetting('cloudLastKnownSyncAt', cloudUpdatedAt.toISOString());
+      return;
+    }
+    const localMs = new Date(localSyncAt).getTime();
     if (!cancelled && cloudUpdatedAt.getTime() > localMs) {
       showCloudStalenessModal(cloudUpdatedAt);
     }
@@ -291,7 +322,13 @@ function showCloudStalenessModal(cloudUpdatedAt) {
       <button type="button" class="btn btn-ghost" id="cloud-stale-dismiss-btn">Continuer quand même</button>
     </div>`, { title: 'Sauvegarde cloud plus récente' });
 
-  modal.el.querySelector('#cloud-stale-dismiss-btn').addEventListener('click', () => modal.close());
+  modal.el.querySelector('#cloud-stale-dismiss-btn').addEventListener('click', async () => {
+    // Avance le repère local jusqu'à l'état du cloud qu'on vient de voir (sans le récupérer) : sans
+    // ça, la modale identique réapparaîtrait à chaque démarrage tant que le cloud ne bouge pas — ici
+    // elle ne reviendra que si le cloud avance ENCORE après ce constat, pas pour le même état déjà vu.
+    await setSetting('cloudLastKnownSyncAt', cloudUpdatedAt.toISOString());
+    modal.close();
+  });
 
   modal.el.querySelector('#cloud-stale-restore-btn').addEventListener('click', async () => {
     modal.close();

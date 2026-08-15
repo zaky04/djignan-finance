@@ -859,6 +859,101 @@ code que ceux que l'UI appelle.
 
 `CACHE_VERSION` : `v47` → `v48` (nouveau fichier `js/demo-data.js` ajouté à `APP_SHELL`).
 
+### 15 août 2026 — Revue de sécurité + bugs sur les 3 fonctionnalités ci-dessus, avant push
+
+Demandé par l'auteur avant de pousser : vérifier tout le diff en attente (les 3 fonctionnalités
+ci-dessus) pour bugs, incohérences, failles de sécurité. Revue de sécurité (aucune faille trouvée —
+l'app est 100% client-side, pas de surface d'injection classique ; le seul point réseau est
+Firestore, déjà borné par les règles de sécurité existantes par `uid`) puis revue de correction
+multi-angles (scan ligne à ligne, comportement supprimé, traçage inter-fichiers, réutilisation,
+simplification, efficacité, altitude, conventions CLAUDE.md), avec vérification indépendante de
+chaque piste retenue. **10 bugs/incohérences confirmés, tous corrigés avant push** :
+
+1. **[Le plus grave] `seedDemoData()`/`clearDemoData()` effaçaient le PIN que l'utilisateur venait
+   de créer.** `wipeAllData()` (`db.js`) vide `STORES.SETTINGS` sans le filtre `DEVICE_LOCAL_SETTING_KEYS`
+   qu'`exportAllData()`/`importAllData()` appliquent pourtant scrupuleusement (voir §6, 13 août). Le
+   bouton "Découvrir avec des données d'exemple" est sur la toute première étape de l'onboarding,
+   juste après la création du PIN — un clic dessus effaçait `pinHash`/`pinSalt`/identifiants
+   biométriques. Recharger la page réparait la situation (redétecte l'absence de PIN, repasse en
+   mode création), mais verrouiller sans recharger ("Verrouiller maintenant" ou verrouillage
+   automatique) enfermait l'utilisateur dans un écran de déverrouillage qu'aucun PIN ne pouvait
+   jamais satisfaire (`verifyPin()` renvoie `false` dès que `pinSalt`/`pinHash` sont absents).
+   → Nouvelle fonction `wipeUserData()` (`db.js`) : identique à `wipeAllData()` mais préserve les
+   réglages propres à l'appareil (même `DEVICE_LOCAL_SETTING_KEYS`). `demo-data.js` l'utilise
+   maintenant à la place de `wipeAllData()`. `wipeAllData()` elle-même reste inchangée et continue
+   d'être le bon outil pour le vrai "Tout supprimer" de `settings.js` (réinitialisation complète
+   explicitement voulue par l'utilisateur, PIN compris).
+2. **Aucune confirmation avant ce wipe** (contrairement au "Tout supprimer" de `settings.js`, gardé
+   par deux `confirmDialog(danger:true)`) — **pas de changement nécessaire une fois #1 corrigé** :
+   le bouton n'apparaît que sur un premier lancement sans aucune donnée (garde `hasWallets` dans
+   `maybeShowOnboarding()`), et le PIN est maintenant préservé — il n'y a plus rien à perdre.
+3. **`checkCloudStaleness()` avertissait à tort tout utilisateur cloud mono-appareil déjà existant**,
+   au premier démarrage suivant cette mise à jour : `cloudLastKnownSyncAt` (nouveau réglage) n'était
+   jamais renseigné pour qui avait utilisé la sauvegarde cloud avant l'ajout de ce réglage,
+   l'absence était traitée comme "en retard par défaut" (`localMs = 0`).
+   → Absence de repère traitée comme "pas d'historique fiable" : établit silencieusement un repère
+   sur l'état actuel du cloud sans alarmer, plutôt que de considérer par défaut que le cloud a
+   avancé.
+4. **La modale de fraîcheur cloud n'avait aucun répit** : "Continuer quand même" ne posait aucun
+   réglage, donc la modale identique réapparaissait à chaque démarrage tant que le cloud ne bougeait
+   pas.
+   → Le clic avance `cloudLastKnownSyncAt` jusqu'à l'état du cloud déjà vu — la modale ne revient
+   que si le cloud avance ENCORE après ce constat.
+5. **Décalage d'horloge possible** : `pushBackupToCloud()` posait l'horodatage cloud via
+   `serverTimestamp()` (horloge serveur) mais le repère local via `new Date().toISOString()`
+   (horloge de l'appareil) pour le même instant — un appareil dont l'horloge retarde aurait pu voir
+   son PROPRE push relu comme "plus récent que son propre repère" au prochain démarrage.
+   → Relit le document juste après l'écriture pour récupérer l'horodatage réellement résolu côté
+   serveur, comme le fait déjà `pullBackupFromCloud()` — horloge serveur comparée à horloge serveur,
+   jamais mélangée à l'horloge locale.
+6. **Aucune coordination entre la modale de fraîcheur (2s) et le rappel hebdomadaire cloud (6s)** :
+   restaurer via la première ne mettait à jour ni `lastCloudBackupAt` ni `cloudBackupSnoozeCount`,
+   donc le second pouvait se déclencher 4 secondes plus tard pour réclamer une sauvegarde juste
+   après une restauration.
+   → `pullBackupFromCloud()` pose maintenant un répit de 24h (`cloudBackupSnoozedUntil`) après toute
+   restauration réussie — sans toucher `lastCloudBackupAt`, qui reste honnête sur la dernière fois
+   qu'on a réellement *poussé* une sauvegarde (affiché tel quel en Paramètres).
+7. **Liste de catégories par défaut dupliquée** entre `seedDefaultsIfNeeded()` (`app.js`) et
+   `seedDemoData()` (`demo-data.js`) — risque de dérive silencieuse (une catégorie renommée d'un
+   côté sans l'autre aurait reproduit le bug `categoryId: null` déjà rencontré une fois).
+   → Extraite en `DEFAULT_CATEGORIES` (nouvelle constante exportée de `db.js`), utilisée par les
+   deux.
+8. **`checkUnusualExpense()` ignorait les taux de change non confirmés** (valeur 1:1 par défaut,
+   documentée ailleurs comme "presque certainement fausse", voir §12 août) — pouvait produire un
+   avertissement trompeur (déclenché à tort ou manqué) sur une catégorie mêlant des devises dont
+   l'une a un taux jamais confirmé.
+   → Renvoie `null` si une devise impliquée dans la comparaison a un taux non confirmé, plutôt que
+   de comparer avec un taux probablement faux sans le signaler.
+9. **`checkUnusualExpense()` appelait `ctx()`** (10 lectures IndexedDB) alors qu'elle n'utilise que
+   4 des stores chargées — payé à *chaque* enregistrement de dépense (création ET modification), pas
+   occasionnellement.
+   → Chargement ciblé (`wallets`, `transactions`, `rates`, `baseCurrency` seulement) au lieu de
+   `ctx()`.
+10. **`investment.createdAt` (mode démo) construit via `daysAgo(58) + 'T00:00:00.000Z'`** — une
+    date calendaire locale étiquetée comme minuit UTC, exactement le type de dérive que la
+    convention §3 de ce fichier existe pour éviter (`localISODate()`/`todayISO()`, jamais
+    `.toISOString()` bricolé sur une date locale). Latent (aucun consommateur actuel n'en souffrait
+    réellement), mais aurait pu décaler la date d'un jour pour un futur code lisant ce champ avec
+    `new Date(...)` dans un fuseau à l'ouest de l'UTC.
+    → Nouvelle fonction `daysAgoTimestamp()` : construit un vrai `Date`, puis appelle `.toISOString()`
+    dessus (usage correct de la fonction, qui produit un instant réel — contrairement à la
+    concaténation de chaîne qu'elle remplace).
+
+Bonus (pas un bug, une simplification en passant) : les ~30 `dbAdd()` séquentiels de
+`seedDemoData()` remplacés par `dbBulkPut()` (une transaction par store au lieu d'une par ligne),
+déjà utilisé ailleurs dans le codebase mais pas exploité par ce nouveau fichier.
+
+Testé : les 24 assertions de `test/ledger.test.html` passent toujours après tous ces changements ;
+`wipeUserData()` vérifié isolément (préserve `pinHash`/`pinSalt`/`biometricCredentialId`, efface le
+reste) ; `seedDemoData()` rejoué avec un PIN factice préexistant → PIN intact après le seed, jeu de
+données identique à avant (3/19/9/3/1/1/2/1, aucun `categoryId` non résolu) ;
+`checkUnusualExpense()` avec un taux USD non confirmé → `null`, puis confirmé → avertissement
+correct (moyenne 45, montant 270, ratio 6). Le round-trip complet de `checkCloudStaleness()`/
+`pushBackupToCloud()` avec un vrai compte cloud reste à confirmer par l'auteur (limite déjà connue
+de cette session pour tout ce qui touche Firebase).
+
+`CACHE_VERSION` : `v48` → `v49`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

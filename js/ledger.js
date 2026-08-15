@@ -542,14 +542,25 @@ const UNUSUAL_EXPENSE_RATIO = 2.5;
     (ex: 45 000 tapé au lieu de 4 500). Comparaison faite en devise de base (une catégorie peut
     recevoir des dépenses de portefeuilles en devises différentes). Renvoie null si la catégorie a
     moins de UNUSUAL_EXPENSE_MIN_SAMPLES dépenses passées (pas assez d'historique pour que "la
-    moyenne" veuille dire quoi que ce soit) ou si le montant ne dépasse pas UNUSUAL_EXPENSE_RATIO
-    fois cette moyenne. excludeId sert à ignorer la transaction elle-même lors d'une modification. */
+    moyenne" veuille dire quoi que ce soit), si le montant ne dépasse pas UNUSUAL_EXPENSE_RATIO fois
+    cette moyenne, ou si une devise impliquée dans la comparaison a un taux non confirmé (par défaut
+    1:1, "presque certainement faux" — voir getUnconfirmedRates() — la comparaison serait trompeuse).
+    excludeId sert à ignorer la transaction elle-même lors d'une modification.
+    Fait son propre chargement ciblé plutôt que ctx() (qui charge aussi catégories/budgets/
+    investissements/dettes, inutiles ici) : appelée à chaque enregistrement de dépense, pas
+    seulement pour un rendu de vue. */
 export async function checkUnusualExpense(categoryId, amount, walletId, excludeId = null) {
   if (!categoryId || !amount) return null;
-  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const [wallets, transactions, rates, baseCurrency] = await Promise.all([
+    dbGetAll(STORES.WALLETS), dbGetAll(STORES.TRANSACTIONS), dbGetAll(STORES.EXCHANGE_RATES), getSetting('baseCurrency', 'EUR'),
+  ]);
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
   const past = transactions.filter((t) => t.type === 'expense' && t.categoryId === categoryId && t.id !== excludeId);
   if (past.length < UNUSUAL_EXPENSE_MIN_SAMPLES) return null;
+
+  const currenciesInvolved = new Set([walletCurrency[walletId], ...past.map((t) => walletCurrency[t.walletId])]);
+  const unconfirmed = rates.some((r) => currenciesInvolved.has(r.code) && r.code !== baseCurrency && r.confirmed === false);
+  if (unconfirmed) return null;
 
   const pastBase = past.map((t) => toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency));
   const average = pastBase.reduce((s, v) => s + v, 0) / pastBase.length;
