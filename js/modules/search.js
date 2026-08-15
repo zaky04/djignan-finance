@@ -32,7 +32,11 @@ function norm(s) {
 async function collectSearchIndex() {
   const keptAccountsEnabled = await getSetting('keptAccountsEnabled', false);
   const [transactions, wallets, debts, savingsGoals, investments, sharedExpenses, participants, keptAccounts] = await Promise.all([
-    getEnrichedTransactions({ limit: 500 }),
+    // Pas de limit : un plafond silencieux (500 auparavant) rendait les transactions plus
+    // anciennes introuvables sans que rien ne le signale — un utilisateur de plusieurs années
+    // (des milliers de transactions, voir le jeu de test de performance dans CLAUDE.md §6, 14 août)
+    // ne pouvait tout simplement pas retrouver une note ancienne par la recherche.
+    getEnrichedTransactions(),
     dbGetAll(STORES.WALLETS),
     dbGetAll(STORES.DEBTS),
     dbGetAll(STORES.SAVINGS_GOALS),
@@ -53,6 +57,9 @@ async function collectSearchIndex() {
       amount: formatCurrency(t.amount, t.wallet?.currency || 'EUR'),
       amountValue: Number(t.amount) || 0,
       dateValue: t.date || '',
+      walletId: t.walletId || null,
+      categoryId: t.categoryId || null,
+      txType: t.type,
       view: 'transactions',
     });
   }
@@ -148,6 +155,14 @@ export function openGlobalSearch() {
         </button>
       </div>
       <div id="search-advanced-filters" class="filters-bar" hidden style="padding:10px 20px;border-bottom:1px solid var(--border);">
+        <select id="search-filter-wallet"><option value="">Tous les portefeuilles</option></select>
+        <select id="search-filter-category"><option value="">Toutes catégories</option></select>
+        <select id="search-filter-type">
+          <option value="">Tous types</option>
+          <option value="income">Recettes</option>
+          <option value="expense">Dépenses</option>
+          <option value="transfer">Transferts</option>
+        </select>
         <input type="number" step="0.01" id="search-amount-min" placeholder="Montant min">
         <input type="number" step="0.01" id="search-amount-max" placeholder="Montant max">
         <input type="date" id="search-date-from" title="Du">
@@ -172,6 +187,9 @@ export function openGlobalSearch() {
   const input = backdrop.querySelector('#search-input');
   const resultsEl = backdrop.querySelector('#search-results');
   const filtersBar = backdrop.querySelector('#search-advanced-filters');
+  const walletEl = backdrop.querySelector('#search-filter-wallet');
+  const categoryEl = backdrop.querySelector('#search-filter-category');
+  const typeEl = backdrop.querySelector('#search-filter-type');
   const amountMinEl = backdrop.querySelector('#search-amount-min');
   const amountMaxEl = backdrop.querySelector('#search-amount-max');
   const dateFromEl = backdrop.querySelector('#search-date-from');
@@ -182,13 +200,29 @@ export function openGlobalSearch() {
     filtersBar.hidden = !filtersBar.hidden;
   });
 
+  Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES)]).then(([wallets, categories]) => {
+    walletEl.innerHTML = '<option value="">Tous les portefeuilles</option>'
+      + wallets.filter((w) => !w.archived).map((w) => `<option value="${w.id}">${escapeHtml(w.name)}</option>`).join('');
+    categoryEl.innerHTML = '<option value="">Toutes catégories</option>'
+      + categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  });
+
   function passesAdvancedFilters(item) {
+    const walletId = walletEl.value || null;
+    const categoryId = categoryEl.value || null;
+    const txType = typeEl.value || null;
     const amountMin = amountMinEl.value !== '' ? parseFloat(amountMinEl.value) : null;
     const amountMax = amountMaxEl.value !== '' ? parseFloat(amountMaxEl.value) : null;
     const dateFrom = dateFromEl.value || null;
     const dateTo = dateToEl.value || null;
-    if (amountMin == null && amountMax == null && !dateFrom && !dateTo) return true;
+    if (!walletId && !categoryId && !txType && amountMin == null && amountMax == null && !dateFrom && !dateTo) return true;
+    // Ces filtres n'ont de sens que pour une transaction (portefeuille/catégorie/type/montant/date) —
+    // dès qu'un seul est actif, les autres types de résultats (portefeuille, dette, épargne...) sont
+    // exclus, comme déjà indiqué à l'utilisateur ("S'applique aux transactions uniquement").
     if (item.type !== 'transaction') return false;
+    if (walletId && item.walletId !== walletId) return false;
+    if (categoryId && item.categoryId !== categoryId) return false;
+    if (txType && item.txType !== txType) return false;
     if (amountMin != null && item.amountValue < amountMin) return false;
     if (amountMax != null && item.amountValue > amountMax) return false;
     if (dateFrom && item.dateValue < dateFrom) return false;
@@ -209,6 +243,7 @@ export function openGlobalSearch() {
   }, 120);
 
   input.addEventListener('input', runSearch);
+  [walletEl, categoryEl, typeEl].forEach((el) => el.addEventListener('change', runSearch));
   [amountMinEl, amountMaxEl, dateFromEl, dateToEl].forEach((el) => el.addEventListener('input', runSearch));
   resultsEl.addEventListener('click', (e) => {
     const btn = e.target.closest('.search-result');

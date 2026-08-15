@@ -1063,6 +1063,37 @@ l'auteur en usage réel.
 
 `CACHE_VERSION` : `v49` → `v50`.
 
+### 15 août 2026 (suite) — Recherche globale : plafond silencieux + filtres avancés incomplets
+
+Signalé par l'utilisateur : "la recherche ne fonctionne pas comme je veux." Presque tout ce qu'il
+listait était déjà cherché (notes, tags, descriptions, portefeuilles, dettes/créances, comptes
+gardés — voir `search.js` déjà en place depuis le §6 du 13 août), donc le vrai problème n'était pas
+"quoi" chercher mais deux limites concrètes non documentées :
+
+1. **`collectSearchIndex()` plafonnait à 500 transactions** (`getEnrichedTransactions({ limit: 500 })`)
+   — au-delà, les transactions les plus anciennes (et leurs notes) devenaient introuvables sans
+   aucun signal à l'utilisateur. Silencieux et facile à atteindre pour un usage de plusieurs années
+   (voir le jeu de test de 14 600 transactions déjà utilisé cette session, CLAUDE.md §6, 14 août).
+   → Retiré (`getEnrichedTransactions()` sans limite). Coût mesuré : un seul chargement à l'ouverture
+   de la modale de recherche, pas un chemin chaud — acceptable même à grande échelle.
+2. **Aucun filtre par portefeuille, catégorie ou type**, alors que "montant/dates" existaient déjà
+   (§6, 13 août) — c'est précisément ce que l'auteur demandait explicitement en plus.
+   → Trois `<select>` ajoutés à la barre de filtres avancés (`#search-filter-wallet`,
+   `#search-filter-category`, `#search-filter-type`), peuplés depuis `STORES.WALLETS`/
+   `STORES.CATEGORIES` à l'ouverture de la modale, même logique "ne s'applique qu'aux transactions"
+   que les filtres montant/date existants. Les éléments d'index transaction portent maintenant
+   `walletId`/`categoryId`/`txType` (pas seulement leurs noms dans le texte cherché) pour permettre
+   ce filtrage exact.
+
+Testé : jeu de données de 520 transactions (dont une note unique à la position 520, au-delà de
+l'ancien plafond de 500) → trouvée après le retrait de la limite ; filtre type=transfer sur une
+recherche large → ne garde que le virement ; filtre portefeuille croisé avec le même virement →
+disparaît/réapparaît selon le bon/mauvais portefeuille ; filtre catégorie testé de la même façon.
+Les 24 assertions de `test/ledger.test.html` passent toujours (non concerné, mais vérifié par
+habitude après tout changement touchant `ledger.js`/`db.js` indirectement via les imports partagés).
+
+`CACHE_VERSION` : `v50` → `v51`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
