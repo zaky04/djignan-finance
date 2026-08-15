@@ -1180,7 +1180,9 @@ que certains écrans resteront en français le temps du reste du chantier.
 - ✅ Paramètres (lot 11, voir entrée ci-dessous) : profil, sécurité, notifications, installation,
   mise à jour, tableau de bord, fonctionnalités optionnelles, devise de base, sauvegarde/restauration
   (hors sauvegarde cloud, voir `firebase-sync.js` — pas encore traduit, section distincte).
-- ⬜ Sauvegarde cloud (`firebase-sync.js`), Recherche globale, mode démo, onboarding.
+- ✅ Sauvegarde cloud (lot 12, voir entrée ci-dessous) : `firebase-sync.js` complet (connexion,
+  push/pull, rappels, vérification de fraîcheur).
+- ⬜ Recherche globale, mode démo, onboarding.
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
 navigation mobile, écran de verrouillage (titre/sous-titre/aria-labels) et tableau de bord entier
@@ -1536,6 +1538,32 @@ notifications/installation/mise à jour, configuration du tableau de bord, fonct
 Aucune erreur console.
 
 `CACHE_VERSION` : `v62` → `v63`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 12/N : Sauvegarde cloud)
+
+Écran/fichier converti : **Sauvegarde cloud** (`firebase-sync.js`) — section restée hors du lot 11
+(fichier distinct du reste de Paramètres). Connexion/déconnexion Google, sauvegarde/restauration à la
+demande, rappel hebdomadaire (mode normal + urgent), modale de fraîcheur multi-appareils, tous les
+messages d'erreur remontés depuis Firestore/Firebase Auth (`err.message` non traduit lui-même, comme
+pour les autres SDK tiers déjà rencontrés — seul le texte autour est traduit). Aucune collision
+`t`/variable — import direct.
+
+~30 nouvelles entrées de dictionnaire, 0 doublon (735 clés au total). Avec ce lot, **toutes les vues
+listées dans le menu de navigation ainsi que la totalité de l'écran Paramètres sont converties** —
+reste : recherche globale, mode démo, assistant de configuration (onboarding).
+
+Testé FR→EN→FR : état "non connecté" (bouton "Sign in with Google" avec le texte de confidentialité
+du mot de passe), **déclenchement réel du flux de connexion Google testé** (le clic a effectivement
+navigué vers `accounts.google.com` avec les bons paramètres OAuth — confirme que `signInWithRedirect`
+se déclenche correctement en environnement automatisé où la popup est bloquée, exactement le
+comportement documenté à la conception de cette fonctionnalité le 13 août) — **aucune tentative de
+connexion réelle n'a été faite** (hors de portée d'une session automatisée, et interdit par les
+règles de sécurité de cette session), retour immédiat à l'app puis nettoyage du réglage
+`cloudRedirectPending` resté à `true` suite à la navigation. Messages des modales de rappel et de
+fraîcheur cloud vérifiés directement via `t(...)` (ces flux nécessitent un compte connecté pour se
+déclencher normalement). Aucune erreur console.
+
+`CACHE_VERSION` : `v63` → `v64`.
 
 ## 7. Pistes prioritaires non traitées
 

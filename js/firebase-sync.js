@@ -25,6 +25,7 @@ import { importAllData, getSetting, setSetting } from './db.js';
 import { openModal, showToast, confirmDialog, formatDate } from './utils.js';
 import { notifyDataChanged } from './state.js';
 import { isStandalone, isIOS, isAndroid } from './install-prompt.js';
+import { t } from './i18n.js';
 
 /* signInWithPopup est notoirement peu fiable sur mobile, et carrément non fonctionnel dans une
    PWA installée en plein écran (display-mode: standalone) : il n'y a pas de fenêtre de navigateur
@@ -126,7 +127,7 @@ const CHUNK_SIZE = 900000;
 export async function pushBackupToCloud(passphrase) {
   const { firestoreMod } = await ensureFirebase();
   const user = firebaseAuth.currentUser;
-  if (!user) throw new Error('Non connecté.');
+  if (!user) throw new Error(t('Non connecté.'));
   const payloadStr = JSON.stringify(await buildEncryptedPayload(passphrase));
   const chunks = [];
   for (let i = 0; i < payloadStr.length; i += CHUNK_SIZE) chunks.push(payloadStr.slice(i, i + CHUNK_SIZE));
@@ -200,14 +201,14 @@ export async function checkWeeklyCloudBackupReminder() {
 
 function showCloudBackupReminderModal(urgent = false) {
   const message = urgent
-    ? "Vous avez repoussé ce rappel plusieurs fois. Sans sauvegarde cloud récente, une réinstallation ou un changement d'appareil vous ferait perdre les données saisies depuis votre dernière sauvegarde. Sauvegardez maintenant."
-    : "Ça fait plus de 7 jours que vos données n'ont pas été sauvegardées dans le cloud. Voulez-vous le faire maintenant ?";
+    ? t("Vous avez repoussé ce rappel plusieurs fois. Sans sauvegarde cloud récente, une réinstallation ou un changement d'appareil vous ferait perdre les données saisies depuis votre dernière sauvegarde. Sauvegardez maintenant.")
+    : t("Ça fait plus de 7 jours que vos données n'ont pas été sauvegardées dans le cloud. Voulez-vous le faire maintenant ?");
   const modal = openModal(`
     <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${message}</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;">
-      <button type="button" class="btn btn-primary" id="cloud-reminder-backup-btn">Sauvegarder maintenant</button>
-      ${urgent ? '' : '<button type="button" class="btn btn-ghost" id="cloud-reminder-later-btn">Plus tard</button>'}
-    </div>`, { title: 'Sauvegarde cloud' });
+      <button type="button" class="btn btn-primary" id="cloud-reminder-backup-btn">${t('Sauvegarder maintenant')}</button>
+      ${urgent ? '' : `<button type="button" class="btn btn-ghost" id="cloud-reminder-later-btn">${t('Plus tard')}</button>`}
+    </div>`, { title: t('Sauvegarde cloud') });
 
   modal.el.querySelector('#cloud-reminder-later-btn')?.addEventListener('click', async () => {
     await setSetting('cloudBackupSnoozedUntil', new Date(Date.now() + 24 * 3600 * 1000).toISOString());
@@ -217,13 +218,13 @@ function showCloudBackupReminderModal(urgent = false) {
 
   modal.el.querySelector('#cloud-reminder-backup-btn').addEventListener('click', async () => {
     modal.close();
-    const p = await promptPassphrase('Chiffrer la sauvegarde cloud');
+    const p = await promptPassphrase(t('Chiffrer la sauvegarde cloud'));
     if (!p) return;
     try {
       await pushBackupToCloud(p);
-      showToast('Sauvegarde envoyée dans le cloud.');
+      showToast(t('Sauvegarde envoyée dans le cloud.'));
     } catch (err) {
-      showToast('Erreur : ' + (err.message || 'envoi impossible.'));
+      showToast(t('Erreur : {message}', { message: err.message || t('envoi impossible.') }));
     }
   });
 }
@@ -231,9 +232,9 @@ function showCloudBackupReminderModal(urgent = false) {
 export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
   const { firestoreMod } = await ensureFirebase();
   const user = firebaseAuth.currentUser;
-  if (!user) throw new Error('Non connecté.');
+  if (!user) throw new Error(t('Non connecté.'));
   const snap = await firestoreMod.getDoc(firestoreMod.doc(firebaseDb, 'backups', user.uid));
-  if (!snap.exists()) throw new Error('Aucune sauvegarde cloud trouvée pour ce compte.');
+  if (!snap.exists()) throw new Error(t('Aucune sauvegarde cloud trouvée pour ce compte.'));
   const { chunkCount, updatedAt } = snap.data();
   const chunksRef = firestoreMod.collection(firebaseDb, 'backups', user.uid, 'chunks');
   const chunkDocs = await Promise.all(
@@ -319,11 +320,11 @@ export async function checkCloudStaleness() {
 
 function showCloudStalenessModal(cloudUpdatedAt) {
   const modal = openModal(`
-    <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Une sauvegarde plus récente existe dans le cloud, faite le ${formatDate(cloudUpdatedAt.toISOString())} — probablement depuis un autre appareil. Pour éviter des doublons ou de remplacer des données par erreur, il est recommandé de la récupérer avant de continuer sur cet appareil.</p>
+    <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t('Une sauvegarde plus récente existe dans le cloud, faite le {date} — probablement depuis un autre appareil. Pour éviter des doublons ou de remplacer des données par erreur, il est recommandé de la récupérer avant de continuer sur cet appareil.', { date: formatDate(cloudUpdatedAt.toISOString()) })}</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;">
-      <button type="button" class="btn btn-primary" id="cloud-stale-restore-btn">Restaurer maintenant</button>
-      <button type="button" class="btn btn-ghost" id="cloud-stale-dismiss-btn">Continuer quand même</button>
-    </div>`, { title: 'Sauvegarde cloud plus récente' });
+      <button type="button" class="btn btn-primary" id="cloud-stale-restore-btn">${t('Restaurer maintenant')}</button>
+      <button type="button" class="btn btn-ghost" id="cloud-stale-dismiss-btn">${t('Continuer quand même')}</button>
+    </div>`, { title: t('Sauvegarde cloud plus récente') });
 
   modal.el.querySelector('#cloud-stale-dismiss-btn').addEventListener('click', async () => {
     // Avance le repère local jusqu'à l'état du cloud qu'on vient de voir (sans le récupérer) : sans
@@ -335,14 +336,14 @@ function showCloudStalenessModal(cloudUpdatedAt) {
 
   modal.el.querySelector('#cloud-stale-restore-btn').addEventListener('click', async () => {
     modal.close();
-    const p = await promptPassphrase('Mot de passe de la sauvegarde cloud');
+    const p = await promptPassphrase(t('Mot de passe de la sauvegarde cloud'));
     if (!p) return;
-    const merge = await confirmDialog('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.', { confirmText: 'Fusionner', cancelText: 'Remplacer tout' });
+    const merge = await confirmDialog(t('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.'), { confirmText: t('Fusionner'), cancelText: t('Remplacer tout') });
     try {
       await pullBackupFromCloud(p, { merge });
-      showToast('Données restaurées depuis le cloud.');
+      showToast(t('Données restaurées depuis le cloud.'));
     } catch (err) {
-      showToast('Erreur : ' + (err.message || 'restauration impossible.'));
+      showToast(t('Erreur : {message}', { message: err.message || t('restauration impossible.') }));
     }
   });
 }
@@ -352,8 +353,8 @@ function promptPassphrase(title) {
   return new Promise((resolve) => {
     const modal = openModal(`
       <form id="cloud-passphrase-form">
-        <div class="form-row"><label>Mot de passe de chiffrement</label><input type="password" name="passphrase" required minlength="6" autofocus></div>
-        <button type="submit" class="btn btn-primary btn-block">Continuer</button>
+        <div class="form-row"><label>${t('Mot de passe de chiffrement')}</label><input type="password" name="passphrase" required minlength="6" autofocus></div>
+        <button type="submit" class="btn btn-primary btn-block">${t('Continuer')}</button>
       </form>`, { title, onClose: () => resolve(null) });
     modal.el.querySelector('#cloud-passphrase-form').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -371,8 +372,8 @@ export async function renderCloudBackupSection(container) {
   if (!isFirebaseConfigured) {
     container.innerHTML = `
       <div class="panel" style="margin-bottom:16px;">
-        <div class="panel-header"><h3>Sauvegarde cloud (optionnelle)</h3></div>
-        <p class="empty-state" style="padding:12px 0;">Fonctionnalité pas encore configurée par l'auteur de l'app.</p>
+        <div class="panel-header"><h3>${t('Sauvegarde cloud (optionnelle)')}</h3></div>
+        <p class="empty-state" style="padding:12px 0;">${t("Fonctionnalité pas encore configurée par l'auteur de l'app.")}</p>
       </div>`;
     return;
   }
@@ -396,64 +397,64 @@ export async function renderCloudBackupSection(container) {
 
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
-      <div class="panel-header"><h3>Sauvegarde cloud (optionnelle)</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">Sauvegarde chiffrée sur votre compte Google, pour la récupérer après une réinstallation. Le mot de passe de chiffrement n'est jamais transmis — sans lui, personne (y compris Google) ne peut lire vos données.</p>
+      <div class="panel-header"><h3>${t('Sauvegarde cloud (optionnelle)')}</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Sauvegarde chiffrée sur votre compte Google, pour la récupérer après une réinstallation. Le mot de passe de chiffrement n'est jamais transmis — sans lui, personne (y compris Google) ne peut lire vos données.")}</p>
       ${user ? `
-        <div class="stat-row"><span class="stat-row-label">Connecté</span><span>${user.email || user.displayName || ''}</span></div>
-        <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">Dernière sauvegarde cloud</span><span>${lastCloudBackupAt ? formatDate(lastCloudBackupAt) : 'jamais'}</span></div>
+        <div class="stat-row"><span class="stat-row-label">${t('Connecté')}</span><span>${user.email || user.displayName || ''}</span></div>
+        <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">${t('Dernière sauvegarde cloud')}</span><span>${lastCloudBackupAt ? formatDate(lastCloudBackupAt) : t('jamais')}</span></div>
         <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
-          <button type="button" class="btn btn-primary" id="cloud-push-btn">Sauvegarder maintenant</button>
-          <button type="button" class="btn btn-ghost" id="cloud-pull-btn">Restaurer depuis le cloud</button>
-          <button type="button" class="btn btn-ghost" id="cloud-signout-btn">Se déconnecter</button>
+          <button type="button" class="btn btn-primary" id="cloud-push-btn">${t('Sauvegarder maintenant')}</button>
+          <button type="button" class="btn btn-ghost" id="cloud-pull-btn">${t('Restaurer depuis le cloud')}</button>
+          <button type="button" class="btn btn-ghost" id="cloud-signout-btn">${t('Se déconnecter')}</button>
         </div>` : `
-        <button type="button" class="btn btn-primary" id="cloud-signin-btn">Se connecter avec Google</button>`}
+        <button type="button" class="btn btn-primary" id="cloud-signin-btn">${t('Se connecter avec Google')}</button>`}
     </div>`;
 
   container.querySelector('#cloud-signin-btn')?.addEventListener('click', async (e) => {
     const btn = e.target;
     btn.disabled = true;
-    btn.textContent = 'Connexion…';
+    btn.textContent = t('Connexion…');
     try {
       const user = await signInWithGoogle();
       if (!user) return; // flux redirection : la page va naviguer vers Google, rien d'autre à faire ici
       await setSetting('cloudBackupWasSignedIn', true);
-      showToast('Connecté.');
+      showToast(t('Connecté.'));
       await renderCloudBackupSection(container);
     } catch (err) {
-      showToast('Erreur : ' + (err.message || 'connexion impossible.'));
+      showToast(t('Erreur : {message}', { message: err.message || t('connexion impossible.') }));
       btn.disabled = false;
-      btn.textContent = 'Se connecter avec Google';
+      btn.textContent = t('Se connecter avec Google');
     }
   });
 
   container.querySelector('#cloud-signout-btn')?.addEventListener('click', async () => {
     await signOutGoogle();
     await setSetting('cloudBackupWasSignedIn', false);
-    showToast('Déconnecté.');
+    showToast(t('Déconnecté.'));
     await renderCloudBackupSection(container);
   });
 
   container.querySelector('#cloud-push-btn')?.addEventListener('click', async () => {
-    const p = await promptPassphrase('Chiffrer la sauvegarde cloud');
+    const p = await promptPassphrase(t('Chiffrer la sauvegarde cloud'));
     if (!p) return;
     try {
       await pushBackupToCloud(p);
-      showToast('Sauvegarde envoyée dans le cloud.');
+      showToast(t('Sauvegarde envoyée dans le cloud.'));
       await renderCloudBackupSection(container);
     } catch (err) {
-      showToast('Erreur : ' + (err.message || 'envoi impossible.'));
+      showToast(t('Erreur : {message}', { message: err.message || t('envoi impossible.') }));
     }
   });
 
   container.querySelector('#cloud-pull-btn')?.addEventListener('click', async () => {
-    const p = await promptPassphrase('Mot de passe de la sauvegarde cloud');
+    const p = await promptPassphrase(t('Mot de passe de la sauvegarde cloud'));
     if (!p) return;
-    const merge = await confirmDialog('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.', { confirmText: 'Fusionner', cancelText: 'Remplacer tout' });
+    const merge = await confirmDialog(t('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.'), { confirmText: t('Fusionner'), cancelText: t('Remplacer tout') });
     try {
       await pullBackupFromCloud(p, { merge });
-      showToast('Données restaurées depuis le cloud.');
+      showToast(t('Données restaurées depuis le cloud.'));
     } catch (err) {
-      showToast('Erreur : ' + (err.message || 'restauration impossible.'));
+      showToast(t('Erreur : {message}', { message: err.message || t('restauration impossible.') }));
     }
   });
 }

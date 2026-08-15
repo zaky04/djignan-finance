@@ -858,4 +858,41 @@ const EN = {
     'Choose the panels shown on the dashboard (the "Monthly budget allocated" card and the 4 monthly figures always stay visible).',
   'Tableau de bord mis à jour.': 'Dashboard updated.',
   'Par {author}': 'By {author}',
+
+  // ---------- Sauvegarde cloud (firebase-sync.js) ----------
+  'Non connecté.': 'Not signed in.',
+  'Aucune sauvegarde cloud trouvée pour ce compte.': 'No cloud backup found for this account.',
+  "Vous avez repoussé ce rappel plusieurs fois. Sans sauvegarde cloud récente, une réinstallation ou un changement d'appareil vous ferait perdre les données saisies depuis votre dernière sauvegarde. Sauvegardez maintenant.":
+    'You have postponed this reminder several times. Without a recent cloud backup, a reinstall or device change would lose the data entered since your last backup. Back up now.',
+  "Ça fait plus de 7 jours que vos données n'ont pas été sauvegardées dans le cloud. Voulez-vous le faire maintenant ?":
+    "It's been more than 7 days since your data was backed up to the cloud. Would you like to do it now?",
+  'Sauvegarder maintenant': 'Back up now',
+  'Plus tard': 'Later',
+  'Sauvegarde cloud': 'Cloud backup',
+  'Chiffrer la sauvegarde cloud': 'Encrypt the cloud backup',
+  'Sauvegarde envoyée dans le cloud.': 'Backup sent to the cloud.',
+  'envoi impossible.': 'send not possible.',
+  'Une sauvegarde plus récente existe dans le cloud, faite le {date} — probablement depuis un autre appareil. Pour éviter des doublons ou de remplacer des données par erreur, il est recommandé de la récupérer avant de continuer sur cet appareil.':
+    'A more recent backup exists in the cloud, made on {date} — probably from another device. To avoid duplicates or overwriting data by mistake, it is recommended to retrieve it before continuing on this device.',
+  'Restaurer maintenant': 'Restore now',
+  'Continuer quand même': 'Continue anyway',
+  'Sauvegarde cloud plus récente': 'More recent cloud backup',
+  'Mot de passe de la sauvegarde cloud': 'Cloud backup password',
+  'Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.':
+    'Merge with existing data? "Cancel" will completely replace current data with the cloud\'s data.',
+  'Données restaurées depuis le cloud.': 'Data restored from the cloud.',
+  'restauration impossible.': 'restore not possible.',
+  'Sauvegarde cloud (optionnelle)': 'Cloud backup (optional)',
+  "Fonctionnalité pas encore configurée par l'auteur de l'app.": 'Feature not yet configured by the app author.',
+  "Sauvegarde chiffrée sur votre compte Google, pour la récupérer après une réinstallation. Le mot de passe de chiffrement n'est jamais transmis — sans lui, personne (y compris Google) ne peut lire vos données.":
+    'Encrypted backup on your Google account, to retrieve it after a reinstall. The encryption password is never transmitted — without it, no one (including Google) can read your data.',
+  'Connecté': 'Signed in',
+  'Dernière sauvegarde cloud': 'Last cloud backup',
+  'Restaurer depuis le cloud': 'Restore from the cloud',
+  'Se déconnecter': 'Sign out',
+  'Se connecter avec Google': 'Sign in with Google',
+  'Connexion…': 'Signing in…',
+  'Connecté.': 'Signed in.',
+  'connexion impossible.': 'sign-in not possible.',
+  'Déconnecté.': 'Signed out.',
 };
