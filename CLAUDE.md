@@ -1166,7 +1166,9 @@ que certains écrans resteront en français le temps du reste du chantier.
   verrouillage), tableau de bord complet, formatage devises/dates/mois.
 - ✅ Transactions (lot 2, voir entrée du 15 août 2026 ci-dessous) : modale Saisie express (y compris
   mode scindé, scan de justificatif), rapprochement bancaire, liste + filtres, sélection multiple.
-- ⬜ Budgets, Épargne, Investissements, Dettes & créances, Outils, Rapports, Partage,
+- ✅ Budgets (lot 3, voir entrée ci-dessous) : les 5 onglets (Budgets du mois, Budgets annuels,
+  Catégories, Récurrences, Règles) et leurs modales.
+- ⬜ Épargne, Investissements, Dettes & créances, Outils, Rapports, Partage,
   Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit), Recherche globale,
   mode démo, onboarding.
 
@@ -1248,6 +1250,45 @@ tout le texte français d'origine, y compris le formatage de date (« Août 2026
 chantier — aucune régression sur le chemin non traduit.
 
 `CACHE_VERSION` : `v53` → `v54`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 3/N : Budgets)
+
+Suite du chantier (l'auteur a explicitement demandé de continuer sans s'arrêter pour pousser :
+« non je veux qu'on continues la traduction. je veux faire le push une fois le translate fini pour
+tous les modules »). Écran converti : **Budgets**, dans son ensemble — les 5 onglets (Budgets du
+mois, Budgets annuels, Catégories, Récurrences, Règles de catégorisation automatique) et leurs
+modales (formulaire de catégorie avec sélecteur d'icône/couleur/mode enveloppe, formulaire de
+récurrence). Aucun `t`/variable en collision dans ce fichier (vérifié par `grep` avant d'importer) —
+import direct `import { t } from '../i18n.js';`, pas d'alias nécessaire cette fois.
+
+**Bug latent trouvé et corrigé en cours de route, avant qu'il ne devienne réel** : la note posée sur
+chaque transaction générée automatiquement par une récurrence (`generateDueRecurring()`, budgets.js)
+suit le gabarit `"Récurrence : {nom}"`. `detectRecurringCandidates()` (`ledger.js`, corrigée le 15
+août plus tôt cette session — voir le bug #4 de la revue étendue) compare ce préfixe **en dur** pour
+exclure ces transactions de ses suggestions. Traduire naïvement cette note via `t()` aurait produit
+`"Recurrence: {nom}"` en mode anglais — un préfixe que `ledger.js` n'aurait plus reconnu, réintroduisant
+exactement le bug déjà corrigé une fois (les récurrences déjà déclarées auraient été re-proposées en
+boucle comme si elles ne l'étaient pas, mais seulement pour les utilisateurs en anglais, un régression
+silencieuse et difficile à repérer). → `RECURRING_NOTE_PREFIX` (`ledger.js`) devient
+`RECURRING_NOTE_PREFIXES` (tableau des deux variantes FR/EN), les deux vérifiées à la lecture — une
+note existante ne se retraduit jamais rétroactivement, donc les deux formes doivent rester reconnues
+indéfiniment, pas seulement pendant une période de transition.
+
+**Nouvelles entrées de dictionnaire** : ~85 nouvelles clés (section « Budgets »), 0 doublon (vérifié
+par script, 264 clés au total après ce lot). `+ Catégorie de budget` (en-tête `index.html`) inclus.
+
+Testé dans le navigateur, bascule FR→EN→FR complète (rendu direct des fonctions du module, le clavier
+PIN restant peu fiable aux clics synthétiques — même limite que les lots précédents) : les 5 onglets
+et leurs libellés (dont l'entité `&amp;` de « Recurring expenses &amp; income », vérifiée décodée
+correctement en `&` à l'affichage), le formulaire Nouvelle catégorie (nom/icône/couleur/mode
+enveloppe/type/catégorie parente), le formulaire Nouvelle récurrence, et surtout **le point sensible
+du lot** : une récurrence créée en anglais génère bien une transaction notée « Recurrence: {nom} »,
+ET `detectRecurringCandidates()` l'exclut correctement de ses suggestions (vérifié explicitement,
+avant et après le fix de `ledger.js` — reproduisait le problème puis confirmé résolu). Catégories par
+défaut affichées en anglais (`Housing`, `Food`...) confirmant une fois de plus que la traduction à la
+création (lot 1) reste cohérente ici aussi.
+
+`CACHE_VERSION` : `v54` → `v55`.
 
 ## 7. Pistes prioritaires non traitées
 

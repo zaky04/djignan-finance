@@ -428,9 +428,13 @@ export async function computeEnvelopeCarryover(categoryId, monthKey) {
   return carry;
 }
 
-// Préfixe exact posé par generateDueRecurring() (budgets.js) sur chaque transaction qu'elle génère
-// automatiquement — voir plus bas pourquoi il faut le retirer avant de comparer à recurringNames.
-const RECURRING_NOTE_PREFIX = 'récurrence : ';
+// Préfixes exacts posés par generateDueRecurring() (budgets.js) sur chaque transaction qu'elle
+// génère automatiquement — voir plus bas pourquoi il faut les retirer avant de comparer à
+// recurringNames. Deux variantes (le texte passe par t(), voir i18n.js) : une transaction générée
+// pendant que l'app était en anglais porte "Recurrence: {nom}", pas "Récurrence : {nom}" — les deux
+// doivent être reconnues quelle que soit la langue active au moment de la lecture, une transaction
+// existante ne se retraduit jamais rétroactivement.
+const RECURRING_NOTE_PREFIXES = ['récurrence : ', 'recurrence: '];
 
 /** Détecte les paiements récurrents non déclarés en Récurrences : même note + montant similaire
     apparaissant sur au moins 2 mois distincts. Exclut ce qui correspond déjà à une récurrence active. */
@@ -448,7 +452,8 @@ export async function detectRecurringCandidates() {
     // "Récurrence : {nom}" (budgets.js), pas juste "{nom}" — comparer noteKey tel quel à
     // recurringNames ne matchait donc JAMAIS ces transactions, et cette fonction re-proposait en
     // permanence les récurrences déjà déclarées comme si elles ne l'étaient pas.
-    const strippedKey = noteKey.startsWith(RECURRING_NOTE_PREFIX) ? noteKey.slice(RECURRING_NOTE_PREFIX.length) : noteKey;
+    const matchedPrefix = RECURRING_NOTE_PREFIXES.find((p) => noteKey.startsWith(p));
+    const strippedKey = matchedPrefix ? noteKey.slice(matchedPrefix.length) : noteKey;
     if (recurringNames.has(noteKey) || recurringNames.has(strippedKey)) continue;
     const amtBase = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     const key = `${noteKey}::${Math.round(amtBase)}`;

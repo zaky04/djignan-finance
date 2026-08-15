@@ -13,6 +13,7 @@ import {
   currentMonthKey, monthKeyOffset, percentage, budgetProgressClass, openModal, confirmDialog, showToast,
 } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { t } from '../i18n.js';
 
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
@@ -52,23 +53,30 @@ function budgetCategoryCardHtml(cat, actual, limit, currency, carryover = null) 
   const cls = budgetProgressClass(pct);
   const color = cat.color || DEFAULT_CATEGORY_COLOR;
   const icon = CATEGORY_ICONS[cat.icon] || CATEGORY_ICONS[DEFAULT_CATEGORY_ICON];
+  const carryText = carryover != null
+    ? (limit
+      ? t('Enveloppe : {sign}{amount} reporté du mois dernier · budget effectif {effective}', {
+          sign: carryover >= 0 ? '+' : '', amount: formatCurrency(carryover, currency), effective: formatCurrency(effectiveLimit, currency),
+        })
+      : t('Enveloppe : {sign}{amount} reporté du mois dernier', { sign: carryover >= 0 ? '+' : '', amount: formatCurrency(carryover, currency) }))
+    : '';
   const carryLabel = carryover != null
-    ? `<div style="font-size:11.5px;color:${carryover >= 0 ? 'var(--pos)' : 'var(--neg)'};margin-top:4px;">Enveloppe : ${carryover >= 0 ? '+' : ''}${formatCurrency(carryover, currency)} reporté du mois dernier${limit ? ` · budget effectif ${formatCurrency(effectiveLimit, currency)}` : ''}</div>`
+    ? `<div style="font-size:11.5px;color:${carryover >= 0 ? 'var(--pos)' : 'var(--neg)'};margin-top:4px;">${carryText}</div>`
     : '';
   return `
     <div class="summary-card" style="${cat.parentId ? 'margin-left:16px;' : ''}">
       <div class="card-title-row">
         <div style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;">
           <span style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:${color}22;color:${color};flex-shrink:0;">${icon}</span>
-          ${cat.parentId ? '— ' : ''}${escapeHtml(cat.name)}${cat.envelopeMode ? ' <span class="badge badge-accent" style="margin-left:4px;">Enveloppe</span>' : ''}
+          ${cat.parentId ? '— ' : ''}${escapeHtml(cat.name)}${cat.envelopeMode ? ` <span class="badge badge-accent" style="margin-left:4px;">${t('Enveloppe')}</span>` : ''}
         </div>
-        <input type="number" min="0" step="0.01" data-limit-input="${cat.id}" value="${limit || ''}" placeholder="Budget"
+        <input type="number" min="0" step="0.01" data-limit-input="${cat.id}" value="${limit || ''}" placeholder="${t('Budget')}"
           style="width:100px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface-alt);text-align:right;">
       </div>
       <div class="progress-track"><div class="progress-fill ${cls}" style="width:${Math.min(pct, 100)}%"></div></div>
       <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-muted);margin-top:6px;">
         <span>${formatCurrency(actual, currency)}</span>
-        <span>${effectiveLimit ? formatPercent(pct, 0) : 'Pas de limite'}</span>
+        <span>${effectiveLimit ? formatPercent(pct, 0) : t('Pas de limite')}</span>
       </div>
       ${carryLabel}
     </div>`;
@@ -88,17 +96,20 @@ async function renderMonthlyTab(container) {
   const categories = await dbGetAll(STORES.CATEGORIES);
   const roots = categories.filter((c) => c.type === 'expense' && !c.parentId);
 
+  const trendText = forecast.upcoming.length
+    ? t('Solde actuel : {amount} · {count} échéance(s) à venir ce mois-ci', { amount: formatCurrency(forecast.current, forecast.currency), count: forecast.upcoming.length })
+    : t('Solde actuel : {amount}', { amount: formatCurrency(forecast.current, forecast.currency) });
   container.innerHTML = `
     <div style="display:flex;align-items:center;gap:4px;margin-bottom:14px;">
-      <button type="button" class="icon-btn" id="bud-prev-month" aria-label="Mois précédent">‹</button>
+      <button type="button" class="icon-btn" id="bud-prev-month" aria-label="${t('Mois précédent')}">‹</button>
       <strong style="min-width:130px;text-align:center;display:inline-block;">${formatMonthLabel(monthKey)}</strong>
-      <button type="button" class="icon-btn" id="bud-next-month" aria-label="Mois suivant">›</button>
-      ${canCopyPrevious ? '<button type="button" class="btn btn-ghost" id="bud-copy-prev" style="margin-left:auto;">Reprendre les budgets du mois dernier</button>' : ''}
+      <button type="button" class="icon-btn" id="bud-next-month" aria-label="${t('Mois suivant')}">›</button>
+      ${canCopyPrevious ? `<button type="button" class="btn btn-ghost" id="bud-copy-prev" style="margin-left:auto;">${t('Reprendre les budgets du mois dernier')}</button>` : ''}
     </div>
     <div class="hero-card" style="margin-bottom:18px;">
-      <div class="hero-card-label">Solde prévisionnel de fin de mois</div>
+      <div class="hero-card-label">${t('Solde prévisionnel de fin de mois')}</div>
       <div class="hero-card-value"><span class="amount" data-value="${forecast.projected}">${formatCurrency(forecast.projected, forecast.currency)}</span></div>
-      <div class="hero-card-trend">Solde actuel : ${formatCurrency(forecast.current, forecast.currency)}${forecast.upcoming.length ? ` · ${forecast.upcoming.length} échéance(s) à venir ce mois-ci` : ''}</div>
+      <div class="hero-card-trend">${trendText}</div>
     </div>
     <div class="grid-cards" id="budget-categories-grid"></div>`;
 
@@ -113,7 +124,7 @@ async function renderMonthlyTab(container) {
     const carryover = cat.envelopeMode ? await computeEnvelopeCarryover(cat.id, monthKey) : null;
     return budgetCategoryCardHtml(cat, actual, budgetByCategory[cat.id]?.limit, forecast.currency, carryover);
   }));
-  grid.innerHTML = cards.join('') || '<div class="empty-state">Aucune catégorie de dépense. Créez-en dans l\'onglet Catégories.</div>';
+  grid.innerHTML = cards.join('') || `<div class="empty-state">${t("Aucune catégorie de dépense. Créez-en dans l'onglet Catégories.")}</div>`;
 
   container.querySelector('#bud-prev-month').onclick = () => { monthKey = monthKeyOffset(monthKey, -1); renderMonthlyTab(container); };
   container.querySelector('#bud-next-month').onclick = () => { monthKey = monthKeyOffset(monthKey, 1); renderMonthlyTab(container); };
@@ -121,7 +132,7 @@ async function renderMonthlyTab(container) {
     for (const b of prevMonthBudgets) {
       await dbPut(STORES.BUDGETS, { id: uuid(), categoryId: b.categoryId, month: monthKey, limit: b.limit });
     }
-    showToast(`${prevMonthBudgets.length} budget(s) repris du mois dernier.`);
+    showToast(t('{count} budget(s) repris du mois dernier.', { count: prevMonthBudgets.length }));
     notifyDataChanged('budgets');
   });
 
@@ -132,7 +143,7 @@ async function renderMonthlyTab(container) {
       const existing = monthBudgets.find((b) => b.categoryId === categoryId);
       const record = existing ? { ...existing, limit } : { id: uuid(), categoryId, month: monthKey, limit };
       await dbPut(STORES.BUDGETS, record);
-      showToast('Budget mis à jour.');
+      showToast(t('Budget mis à jour.'));
       notifyDataChanged('budgets');
     });
   });
@@ -159,11 +170,13 @@ async function renderAnnualTab(container) {
 
   container.innerHTML = `
     <div style="display:flex;align-items:center;gap:4px;margin-bottom:14px;">
-      <button type="button" class="icon-btn" id="bud-prev-year" aria-label="Année précédente">‹</button>
+      <button type="button" class="icon-btn" id="bud-prev-year" aria-label="${t('Année précédente')}">‹</button>
       <strong style="min-width:80px;text-align:center;display:inline-block;">${annualYear}</strong>
-      <button type="button" class="icon-btn" id="bud-next-year" aria-label="Année suivante">›</button>
+      <button type="button" class="icon-btn" id="bud-next-year" aria-label="${t('Année suivante')}">›</button>
     </div>
-    ${yearBudgets.length ? `<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">${formatCurrency(totalActual, currency)} dépensé sur ${formatPercent(totalBudget ? percentage(totalActual, totalBudget) : 0, 0)} du budget annuel total attribué (${formatCurrency(totalBudget, currency)}).</p>` : ''}
+    ${yearBudgets.length ? `<p style="font-size:12.5px;color:var(--text-muted);margin-bottom:14px;">${t('{spent} dépensé sur {pct} du budget annuel total attribué ({total}).', {
+        spent: formatCurrency(totalActual, currency), pct: formatPercent(totalBudget ? percentage(totalActual, totalBudget) : 0, 0), total: formatCurrency(totalBudget, currency),
+      })}</p>` : ''}
     <div class="grid-cards" id="budget-annual-grid"></div>`;
 
   const grid = container.querySelector('#budget-annual-grid');
@@ -176,7 +189,7 @@ async function renderAnnualTab(container) {
     const actual = actuals.find((a) => a.categoryId === cat.id)?.actual || 0;
     return budgetCategoryCardHtml(cat, actual, budgetByCategory[cat.id]?.limit, currency);
   });
-  grid.innerHTML = cards.join('') || '<div class="empty-state">Aucune catégorie de dépense. Créez-en dans l\'onglet Catégories.</div>';
+  grid.innerHTML = cards.join('') || `<div class="empty-state">${t("Aucune catégorie de dépense. Créez-en dans l'onglet Catégories.")}</div>`;
 
   container.querySelector('#bud-prev-year').onclick = () => { annualYear -= 1; renderAnnualTab(container); };
   container.querySelector('#bud-next-year').onclick = () => { annualYear += 1; renderAnnualTab(container); };
@@ -188,7 +201,7 @@ async function renderAnnualTab(container) {
       const existing = yearBudgets.find((b) => b.categoryId === categoryId);
       const record = existing ? { ...existing, limit } : { id: uuid(), categoryId, month: yearKey, period: 'annual', limit };
       await dbPut(STORES.BUDGETS, record);
-      showToast('Budget annuel mis à jour.');
+      showToast(t('Budget annuel mis à jour.'));
       notifyDataChanged('budgets');
     });
   });
@@ -202,11 +215,11 @@ function categoryFormHtml(category, presetParentId, presetType) {
   return `
     <form id="category-form">
       <div class="form-row">
-        <label>Nom</label>
+        <label>${t('Nom')}</label>
         <input type="text" name="name" required maxlength="40" value="${escapeHtml(category?.name || '')}">
       </div>
       <div class="form-row">
-        <label>Icône</label>
+        <label>${t('Icône')}</label>
         <div class="icon-picker">
           ${Object.entries(CATEGORY_ICONS).map(([key, svg]) => `
             <button type="button" class="icon-picker-btn ${(category?.icon || DEFAULT_CATEGORY_ICON) === key ? 'is-active' : ''}" data-icon="${key}">${svg}</button>
@@ -215,7 +228,7 @@ function categoryFormHtml(category, presetParentId, presetType) {
         <input type="hidden" name="icon" value="${category?.icon || DEFAULT_CATEGORY_ICON}">
       </div>
       <div class="form-row">
-        <label>Couleur</label>
+        <label>${t('Couleur')}</label>
         <div class="color-picker">
           ${CATEGORY_COLORS.map((c) => `<button type="button" class="color-picker-btn ${(category?.color || DEFAULT_CATEGORY_COLOR) === c ? 'is-active' : ''}" data-color="${c}" style="background:${c};"></button>`).join('')}
         </div>
@@ -224,33 +237,33 @@ function categoryFormHtml(category, presetParentId, presetType) {
       <div data-field="envelopeRow" ${type !== 'expense' ? 'hidden' : ''}>
         <label style="display:flex;align-items:center;gap:10px;padding:8px 0 14px;font-size:13.5px;cursor:pointer;">
           <input type="checkbox" name="envelopeMode" ${category?.envelopeMode ? 'checked' : ''}>
-          Mode enveloppe : reporter le solde non dépensé (ou le dépassement) sur le mois suivant
+          ${t('Mode enveloppe : reporter le solde non dépensé (ou le dépassement) sur le mois suivant')}
         </label>
       </div>
       ${!presetParentId ? `
       <div class="form-row">
-        <label>Type</label>
+        <label>${t('Type')}</label>
         <select name="type" id="category-type-select">
-          <option value="expense" ${type === 'expense' ? 'selected' : ''}>Dépense</option>
-          <option value="income" ${type === 'income' ? 'selected' : ''}>Recette</option>
+          <option value="expense" ${type === 'expense' ? 'selected' : ''}>${t('Dépense')}</option>
+          <option value="income" ${type === 'income' ? 'selected' : ''}>${t('Recette')}</option>
         </select>
       </div>
       <div class="form-row">
-        <label>Catégorie parente (optionnel)</label>
-        <select name="parentId" id="category-parent-select"><option value="">— Catégorie principale —</option></select>
+        <label>${t('Catégorie parente (optionnel)')}</label>
+        <select name="parentId" id="category-parent-select"><option value="">${t('— Catégorie principale —')}</option></select>
       </div>` : `<input type="hidden" name="type" value="${escapeHtml(type)}"><input type="hidden" name="parentId" value="${escapeHtml(presetParentId)}">`}
-      <button type="submit" class="btn btn-primary btn-block">${category ? 'Enregistrer' : 'Créer'}</button>
+      <button type="submit" class="btn btn-primary btn-block">${category ? t('Enregistrer') : t('Créer')}</button>
     </form>`;
 }
 
 async function populateParentSelect(select, type, excludeId) {
   const categories = await dbGetAll(STORES.CATEGORIES);
   const roots = categories.filter((c) => c.type === type && !c.parentId && c.id !== excludeId);
-  select.innerHTML = '<option value="">— Catégorie principale —</option>' + roots.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
+  select.innerHTML = `<option value="">${t('— Catégorie principale —')}</option>` + roots.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
 }
 
 function openCategoryModal(category = null, presetParentId = null, presetType = null) {
-  const modal = openModal(categoryFormHtml(category, presetParentId, presetType), { title: category ? 'Modifier la catégorie' : (presetParentId ? 'Nouvelle sous-catégorie' : 'Nouvelle catégorie') });
+  const modal = openModal(categoryFormHtml(category, presetParentId, presetType), { title: category ? t('Modifier la catégorie') : (presetParentId ? t('Nouvelle sous-catégorie') : t('Nouvelle catégorie')) });
   const form = modal.el.querySelector('#category-form');
   const typeSelect = modal.el.querySelector('#category-type-select');
   const parentSelect = modal.el.querySelector('#category-parent-select');
@@ -295,7 +308,7 @@ function openCategoryModal(category = null, presetParentId = null, presetType = 
     await dbPut(STORES.CATEGORIES, record);
     await logAudit({ entityType: 'category', entityId: record.id, action: category ? 'update' : 'create', before, after: record });
     modal.close();
-    showToast(category ? 'Catégorie mise à jour.' : 'Catégorie créée.');
+    showToast(category ? t('Catégorie mise à jour.') : t('Catégorie créée.'));
     notifyDataChanged('categories');
   });
 }
@@ -308,9 +321,9 @@ function categoryRowHtml(cat, isChild = false) {
       <div class="tx-icon" style="color:${color};background:${color}22;">${icon}</div>
       <div class="tx-main"><div class="tx-title">${isChild ? '— ' : ''}${escapeHtml(cat.name)}</div></div>
       <div class="card-actions">
-        ${!isChild ? `<button type="button" class="icon-btn" data-action="add-sub" aria-label="Ajouter une sous-catégorie" title="Ajouter une sous-catégorie">${PLUS_ICON}</button>` : ''}
-        <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
-        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
+        ${!isChild ? `<button type="button" class="icon-btn" data-action="add-sub" aria-label="${t('Ajouter une sous-catégorie')}" title="${t('Ajouter une sous-catégorie')}">${PLUS_ICON}</button>` : ''}
+        <button type="button" class="icon-btn" data-action="edit" aria-label="${t('Modifier')}" title="${t('Modifier')}">${EDIT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
       </div>
     </div>`;
 }
@@ -320,9 +333,9 @@ async function renderCategoriesTab(container) {
   const group = (type, label) => {
     const roots = categories.filter((c) => c.type === type && !c.parentId);
     const rows = roots.map((r) => categoryRowHtml(r) + categories.filter((c) => c.parentId === r.id).map((ch) => categoryRowHtml(ch, true)).join('')).join('');
-    return `<div class="panel" style="margin-bottom:16px;"><div class="panel-header"><h3>${label}</h3></div>${rows || '<div class="empty-state">Aucune catégorie.</div>'}</div>`;
+    return `<div class="panel" style="margin-bottom:16px;"><div class="panel-header"><h3>${label}</h3></div>${rows || `<div class="empty-state">${t('Aucune catégorie.')}</div>`}</div>`;
   };
-  container.innerHTML = group('expense', 'Catégories de dépenses') + group('income', 'Catégories de recettes');
+  container.innerHTML = group('expense', t('Catégories de dépenses')) + group('income', t('Catégories de recettes'));
 
   container.addEventListener('click', async function handler(e) {
     const btn = e.target.closest('[data-action]');
@@ -338,12 +351,12 @@ async function renderCategoriesTab(container) {
       openCategoryModal(cat);
     } else if (btn.dataset.action === 'delete') {
       const hasChildren = categories2.some((c) => c.parentId === cat.id);
-      if (hasChildren) { showToast('Supprimez d\'abord les sous-catégories.'); return; }
-      const ok = await confirmDialog(`Supprimer la catégorie "${cat.name}" ? Les transactions déjà enregistrées resteront mais afficheront "Sans catégorie".`, { danger: true, confirmText: 'Supprimer' });
+      if (hasChildren) { showToast(t("Supprimez d'abord les sous-catégories.")); return; }
+      const ok = await confirmDialog(t('Supprimer la catégorie "{name}" ? Les transactions déjà enregistrées resteront mais afficheront "Sans catégorie".', { name: cat.name }), { danger: true, confirmText: t('Supprimer') });
       if (ok) {
         await dbDelete(STORES.CATEGORIES, cat.id);
         await logAudit({ entityType: 'category', entityId: cat.id, action: 'delete', before: cat });
-        showToast('Catégorie supprimée.');
+        showToast(t('Catégorie supprimée.'));
         notifyDataChanged('categories');
       }
     }
@@ -357,28 +370,28 @@ function recurringFormHtml(r) {
   return `
     <form id="recurring-form">
       <div class="segmented" data-field="type">
-        <button type="button" class="segmented-btn ${(!r || r.type === 'expense') ? 'is-active' : ''}" data-value="expense">Dépense</button>
-        <button type="button" class="segmented-btn ${r?.type === 'income' ? 'is-active' : ''}" data-value="income">Recette</button>
+        <button type="button" class="segmented-btn ${(!r || r.type === 'expense') ? 'is-active' : ''}" data-value="expense">${t('Dépense')}</button>
+        <button type="button" class="segmented-btn ${r?.type === 'income' ? 'is-active' : ''}" data-value="income">${t('Recette')}</button>
       </div>
       <input type="hidden" name="type" value="${r?.type || 'expense'}">
-      <div class="form-row"><label>Nom</label><input type="text" name="name" required maxlength="60" value="${escapeHtml(r?.name || '')}" placeholder="Ex: Loyer, Netflix, Salaire…"></div>
-      <div class="form-row"><label>Montant</label><input type="number" step="0.01" min="0" name="amount" required value="${r?.amount ?? ''}"></div>
-      <div class="form-row"><label>Portefeuille</label><select name="walletId" required></select></div>
-      <div class="form-row" data-field="categoryRow"><label>Catégorie</label><select name="categoryId"></select></div>
-      <div class="form-row"><label>Fréquence</label>
+      <div class="form-row"><label>${t('Nom')}</label><input type="text" name="name" required maxlength="60" value="${escapeHtml(r?.name || '')}" placeholder="${t('Ex: Loyer, Netflix, Salaire…')}"></div>
+      <div class="form-row"><label>${t('Montant')}</label><input type="number" step="0.01" min="0" name="amount" required value="${r?.amount ?? ''}"></div>
+      <div class="form-row"><label>${t('Portefeuille')}</label><select name="walletId" required></select></div>
+      <div class="form-row" data-field="categoryRow"><label>${t('Catégorie')}</label><select name="categoryId"></select></div>
+      <div class="form-row"><label>${t('Fréquence')}</label>
         <select name="frequency">
-          <option value="monthly" ${(!r || r.frequency === 'monthly') ? 'selected' : ''}>Mensuelle</option>
-          <option value="weekly" ${r?.frequency === 'weekly' ? 'selected' : ''}>Hebdomadaire</option>
-          <option value="yearly" ${r?.frequency === 'yearly' ? 'selected' : ''}>Annuelle</option>
+          <option value="monthly" ${(!r || r.frequency === 'monthly') ? 'selected' : ''}>${t('Mensuelle')}</option>
+          <option value="weekly" ${r?.frequency === 'weekly' ? 'selected' : ''}>${t('Hebdomadaire')}</option>
+          <option value="yearly" ${r?.frequency === 'yearly' ? 'selected' : ''}>${t('Annuelle')}</option>
         </select>
       </div>
-      <div class="form-row"><label>Prochaine échéance</label><input type="date" name="nextDate" required value="${r?.nextDate || todayISO()}"></div>
-      <button type="submit" class="btn btn-primary btn-block">${r ? 'Enregistrer' : 'Créer la récurrence'}</button>
+      <div class="form-row"><label>${t('Prochaine échéance')}</label><input type="date" name="nextDate" required value="${r?.nextDate || todayISO()}"></div>
+      <button type="submit" class="btn btn-primary btn-block">${r ? t('Enregistrer') : t('Créer la récurrence')}</button>
     </form>`;
 }
 
 function openRecurringModal(r = null) {
-  const modal = openModal(recurringFormHtml(r), { title: r ? 'Modifier la récurrence' : 'Nouvelle récurrence' });
+  const modal = openModal(recurringFormHtml(r), { title: r ? t('Modifier la récurrence') : t('Nouvelle récurrence') });
   const form = modal.el.querySelector('#recurring-form');
   const typeHidden = form.elements.type;
   const walletSelect = form.elements.walletId;
@@ -387,7 +400,7 @@ function openRecurringModal(r = null) {
 
   async function populate() {
     const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
-    walletSelect.innerHTML = wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('') || '<option value="">Créez un portefeuille d\'abord</option>';
+    walletSelect.innerHTML = wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('') || `<option value="">${t("Créez un portefeuille d'abord")}</option>`;
     if (r?.walletId) walletSelect.value = r.walletId;
 
     const categories = await dbGetAll(STORES.CATEGORIES);
@@ -395,7 +408,7 @@ function openRecurringModal(r = null) {
     categorySelect.innerHTML = roots.map((root) => {
       const children = categories.filter((c) => c.parentId === root.id).map((ch) => `<option value="${ch.id}">— ${escapeHtml(ch.name)}</option>`).join('');
       return `<option value="${root.id}">${escapeHtml(root.name)}</option>${children}`;
-    }).join('') || '<option value="">Aucune catégorie</option>';
+    }).join('') || `<option value="">${t('Aucune catégorie')}</option>`;
     if (r?.categoryId) categorySelect.value = r.categoryId;
   }
 
@@ -411,7 +424,7 @@ function openRecurringModal(r = null) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
-    if (!fd.get('walletId')) { showToast('Créez au moins un portefeuille avant d\'ajouter une récurrence.'); return; }
+    if (!fd.get('walletId')) { showToast(t("Créez au moins un portefeuille avant d'ajouter une récurrence.")); return; }
     const before = r ? { ...r } : null;
     const record = {
       id: r?.id || uuid(),
@@ -427,7 +440,7 @@ function openRecurringModal(r = null) {
     await dbPut(STORES.RECURRING, record);
     await logAudit({ entityType: 'recurring', entityId: record.id, action: r ? 'update' : 'create', before, after: record });
     modal.close();
-    showToast(r ? 'Récurrence mise à jour.' : 'Récurrence créée.');
+    showToast(r ? t('Récurrence mise à jour.') : t('Récurrence créée.'));
     notifyDataChanged('recurring');
   });
 }
@@ -438,14 +451,14 @@ function recurringRowHtml(r, wallets, categories) {
   return `
     <div class="tx-row" data-recurring-id="${r.id}">
       <div class="tx-main">
-        <div class="tx-title">${escapeHtml(r.name)} ${!r.active ? '<span class="badge">Inactif</span>' : ''}</div>
-        <div class="tx-sub">${escapeHtml(wallet?.name || '—')} · ${escapeHtml(cat?.name || 'Sans catégorie')} · ${FREQ_LABELS[r.frequency]} · Prochaine échéance : ${formatDate(r.nextDate)}</div>
+        <div class="tx-title">${escapeHtml(r.name)} ${!r.active ? `<span class="badge">${t('Inactif')}</span>` : ''}</div>
+        <div class="tx-sub">${escapeHtml(wallet?.name || '—')} · ${escapeHtml(cat?.name || t('Sans catégorie'))} · ${t(FREQ_LABELS[r.frequency])} · ${t('Prochaine échéance : {date}', { date: formatDate(r.nextDate) })}</div>
       </div>
       <div class="tx-amount amount ${r.type === 'income' ? 'pos' : 'neg'}">${r.type === 'income' ? '+' : '−'}${formatCurrency(r.amount, wallet?.currency || 'EUR')}</div>
       <div class="card-actions">
-        <button type="button" class="icon-btn" data-action="toggle" aria-label="${r.active ? 'Désactiver' : 'Activer'}" title="${r.active ? 'Désactiver' : 'Activer'}">${r.active ? PAUSE_ICON : PLAY_ICON}</button>
-        <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
-        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="toggle" aria-label="${r.active ? t('Désactiver') : t('Activer')}" title="${r.active ? t('Désactiver') : t('Activer')}">${r.active ? PAUSE_ICON : PLAY_ICON}</button>
+        <button type="button" class="icon-btn" data-action="edit" aria-label="${t('Modifier')}" title="${t('Modifier')}">${EDIT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
       </div>
     </div>`;
 }
@@ -456,11 +469,11 @@ async function renderRecurringTab(container) {
 
   container.innerHTML = `
     <div class="view-header" style="margin-bottom:10px;">
-      <h2 style="font-size:15px;">Dépenses &amp; recettes récurrentes</h2>
-      <button type="button" class="btn btn-primary" id="recurring-add-btn">+ Nouvelle récurrence</button>
+      <h2 style="font-size:15px;">${t('Dépenses &amp; recettes récurrentes')}</h2>
+      <button type="button" class="btn btn-primary" id="recurring-add-btn">${t('+ Nouvelle récurrence')}</button>
     </div>
     <div class="panel">
-      ${sorted.length ? sorted.map((r) => recurringRowHtml(r, wallets, categories)).join('') : '<div class="empty-state">Aucune récurrence. Ajoutez vos abonnements et factures régulières pour anticiper votre solde de fin de mois.</div>'}
+      ${sorted.length ? sorted.map((r) => recurringRowHtml(r, wallets, categories)).join('') : `<div class="empty-state">${t('Aucune récurrence. Ajoutez vos abonnements et factures régulières pour anticiper votre solde de fin de mois.')}</div>`}
     </div>`;
 
   container.querySelector('#recurring-add-btn').addEventListener('click', () => openRecurringModal());
@@ -482,11 +495,11 @@ async function renderRecurringTab(container) {
     } else if (btn.dataset.action === 'edit') {
       openRecurringModal(r);
     } else if (btn.dataset.action === 'delete') {
-      const ok = await confirmDialog(`Supprimer la récurrence "${r.name}" ? Les transactions déjà générées seront conservées.`, { danger: true, confirmText: 'Supprimer' });
+      const ok = await confirmDialog(t('Supprimer la récurrence "{name}" ? Les transactions déjà générées seront conservées.', { name: r.name }), { danger: true, confirmText: t('Supprimer') });
       if (ok) {
         await dbDelete(STORES.RECURRING, r.id);
         await logAudit({ entityType: 'recurring', entityId: r.id, action: 'delete', before: r });
-        showToast('Récurrence supprimée.');
+        showToast(t('Récurrence supprimée.'));
         notifyDataChanged('recurring');
       }
     }
@@ -504,10 +517,10 @@ function ruleRowHtml(rule, categories) {
     <div class="tx-row" data-rule-id="${rule.id}">
       <div class="tx-main">
         <div class="tx-title">« ${escapeHtml(rule.pattern)} »</div>
-        <div class="tx-sub">→ ${escapeHtml(cat?.name || 'Catégorie supprimée')}</div>
+        <div class="tx-sub">→ ${escapeHtml(cat?.name || t('Catégorie supprimée'))}</div>
       </div>
       <div class="card-actions">
-        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
       </div>
     </div>`;
 }
@@ -519,17 +532,17 @@ async function renderRulesTab(container) {
 
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
-      <div class="panel-header"><h3>Nouvelle règle</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">Quand la note d'une dépense contient ce texte, la catégorie est présélectionnée automatiquement en Saisie express.</p>
+      <div class="panel-header"><h3>${t('Nouvelle règle')}</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">${t("Quand la note d'une dépense contient ce texte, la catégorie est présélectionnée automatiquement en Saisie express.")}</p>
       <form id="rule-form" class="filters-bar" style="align-items:flex-end;">
-        <div class="form-row" style="margin:0;flex:1;min-width:160px;"><label>Texte à repérer</label><input type="text" name="pattern" required maxlength="60" placeholder="Ex: netflix"></div>
-        <div class="form-row" style="margin:0;flex:1;min-width:160px;"><label>Catégorie</label><select name="categoryId" required>${catOptionsHtml}</select></div>
-        <button type="submit" class="btn btn-primary">Ajouter</button>
+        <div class="form-row" style="margin:0;flex:1;min-width:160px;"><label>${t('Texte à repérer')}</label><input type="text" name="pattern" required maxlength="60" placeholder="${t('Ex: netflix')}"></div>
+        <div class="form-row" style="margin:0;flex:1;min-width:160px;"><label>${t('Catégorie')}</label><select name="categoryId" required>${catOptionsHtml}</select></div>
+        <button type="submit" class="btn btn-primary">${t('Ajouter')}</button>
       </form>
     </div>
     <div class="panel">
-      <div class="panel-header"><h3>Règles actives</h3></div>
-      ${rules.length ? rules.map((r) => ruleRowHtml(r, categories)).join('') : '<div class="empty-state">Aucune règle. Ajoutez-en une ci-dessus pour automatiser la catégorisation.</div>'}
+      <div class="panel-header"><h3>${t('Règles actives')}</h3></div>
+      ${rules.length ? rules.map((r) => ruleRowHtml(r, categories)).join('') : `<div class="empty-state">${t('Aucune règle. Ajoutez-en une ci-dessus pour automatiser la catégorisation.')}</div>`}
     </div>`;
 
   container.querySelector('#rule-form').addEventListener('submit', async (e) => {
@@ -538,7 +551,7 @@ async function renderRulesTab(container) {
     const record = { id: uuid(), pattern: fd.get('pattern').trim().toLowerCase(), categoryId: fd.get('categoryId'), createdAt: new Date().toISOString() };
     if (!record.pattern) return;
     await dbAdd(STORES.CATEGORIZATION_RULES, record);
-    showToast('Règle créée.');
+    showToast(t('Règle créée.'));
     notifyDataChanged('categorizationRules');
     renderRulesTab(container);
   });
@@ -547,7 +560,7 @@ async function renderRulesTab(container) {
     btn.addEventListener('click', async () => {
       const ruleId = btn.closest('[data-rule-id]').dataset.ruleId;
       await dbDelete(STORES.CATEGORIZATION_RULES, ruleId);
-      showToast('Règle supprimée.');
+      showToast(t('Règle supprimée.'));
       notifyDataChanged('categorizationRules');
       renderRulesTab(container);
     });
@@ -578,10 +591,14 @@ export async function generateDueRecurring() {
       const tx = {
         id: uuid(), type: r.type, walletId: r.walletId, targetWalletId: null,
         categoryId: r.categoryId, amount: r.amount, date: r.nextDate,
-        note: `Récurrence : ${r.name}`, reconciled: false, createdAt: new Date().toISOString(),
+        // t() ici, pas juste un préfixe français en dur : le préfixe résultant ("Récurrence : "/
+        // "Recurrence: ") doit rester reconnu par RECURRING_NOTE_PREFIXES (ledger.js,
+        // detectRecurringCandidates) quelle que soit la langue active à la création — les deux
+        // variantes y sont vérifiées, voir le commentaire à cet endroit.
+        note: t('Récurrence : {name}', { name: r.name }), reconciled: false, createdAt: new Date().toISOString(),
       };
       await dbAdd(STORES.TRANSACTIONS, tx);
-      await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: 'Générée automatiquement (récurrence)' });
+      await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: t('Générée automatiquement (récurrence)') });
       r.nextDate = advanceDate(r.nextDate, r.frequency);
       generated = true;
       guard++;
@@ -600,11 +617,11 @@ export async function renderBudgets() {
   if (!content) return;
   content.innerHTML = `
     <div class="tabs-bar">
-      <button type="button" class="tab-btn ${activeTab === 'monthly' ? 'is-active' : ''}" data-tab="monthly">Budgets du mois</button>
-      <button type="button" class="tab-btn ${activeTab === 'annual' ? 'is-active' : ''}" data-tab="annual">Budgets annuels</button>
-      <button type="button" class="tab-btn ${activeTab === 'categories' ? 'is-active' : ''}" data-tab="categories">Catégories</button>
-      <button type="button" class="tab-btn ${activeTab === 'recurring' ? 'is-active' : ''}" data-tab="recurring">Récurrences</button>
-      <button type="button" class="tab-btn ${activeTab === 'rules' ? 'is-active' : ''}" data-tab="rules">Règles</button>
+      <button type="button" class="tab-btn ${activeTab === 'monthly' ? 'is-active' : ''}" data-tab="monthly">${t('Budgets du mois')}</button>
+      <button type="button" class="tab-btn ${activeTab === 'annual' ? 'is-active' : ''}" data-tab="annual">${t('Budgets annuels')}</button>
+      <button type="button" class="tab-btn ${activeTab === 'categories' ? 'is-active' : ''}" data-tab="categories">${t('Catégories')}</button>
+      <button type="button" class="tab-btn ${activeTab === 'recurring' ? 'is-active' : ''}" data-tab="recurring">${t('Récurrences')}</button>
+      <button type="button" class="tab-btn ${activeTab === 'rules' ? 'is-active' : ''}" data-tab="rules">${t('Règles')}</button>
     </div>
     <div id="budgets-tab-content" style="margin-top:16px;"></div>`;
 
