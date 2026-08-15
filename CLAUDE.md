@@ -768,6 +768,97 @@ utilisateur réel n'a signalé de lenteur perceptible.
 
 `CACHE_VERSION` : `v46` → `v47`.
 
+### 14 août 2026 (suite) — Vérification de fraîcheur cloud au démarrage (multi-appareils)
+
+Proposé par l'auteur : avec plusieurs appareils partageant le même compte cloud, rien n'empêchait
+un appareil resté sur une version ancienne de commencer à y saisir de nouvelles transactions sans
+savoir qu'un autre appareil avait déjà avancé le cloud pendant ce temps — risque de doublons, ou de
+données écrasées à la prochaine sauvegarde de l'appareil en retard. Question explicitement posée
+par l'auteur et traitée avant l'implémentation : que se passe-t-il hors-ligne au démarrage ? Réponse
+donnée puis honorée dans le code : l'app démarre normalement, la vérification échoue silencieusement
+et sans bloquer si le réseau n'est pas là, comme le fait déjà `renderCloudBackupSection`.
+
+→ `firebase-sync.js` : `checkCloudStaleness()`, appelée au boot (`app.js`, 2s après déverrouillage —
+avant les rappels de sauvegarde, cette alerte étant plus urgente). Ne charge le SDK Firebase que
+pour un utilisateur déjà connecté au cloud (`cloudBackupWasSignedIn`) — jamais par défaut. Compare
+l'horodatage serveur de la dernière sauvegarde cloud (`updatedAt` du document `backups/{uid}`, une
+seule petite lecture, pas les morceaux chiffrés) à `cloudLastKnownSyncAt` (nouveau réglage local, mis
+à jour par `pushBackupToCloud()` ET `pullBackupFromCloud()` — contrairement à `lastCloudBackupAt` qui
+ne compte que les envois, affiché tel quel en Paramètres). Si le cloud est plus récent, une modale
+propose de restaurer maintenant (réutilise `promptPassphrase`/`confirmDialog`/`pullBackupFromCloud`,
+mêmes briques que le bouton "Restaurer" existant) ou de continuer quand même.
+Timeout défensif de 8s (variable `cancelled`, pas d'annulation réseau réelle mais empêche la modale
+de surgir tardivement sur une connexion très lente) ; toute erreur (hors-ligne, service indisponible)
+est avalée silencieusement — jamais de blocage ni de message d'erreur au démarrage.
+
+Ne résout pas le cas où les deux appareils ont chacun des changements non synchronisés EN MÊME
+TEMPS (vrai conflit bidirectionnel) — nécessiterait le moteur de résolution de conflits
+délibérément évité dès la conception de la sauvegarde cloud (13 août). Couvre le cas courant :
+un appareil simplement en retard, prévenu avant de commencer à diverger.
+
+Testé : aucune requête réseau ni modale pour un utilisateur jamais connecté au cloud (règle du
+chargement paresseux respectée) ; aucun plantage pour un utilisateur "connu connecté"
+(`cloudBackupWasSignedIn`) mais sans session Firebase active réelle (retombe proprement sur "pas
+d'utilisateur", ne montre rien) — le round-trip complet avec un vrai compte cloud (comparaison
+réelle des horodatages, restauration déclenchée) reste à confirmer par l'auteur avec son compte
+réel, comme pour le reste des fonctionnalités Firebase de cette session.
+
+### 14 août 2026 (suite) — Détection de dépense inhabituelle
+
+Proposé par l'auteur : signaler une dépense nettement plus élevée que l'habitude pour sa catégorie,
+utile surtout pour rattraper une erreur de saisie (ex: 45 000 tapé au lieu de 4 500).
+
+→ `ledger.js` : `checkUnusualExpense(categoryId, amount, walletId, excludeId)` — compare le montant
+(converti en devise de base, une catégorie pouvant recevoir des dépenses de portefeuilles en devises
+différentes) à la moyenne des dépenses passées de cette catégorie. Renvoie `null` si la catégorie a
+moins de 3 dépenses passées (pas assez d'historique pour qu'une moyenne veuille dire quelque chose)
+ou si le montant ne dépasse pas 2,5x cette moyenne. `excludeId` ignore la transaction elle-même lors
+d'une modification. Appelée dans `transactions.js` après l'enregistrement d'une dépense (création ET
+modification) ; purement informatif via un second toast empilé sur celui de confirmation
+(`showToast` empile déjà, pas de conflit) — n'empêche jamais l'enregistrement. Pas branché sur le
+chemin des transactions scindées (`splitMode`) : plusieurs lignes de petits montants dans des
+catégories peu utilisées auraient pu déclencher plusieurs avertissements empilés pour une seule
+action utilisateur — hors scope volontairement, pas demandé.
+
+Testé : historique de 5 dépenses ~50€ (moyenne 50) → un montant proche (55€) ne déclenche rien, un
+montant à 300€ (6x) déclenche l'avertissement avec la bonne moyenne/ratio, une catégorie neuve sans
+historique ne déclenche jamais rien (garde-fou anti-faux-positifs respecté).
+
+### 14 août 2026 (suite) — Mode démo pour l'onboarding
+
+Proposé par l'auteur : permettre d'explorer l'app avec des données réalistes avant d'y entrer ses
+propres finances.
+
+→ Nouveau `js/demo-data.js` : `seedDemoData()` crée un jeu de données XOF cohérent sur ~2 mois
+(3 portefeuilles — mobile money/banque/espèces —, ~19 transactions revenus/dépenses variées,
+3 budgets du mois, un objectif d'épargne, un investissement avec historique de valorisation, une
+créance) ; `clearDemoData()` efface tout et remet l'app dans l'état "jamais utilisée" (l'onboarding
+se réaffichera au prochain démarrage). Piège rencontré : `seedDemoData()` appelle `wipeAllData()` en
+premier, qui vide AUSSI `STORES.CATEGORIES` — impossible de compter sur les catégories par défaut
+déjà créées par `seedDefaultsIfNeeded()` au premier boot (elles n'existent plus après le wipe), donc
+`seedDemoData()` recrée elle-même le même jeu de catégories par défaut plutôt que d'en dépendre.
+
+Bouton "Découvrir avec des données d'exemple" ajouté à la toute première étape de l'onboarding
+(`app.js`) : ferme l'assistant entièrement (pas juste l'étape) plutôt que de l'enchaîner — créer SON
+portefeuille/profil n'a plus de sens une fois des données fictives en place. Un bandeau permanent
+(`#demo-mode-banner`, nouveau conteneur dans `index.html` juste sous la barre du haut, visible sur
+toutes les vues) reste affiché tant que `isDemoModeActive` est vrai, avec un bouton pour tout effacer
+et repartir de zéro — pour qu'il soit impossible de mélanger sans s'en rendre compte des données
+fictives avec de vraies finances.
+
+Testé : `seedDemoData()` crée bien 3 portefeuilles / 19 transactions / 9 catégories / 3 budgets / 1
+objectif d'épargne / 1 investissement (2 valorisations) / 1 créance, aucune transaction avec
+`categoryId` non résolu (bug initial corrigé — voir piège ci-dessus) ; `renderDashboard()` appelée
+directement après le seed s'exécute sans erreur et affiche les vrais montants XOF calculés
+(120 000 / 471 000 / 823 500 F CFA sur les cartes du tableau de bord) ; `clearDemoData()` remet bien
+`isDemoModeActive`/`onboardingCompleted` à `false`. Le clic UI de bout en bout (bouton → bandeau →
+effacer) n'a pas pu être rejoué au clavier virtuel dans cette session (le clavier PIN de l'app,
+préalable obligatoire même en mode démo, s'est montré capricieux aux clics synthétiques du
+navigateur de test) — vérifié à la place via les fonctions réelles directement, mêmes chemins de
+code que ceux que l'UI appelle.
+
+`CACHE_VERSION` : `v47` → `v48` (nouveau fichier `js/demo-data.js` ajouté à `APP_SHELL`).
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

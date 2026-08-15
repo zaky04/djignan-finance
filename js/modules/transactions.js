@@ -6,7 +6,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, logAudit } from '../db.js';
-import { getEnrichedTransactions, guessCategoryId } from '../ledger.js';
+import { getEnrichedTransactions, guessCategoryId, checkUnusualExpense } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { extractAmountFromImage } from '../ocr.js';
@@ -287,6 +287,14 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     close();
     showToast(editTransaction ? 'Transaction modifiée.' : 'Transaction enregistrée.');
     notifyDataChanged('transactions');
+
+    if (record.type === 'expense' && record.categoryId) {
+      const warning = await checkUnusualExpense(record.categoryId, record.amount, record.walletId, record.id);
+      if (warning) {
+        const catName = (categorySelect.selectedOptions[0]?.textContent || '').replace(/^—\s*/, '').trim();
+        showToast(`Dépense ${(Math.round(warning.ratio * 10) / 10)}x plus élevée que votre moyenne habituelle${catName ? ` pour ${catName}` : ''} (~${formatCurrency(warning.average, warning.currency)}).`, { duration: 6000 });
+      }
+    }
   });
 }
 

@@ -8,9 +8,10 @@
 import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting } from './db.js';
 import { initLockScreen, isBiometricAvailable, registerBiometric } from './auth.js';
 import { bus, EVENTS, appState } from './state.js';
-import { uuid, escapeHtml, openModal, showToast, CURRENCIES } from './utils.js';
+import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder } from './backup.js';
-import { checkWeeklyCloudBackupReminder } from './firebase-sync.js';
+import { checkWeeklyCloudBackupReminder, checkCloudStaleness } from './firebase-sync.js';
+import { seedDemoData, clearDemoData } from './demo-data.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
 
@@ -267,13 +268,25 @@ async function maybeShowOnboarding() {
             </div>
             <button type="submit" class="btn btn-primary btn-block">Continuer</button>
           </form>
-          ${skipStepButtonHtml()}`;
+          ${skipStepButtonHtml()}
+          <button type="button" class="btn btn-ghost btn-block" id="ob-demo" style="margin-top:8px;">Découvrir avec des données d'exemple</button>`;
         el.querySelector('#ob-currency-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           await setSetting('baseCurrency', new FormData(e.target).get('baseCurrency'));
           next();
         });
         el.querySelector('#ob-skip').addEventListener('click', () => next());
+        // Quitte tout l'assistant (pas juste cette étape) : un jeu de données fictif rend le
+        // reste du parcours (créer SON portefeuille, SON profil...) sans objet. isDemoModeActive
+        // fait apparaître un bandeau permanent pour repartir de zéro avant d'entrer de vraies
+        // données — voir renderDemoModeBanner() et demo-data.js.
+        el.querySelector('#ob-demo').addEventListener('click', async () => {
+          await seedDemoData();
+          modal.close();
+          notifyDataChanged('all');
+          renderDemoModeBanner();
+          showToast('Données de démonstration chargées.');
+        });
       },
     },
     {
@@ -436,6 +449,28 @@ async function maybeShowOnboarding() {
   await renderStep();
 }
 
+/** Bandeau permanent affiché tant que isDemoModeActive est vrai (voir demo-data.js) — visible sur
+    toutes les vues, pas seulement le tableau de bord, pour qu'il soit impossible de manquer qu'on
+    explore des données fictives et pas ses propres finances. */
+async function renderDemoModeBanner() {
+  const container = document.getElementById('demo-mode-banner');
+  if (!container) return;
+  const active = await getSetting('isDemoModeActive', false);
+  if (!active) { container.hidden = true; container.innerHTML = ''; return; }
+  container.hidden = false;
+  container.innerHTML = `
+    <p class="alert alert-info" style="margin:0;">
+      Vous explorez des données de démonstration.
+      <button type="button" class="btn btn-ghost" id="demo-clear-btn" style="margin-left:8px;padding:4px 10px;">Effacer et commencer avec mes données</button>
+    </p>`;
+  container.querySelector('#demo-clear-btn').addEventListener('click', async () => {
+    const ok = await confirmDialog('Effacer les données de démonstration et repartir de zéro ?', { confirmText: 'Effacer', danger: false });
+    if (!ok) return;
+    await clearDemoData();
+    window.location.reload();
+  });
+}
+
 async function onUnlocked() {
   document.getElementById('lock-screen').hidden = true;
   document.getElementById('app').hidden = false;
@@ -443,9 +478,15 @@ async function onUnlocked() {
   await generateDueRecurring();
   navigateTo('dashboard');
   applyShortcutParams();
+  await renderDemoModeBanner();
   await maybeShowOnboarding();
   maybeShowInstallPrompt();
   checkAndNotify();
+  // En premier parmi les invites au démarrage : avertir d'une sauvegarde cloud plus récente (risque
+  // de doublons/données écrasées si l'utilisateur commence à saisir sur cet appareil) prime sur les
+  // simples rappels de sauvegarde ci-dessous. checkCloudStaleness() ne charge le SDK Firebase que
+  // pour un utilisateur déjà connecté au cloud (cloudBackupWasSignedIn) — jamais par défaut.
+  setTimeout(() => checkCloudStaleness(), 2000);
   setTimeout(() => checkWeeklyBackupReminder(), 4000); // décalé pour ne pas superposer les deux invites
   // Encore décalé par rapport au rappel local : si les deux sont dus le même jour, on ne veut pas
   // les empiler l'un sur l'autre. checkWeeklyCloudBackupReminder() ne charge le SDK Firebase que si

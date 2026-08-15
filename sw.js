@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v47';
+const CACHE_VERSION = 'v48';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -24,6 +24,7 @@ const APP_SHELL = [
   './js/backup.js',
   './js/firebase-config.js',
   './js/firebase-sync.js',
+  './js/demo-data.js',
   './js/install-prompt.js',
   './js/notifications.js',
   './js/modules/dashboard.js',

@@ -148,6 +148,10 @@ export async function pushBackupToCloud(passphrase) {
   // sauvegarde — bouton des Paramètres ou rappel périodique — même logique que markBackupDone()
   // pour le rappel local.
   await setSetting('cloudBackupSnoozeCount', 0);
+  // Marque CET appareil comme à jour avec le cloud (voir checkCloudStaleness) — distinct de
+  // lastCloudBackupAt (qui ne veut dire "j'ai poussé depuis ici", affiché en Paramètres) : celui-ci
+  // sert uniquement à savoir si cet appareil est en retard sur le cloud, mis à jour par push ET pull.
+  await setSetting('cloudLastKnownSyncAt', new Date().toISOString());
 }
 
 /* ---------- Rappel périodique de sauvegarde cloud ----------
@@ -214,7 +218,7 @@ export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
   if (!user) throw new Error('Non connecté.');
   const snap = await firestoreMod.getDoc(firestoreMod.doc(firebaseDb, 'backups', user.uid));
   if (!snap.exists()) throw new Error('Aucune sauvegarde cloud trouvée pour ce compte.');
-  const { chunkCount } = snap.data();
+  const { chunkCount, updatedAt } = snap.data();
   const chunksRef = firestoreMod.collection(firebaseDb, 'backups', user.uid, 'chunks');
   const chunkDocs = await Promise.all(
     Array.from({ length: chunkCount }, (_, i) => firestoreMod.getDoc(firestoreMod.doc(chunksRef, String(i))))
@@ -225,6 +229,82 @@ export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
   await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
   notifyDataChanged('all');
+  // Cet appareil est maintenant à jour avec le cloud tel qu'il était à updatedAt (l'horodatage
+  // serveur de LA sauvegarde qu'on vient de récupérer, pas l'heure locale de fin de restauration —
+  // plus précis, évite tout décalage d'horloge appareil/serveur). Voir checkCloudStaleness().
+  if (updatedAt?.toDate) await setSetting('cloudLastKnownSyncAt', updatedAt.toDate().toISOString());
+}
+
+/* ---------- Vérification de fraîcheur au démarrage ----------
+   Scénario visé : plusieurs appareils partagent le même compte cloud. L'appareil A sauvegarde de
+   nouvelles transactions ; l'appareil B, resté sur une version plus ancienne, se rouvre et
+   l'utilisateur commence à y saisir SES propres nouvelles transactions sans savoir que le cloud a
+   avancé pendant ce temps — B pousserait alors une sauvegarde qui écraserait les transactions de A
+   (ou B raterait les transactions de A jusqu'à sa prochaine restauration manuelle). En comparant
+   l'horodatage serveur de la dernière sauvegarde cloud à la dernière fois que CET appareil a été
+   synchronisé (push OU pull, cloudLastKnownSyncAt), on peut prévenir AVANT que B ne commence à
+   diverger, plutôt que de découvrir le problème après coup.
+   Ne résout pas le cas où les deux appareils ont chacun des changements non synchronisés en même
+   temps (vrai conflit des deux côtés) — ça nécessiterait le moteur de résolution de conflits qu'on
+   a délibérément évité de construire (voir plan de conception). Mais ça couvre le cas courant :
+   un appareil simplement en retard, averti avant de commencer à taper dessus. */
+export async function checkCloudStaleness() {
+  if (!isFirebaseConfigured) return;
+  if (!(await getSetting('cloudBackupWasSignedIn', false))) return;
+
+  // Timeout défensif : ne doit jamais laisser une modale surgir bien après que l'utilisateur a déjà
+  // commencé à travailler (connexion lente/capricieuse). Pas un blocage du démarrage de l'app —
+  // cette fonction est déjà appelée en tâche de fond via setTimeout (app.js), jamais attendue par le
+  // boot lui-même.
+  let cancelled = false;
+  const timeout = setTimeout(() => { cancelled = true; }, 8000);
+
+  try {
+    const { authMod, firestoreMod } = await ensureFirebase();
+    await handlePendingRedirect(authMod);
+    const user = await waitForAuthReady(authMod);
+    if (!user || cancelled) return;
+
+    const snap = await firestoreMod.getDoc(firestoreMod.doc(firebaseDb, 'backups', user.uid));
+    if (!snap.exists() || cancelled) return;
+    const cloudUpdatedAt = snap.data().updatedAt?.toDate?.();
+    if (!cloudUpdatedAt || cancelled) return;
+
+    const localSyncAt = await getSetting('cloudLastKnownSyncAt');
+    const localMs = localSyncAt ? new Date(localSyncAt).getTime() : 0;
+    if (!cancelled && cloudUpdatedAt.getTime() > localMs) {
+      showCloudStalenessModal(cloudUpdatedAt);
+    }
+  } catch {
+    // Hors-ligne ou service indisponible : l'app continue de fonctionner normalement, sans
+    // message d'erreur — la vérification sera retentée au prochain démarrage.
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function showCloudStalenessModal(cloudUpdatedAt) {
+  const modal = openModal(`
+    <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">Une sauvegarde plus récente existe dans le cloud, faite le ${formatDate(cloudUpdatedAt.toISOString())} — probablement depuis un autre appareil. Pour éviter des doublons ou de remplacer des données par erreur, il est recommandé de la récupérer avant de continuer sur cet appareil.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;">
+      <button type="button" class="btn btn-primary" id="cloud-stale-restore-btn">Restaurer maintenant</button>
+      <button type="button" class="btn btn-ghost" id="cloud-stale-dismiss-btn">Continuer quand même</button>
+    </div>`, { title: 'Sauvegarde cloud plus récente' });
+
+  modal.el.querySelector('#cloud-stale-dismiss-btn').addEventListener('click', () => modal.close());
+
+  modal.el.querySelector('#cloud-stale-restore-btn').addEventListener('click', async () => {
+    modal.close();
+    const p = await promptPassphrase('Mot de passe de la sauvegarde cloud');
+    if (!p) return;
+    const merge = await confirmDialog('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.', { confirmText: 'Fusionner', cancelText: 'Remplacer tout' });
+    try {
+      await pullBackupFromCloud(p, { merge });
+      showToast('Données restaurées depuis le cloud.');
+    } catch (err) {
+      showToast('Erreur : ' + (err.message || 'restauration impossible.'));
+    }
+  });
 }
 
 /* ---------- UI (Paramètres) ---------- */

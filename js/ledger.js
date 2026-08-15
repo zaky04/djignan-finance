@@ -533,3 +533,28 @@ export async function guessCategoryId(note, type) {
   if (!scores.size) return null;
   return [...scores.entries()].sort((a, b) => b[1] - a[1])[0][0];
 }
+
+const UNUSUAL_EXPENSE_MIN_SAMPLES = 3;
+const UNUSUAL_EXPENSE_RATIO = 2.5;
+
+/** Signale une dépense nettement plus élevée que l'habitude pour sa catégorie — purement
+    informatif, n'empêche jamais l'enregistrement. Sert surtout à rattraper une erreur de saisie
+    (ex: 45 000 tapé au lieu de 4 500). Comparaison faite en devise de base (une catégorie peut
+    recevoir des dépenses de portefeuilles en devises différentes). Renvoie null si la catégorie a
+    moins de UNUSUAL_EXPENSE_MIN_SAMPLES dépenses passées (pas assez d'historique pour que "la
+    moyenne" veuille dire quoi que ce soit) ou si le montant ne dépasse pas UNUSUAL_EXPENSE_RATIO
+    fois cette moyenne. excludeId sert à ignorer la transaction elle-même lors d'une modification. */
+export async function checkUnusualExpense(categoryId, amount, walletId, excludeId = null) {
+  if (!categoryId || !amount) return null;
+  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const past = transactions.filter((t) => t.type === 'expense' && t.categoryId === categoryId && t.id !== excludeId);
+  if (past.length < UNUSUAL_EXPENSE_MIN_SAMPLES) return null;
+
+  const pastBase = past.map((t) => toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency));
+  const average = pastBase.reduce((s, v) => s + v, 0) / pastBase.length;
+  const amountBase = toBase(amount, walletCurrency[walletId] || baseCurrency, rates, baseCurrency);
+  if (average <= 0 || amountBase < average * UNUSUAL_EXPENSE_RATIO) return null;
+
+  return { average, amount: amountBase, ratio: amountBase / average, currency: baseCurrency };
+}
