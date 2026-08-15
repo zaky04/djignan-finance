@@ -8,6 +8,10 @@ import { getExchangeRates, computeDebtHistory } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, percentage, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { renderNetWorthTrendChart } from '../charts.js';
+// Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
+// initDebtsModule() (handler de suppression) — voir le même piège documenté dans dashboard.js/
+// transactions.js.
+import { t as tr } from '../i18n.js';
 
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
@@ -22,6 +26,15 @@ export const DEBT_CATEGORY_NAMES = { debt: 'Prêt', receivable: 'Créance' };
 /** Ancien nom unique (avant que "Prêt" et "Créance" soient distingués) — gardé pour que la
     migration dans app.js puisse repérer et corriger les transactions déjà catégorisées avec. */
 export const LEGACY_DEBT_CATEGORY_NAME = 'Prêt et créance';
+// Toutes les traductions connues des deux noms canoniques ci-dessus (FR + EN), utilisées UNIQUEMENT
+// pour retrouver une catégorie déjà créée quelle que soit la langue active au moment de sa création
+// (ensureDebtCategoryId ci-dessous) — jamais pour choisir le nom à la création, qui passe par tr()
+// comme d'habitude. Sans ça, un utilisateur changeant de langue se retrouverait avec une nouvelle
+// catégorie "Loan" créée à côté de son "Prêt" existant au lieu de le réutiliser.
+const DEBT_CATEGORY_NAME_VARIANTS = {
+  debt: ['Prêt', 'Loan'],
+  receivable: ['Créance', 'Receivable'],
+};
 
 /** Retrouve (ou crée) la catégorie "Prêt" (dette) ou "Créance" selon debtType, pour le type de
     transaction donné (income/expense — les catégories sont scindées par type dans ce store, donc
@@ -30,11 +43,12 @@ export const LEGACY_DEBT_CATEGORY_NAME = 'Prêt et créance';
     jamais "Sans catégorie" dans la liste des transactions, tout en restant exclus des agrégats
     budgétaires (voir ledger.js, filtré via le champ debtId, pas via la catégorie). */
 export async function ensureDebtCategoryId(debtType, txType) {
-  const name = DEBT_CATEGORY_NAMES[debtType] || DEBT_CATEGORY_NAMES.debt;
+  const canonicalName = DEBT_CATEGORY_NAMES[debtType] || DEBT_CATEGORY_NAMES.debt;
+  const variants = DEBT_CATEGORY_NAME_VARIANTS[debtType] || DEBT_CATEGORY_NAME_VARIANTS.debt;
   const categories = await dbGetAll(STORES.CATEGORIES);
-  const existing = categories.find((c) => c.type === txType && c.name === name);
+  const existing = categories.find((c) => c.type === txType && variants.includes(c.name));
   if (existing) return existing.id;
-  const category = { id: uuid(), name, type: txType, parentId: null, createdAt: new Date().toISOString() };
+  const category = { id: uuid(), name: tr(canonicalName), type: txType, parentId: null, createdAt: new Date().toISOString() };
   await dbAdd(STORES.CATEGORIES, category);
   return category.id;
 }
@@ -48,25 +62,25 @@ function debtCardHtml(d, payments) {
     <div class="summary-card" data-debt-id="${d.id}">
       <div class="card-title-row">
         <div>
-          <span class="badge ${isDebt ? 'badge-neg' : 'badge-pos'}">${isDebt ? 'Dette' : 'Créance'}</span>
+          <span class="badge ${isDebt ? 'badge-neg' : 'badge-pos'}">${isDebt ? tr('Dette') : tr('Créance')}</span>
           <div style="font-weight:700;font-size:14.5px;margin-top:6px;">${escapeHtml(d.personName)}</div>
           ${d.note ? `<div class="tx-sub">${escapeHtml(d.note)}</div>` : ''}
         </div>
         <div class="card-actions">
-          <button type="button" class="icon-btn" data-action="pay" aria-label="Enregistrer un remboursement" title="Enregistrer un remboursement">${PAY_ICON}</button>
-          <button type="button" class="icon-btn" data-action="edit" aria-label="Modifier" title="Modifier">${EDIT_ICON}</button>
-          <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
+          <button type="button" class="icon-btn" data-action="pay" aria-label="${tr('Enregistrer un remboursement')}" title="${tr('Enregistrer un remboursement')}">${PAY_ICON}</button>
+          <button type="button" class="icon-btn" data-action="edit" aria-label="${tr('Modifier')}" title="${tr('Modifier')}">${EDIT_ICON}</button>
+          <button type="button" class="icon-btn" data-action="delete" aria-label="${tr('Supprimer')}" title="${tr('Supprimer')}">${DELETE_ICON}</button>
         </div>
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${Math.min(pct, 100)}%"></div></div>
       <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text-muted);margin:6px 0 10px;">
-        <span>Remboursé : ${formatCurrency(paid, d.currency)}</span>
+        <span>${tr('Remboursé : {amount}', { amount: formatCurrency(paid, d.currency) })}</span>
         <span>${formatPercent(pct, 0)}</span>
       </div>
-      <div class="stat-row"><span class="stat-row-label">Montant initial</span><span>${formatCurrency(d.principal, d.currency)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Restant dû</span><span class="amount" data-value="${rem}">${formatCurrency(rem, d.currency)}</span></div>
-      ${d.interestRate ? `<div class="stat-row"><span class="stat-row-label">Taux d'intérêt annuel</span><span>${formatPercent(d.interestRate, 1)}</span></div>` : ''}
-      ${d.dueDate ? `<div class="stat-row"><span class="stat-row-label">Échéance</span><span>${formatDate(d.dueDate)}</span></div>` : ''}
+      <div class="stat-row"><span class="stat-row-label">${tr('Montant initial')}</span><span>${formatCurrency(d.principal, d.currency)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${tr('Restant dû')}</span><span class="amount" data-value="${rem}">${formatCurrency(rem, d.currency)}</span></div>
+      ${d.interestRate ? `<div class="stat-row"><span class="stat-row-label">${tr("Taux d'intérêt annuel")}</span><span>${formatPercent(d.interestRate, 1)}</span></div>` : ''}
+      ${d.dueDate ? `<div class="stat-row"><span class="stat-row-label">${tr('Échéance')}</span><span>${formatDate(d.dueDate)}</span></div>` : ''}
     </div>`;
 }
 function debt_paid_of(d, payments) {
@@ -88,14 +102,14 @@ function paidDebtRowHtml(d, paidDate) {
       </div>
       <div class="tx-amount amount ${isDebt ? 'neg' : 'pos'}">${formatCurrency(d.principal, d.currency)}</div>
       <div class="card-actions">
-        <button type="button" class="icon-btn" data-action="delete" aria-label="Supprimer" title="Supprimer">${DELETE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="${tr('Supprimer')}" title="${tr('Supprimer')}">${DELETE_ICON}</button>
       </div>
     </div>`;
 }
 
 function walletOptionsHtml(wallets, currency) {
   const matching = wallets.filter((w) => w.currency === currency);
-  if (!matching.length) return `<option value="">Aucun portefeuille en ${escapeHtml(currency)}</option>`;
+  if (!matching.length) return `<option value="">${tr('Aucun portefeuille en {currency}', { currency: escapeHtml(currency) })}</option>`;
   return matching.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
 }
 
@@ -104,35 +118,35 @@ function debtFormHtml(d, defaultCurrency) {
   return `
     <form id="debt-form">
       <div class="segmented" data-field="type">
-        <button type="button" class="segmented-btn ${(!d || d.type === 'debt') ? 'is-active' : ''}" data-value="debt">Dette (je dois)</button>
-        <button type="button" class="segmented-btn ${d?.type === 'receivable' ? 'is-active' : ''}" data-value="receivable">Créance (on me doit)</button>
+        <button type="button" class="segmented-btn ${(!d || d.type === 'debt') ? 'is-active' : ''}" data-value="debt">${tr('Dette (je dois)')}</button>
+        <button type="button" class="segmented-btn ${d?.type === 'receivable' ? 'is-active' : ''}" data-value="receivable">${tr('Créance (on me doit)')}</button>
       </div>
       <input type="hidden" name="type" value="${d?.type || 'debt'}">
-      <div class="form-row"><label>Nom de la personne / organisme</label><input type="text" name="personName" required maxlength="60" value="${escapeHtml(d?.personName || '')}"></div>
-      <div class="form-row"><label>Montant</label><input type="number" step="0.01" min="0" name="principal" required value="${d?.principal ?? ''}"></div>
-      <div class="form-row"><label>Devise</label>${currencySelectHtml(d?.currency || defaultCurrency)}</div>
+      <div class="form-row"><label>${tr('Nom de la personne / organisme')}</label><input type="text" name="personName" required maxlength="60" value="${escapeHtml(d?.personName || '')}"></div>
+      <div class="form-row"><label>${tr('Montant')}</label><input type="number" step="0.01" min="0" name="principal" required value="${d?.principal ?? ''}"></div>
+      <div class="form-row"><label>${tr('Devise')}</label>${currencySelectHtml(d?.currency || defaultCurrency)}</div>
       ${!isEdit ? `
       <div class="form-row">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" name="movesMoneyNow" checked> Cet argent bouge aujourd'hui
+          <input type="checkbox" name="movesMoneyNow" checked> ${tr('Cet argent bouge aujourd\'hui')}
         </label>
-        <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">Décochez si c'est une dette déjà existante avant d'utiliser l'app (aucun mouvement de portefeuille ne sera créé).</p>
+        <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">${tr('Décochez si c\'est une dette déjà existante avant d\'utiliser l\'app (aucun mouvement de portefeuille ne sera créé).')}</p>
       </div>
       <div class="form-row" data-field="movesMoneyWallet">
-        <label>Portefeuille</label>
+        <label>${tr('Portefeuille')}</label>
         <select name="walletId"></select>
       </div>` : ''}
-      <div class="form-row"><label>Taux d'intérêt annuel % (optionnel)</label><input type="number" step="0.01" min="0" name="interestRate" value="${d?.interestRate ?? ''}"></div>
-      <div class="form-row"><label>Date de départ</label><input type="date" name="startDate" value="${d?.startDate || todayISO()}"></div>
-      <div class="form-row"><label>Échéance (optionnel)</label><input type="date" name="dueDate" value="${d?.dueDate || ''}"></div>
-      <div class="form-row"><label>Note (optionnel)</label><input type="text" name="note" maxlength="140" value="${escapeHtml(d?.note || '')}"></div>
-      <button type="submit" class="btn btn-primary btn-block">${d ? 'Enregistrer' : 'Créer'}</button>
+      <div class="form-row"><label>${tr("Taux d'intérêt annuel % (optionnel)")}</label><input type="number" step="0.01" min="0" name="interestRate" value="${d?.interestRate ?? ''}"></div>
+      <div class="form-row"><label>${tr('Date de départ')}</label><input type="date" name="startDate" value="${d?.startDate || todayISO()}"></div>
+      <div class="form-row"><label>${tr('Échéance (optionnel)')}</label><input type="date" name="dueDate" value="${d?.dueDate || ''}"></div>
+      <div class="form-row"><label>${tr('Note (optionnel)')}</label><input type="text" name="note" maxlength="140" value="${escapeHtml(d?.note || '')}"></div>
+      <button type="submit" class="btn btn-primary btn-block">${d ? tr('Enregistrer') : tr('Créer')}</button>
     </form>`;
 }
 
 async function openDebtModal(d = null) {
   const defaultCurrency = d ? d.currency : await getSetting('baseCurrency', 'EUR');
-  const modal = openModal(debtFormHtml(d, defaultCurrency), { title: d ? 'Modifier' : 'Nouvelle dette / créance' });
+  const modal = openModal(debtFormHtml(d, defaultCurrency), { title: d ? tr('Modifier') : tr('Nouvelle dette / créance') });
   wireCurrencySelect(modal.el);
   let currentType = d?.type || 'debt';
   modal.el.querySelectorAll('.segmented-btn').forEach((b) => b.addEventListener('click', () => {
@@ -168,7 +182,7 @@ async function openDebtModal(d = null) {
     const before = d ? { ...d } : null;
     const currency = readCurrencyValue(e.target);
     const movesMoneyNow = !d && movesCheckbox?.checked;
-    if (movesMoneyNow && !walletSelect.value) { showToast('Choisissez un portefeuille, ou décochez "Cet argent bouge aujourd\'hui".'); return; }
+    if (movesMoneyNow && !walletSelect.value) { showToast(tr('Choisissez un portefeuille, ou décochez "Cet argent bouge aujourd\'hui".')); return; }
 
     const record = {
       id: d?.id || uuid(),
@@ -194,21 +208,21 @@ async function openDebtModal(d = null) {
         categoryId: await ensureDebtCategoryId(currentType, txType),
         amount: record.principal,
         date: record.startDate,
-        note: currentType === 'debt' ? `Prêt reçu de ${record.personName}` : `Prêt accordé à ${record.personName}`,
+        note: currentType === 'debt' ? tr('Prêt reçu de {name}', { name: record.personName }) : tr('Prêt accordé à {name}', { name: record.personName }),
         tags: [],
         reconciled: false,
         debtId: record.id,
         createdAt: new Date().toISOString(),
       };
       await dbAdd(STORES.TRANSACTIONS, openingTx);
-      await logAudit({ entityType: 'transaction', entityId: openingTx.id, action: 'create', after: openingTx, note: 'Mouvement de dette/créance' });
+      await logAudit({ entityType: 'transaction', entityId: openingTx.id, action: 'create', after: openingTx, note: tr('Mouvement de dette/créance') });
       record.openingTransactionId = openingTx.id;
     }
 
     await dbPut(STORES.DEBTS, record);
     await logAudit({ entityType: 'debt', entityId: record.id, action: d ? 'update' : 'create', before, after: record });
     modal.close();
-    showToast(d ? 'Mis à jour.' : 'Créé.');
+    showToast(d ? tr('Mis à jour.') : tr('Créé.'));
     notifyDataChanged(movesMoneyNow ? 'all' : 'debts');
   });
 }
@@ -217,18 +231,18 @@ async function openPaymentModal(d) {
   const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
   const modal = openModal(`
     <form id="payment-form">
-      <div class="form-row"><label>Montant remboursé</label><input type="number" step="0.01" min="0" name="amount" required autofocus></div>
-      <div class="form-row"><label>Portefeuille</label><select name="walletId" required>${walletOptionsHtml(wallets, d.currency)}</select></div>
-      <div class="form-row"><label>Date</label><input type="date" name="date" value="${todayISO()}"></div>
-      <div class="form-row"><label>Note (optionnel)</label><input type="text" name="note" maxlength="140"></div>
-      <button type="submit" class="btn btn-primary btn-block">Enregistrer</button>
-    </form>`, { title: `Remboursement — ${d.personName}` });
+      <div class="form-row"><label>${tr('Montant remboursé')}</label><input type="number" step="0.01" min="0" name="amount" required autofocus></div>
+      <div class="form-row"><label>${tr('Portefeuille')}</label><select name="walletId" required>${walletOptionsHtml(wallets, d.currency)}</select></div>
+      <div class="form-row"><label>${tr('Date')}</label><input type="date" name="date" value="${todayISO()}"></div>
+      <div class="form-row"><label>${tr('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
+      <button type="submit" class="btn btn-primary btn-block">${tr('Enregistrer')}</button>
+    </form>`, { title: tr('Remboursement — {name}', { name: d.personName }) });
 
   modal.el.querySelector('#payment-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const walletId = fd.get('walletId');
-    if (!walletId) { showToast(`Créez d'abord un portefeuille en ${d.currency}.`); return; }
+    if (!walletId) { showToast(tr("Créez d'abord un portefeuille en {currency}.", { currency: d.currency })); return; }
     const payment = { id: uuid(), debtId: d.id, amount: parseFloat(fd.get('amount')) || 0, date: fd.get('date'), note: (fd.get('note') || '').trim().slice(0, 140) };
     await dbAdd(STORES.DEBT_PAYMENTS, payment);
     await logAudit({ entityType: 'debtPayment', entityId: payment.id, action: 'create', after: payment });
@@ -242,7 +256,7 @@ async function openPaymentModal(d) {
       categoryId: await ensureDebtCategoryId(d.type, paymentTxType),
       amount: payment.amount,
       date: payment.date,
-      note: `Remboursement — ${d.personName}`,
+      note: tr('Remboursement — {name}', { name: d.personName }),
       tags: [],
       reconciled: false,
       debtId: d.id,
@@ -250,7 +264,7 @@ async function openPaymentModal(d) {
       createdAt: new Date().toISOString(),
     };
     await dbAdd(STORES.TRANSACTIONS, paymentTx);
-    await logAudit({ entityType: 'transaction', entityId: paymentTx.id, action: 'create', after: paymentTx, note: 'Remboursement de dette/créance' });
+    await logAudit({ entityType: 'transaction', entityId: paymentTx.id, action: 'create', after: paymentTx, note: tr('Remboursement de dette/créance') });
 
     const payments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === d.id);
     const rem = remaining(d, payments);
@@ -258,10 +272,10 @@ async function openPaymentModal(d) {
       const before = { ...d };
       d.status = 'paid';
       await dbPut(STORES.DEBTS, d);
-      await logAudit({ entityType: 'debt', entityId: d.id, action: 'update', before, after: d, note: 'Soldée' });
+      await logAudit({ entityType: 'debt', entityId: d.id, action: 'update', before, after: d, note: tr('Soldée') });
     }
     modal.close();
-    showToast('Remboursement enregistré.');
+    showToast(tr('Remboursement enregistré.'));
     notifyDataChanged('debts');
   });
 }
@@ -307,16 +321,16 @@ function simulateRepayment(debts, payments, monthlyBudget, method, rates, baseCu
 
 function renderSimulatorResult(result, method, currency) {
   if (result.maxedOut) {
-    return `<div class="alert alert-danger">Avec ce budget mensuel, les intérêts dépassent votre capacité de remboursement (${method}). Augmentez le montant mensuel.</div>`;
+    return `<div class="alert alert-danger">${tr('Avec ce budget mensuel, les intérêts dépassent votre capacité de remboursement ({method}). Augmentez le montant mensuel.', { method })}</div>`;
   }
   const years = (result.months / 12).toFixed(1);
   return `
     <div class="panel" style="margin-bottom:12px;">
-      <div class="panel-header"><h3>${method === 'avalanche' ? 'Avalanche (taux le plus élevé d\'abord)' : 'Boule de neige (plus petit montant d\'abord)'}</h3></div>
-      <div class="stat-row"><span class="stat-row-label">Durée totale estimée</span><span>${result.months} mois (~${years} ans)</span></div>
-      <div class="stat-row"><span class="stat-row-label">Intérêts totaux payés</span><span>${formatCurrency(result.totalInterest, currency)}</span></div>
+      <div class="panel-header"><h3>${method === 'avalanche' ? tr("Avalanche (taux le plus élevé d'abord)") : tr("Boule de neige (plus petit montant d'abord)")}</h3></div>
+      <div class="stat-row"><span class="stat-row-label">${tr('Durée totale estimée')}</span><span>${tr('{months} mois (~{years} ans)', { months: result.months, years })}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${tr('Intérêts totaux payés')}</span><span>${formatCurrency(result.totalInterest, currency)}</span></div>
       <div style="margin-top:8px;font-size:12.5px;color:var(--text-muted);">
-        Ordre de remboursement : ${result.order.map((o, i) => `${i + 1}. ${escapeHtml(o.name)} (mois ${o.payoffMonth || '—'})`).join(' · ')}
+        ${tr('Ordre de remboursement : {list}', { list: result.order.map((o, i) => `${i + 1}. ${escapeHtml(o.name)} (${tr('mois {n}', { n: o.payoffMonth || '—' })})`).join(' · ') })}
       </div>
     </div>`;
 }
@@ -325,12 +339,12 @@ async function renderSimulator(container) {
   const { baseCurrency } = await getExchangeRates();
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
-      <div class="panel-header"><h3>Simulateur de remboursement stratégique</h3></div>
+      <div class="panel-header"><h3>${tr('Simulateur de remboursement stratégique')}</h3></div>
       <div class="form-row" style="max-width:260px;">
-        <label>Budget mensuel disponible (en ${escapeHtml(baseCurrency)}) pour rembourser vos dettes</label>
+        <label>${tr('Budget mensuel disponible (en {currency}) pour rembourser vos dettes', { currency: escapeHtml(baseCurrency) })}</label>
         <input type="number" min="0" step="10" id="sim-budget" value="200">
       </div>
-      <button type="button" class="btn btn-primary" id="sim-run-btn">Comparer Avalanche vs Boule de neige</button>
+      <button type="button" class="btn btn-primary" id="sim-run-btn">${tr('Comparer Avalanche vs Boule de neige')}</button>
     </div>
     <div id="sim-results"></div>`;
 
@@ -354,16 +368,16 @@ export async function renderDebts() {
 
   const cardsHtml = activeDebts.length
     ? `<div class="grid-cards" style="margin-bottom:20px;">${activeDebts.map((d) => debtCardHtml(d, payments)).join('')}</div>`
-    : '<div class="empty-state">Aucune dette ni créance active.</div>';
+    : `<div class="empty-state">${tr('Aucune dette ni créance active.')}</div>`;
 
   const hasDebts = debts.some((d) => d.type === 'debt');
   const chartHtml = hasDebts
-    ? `<div class="chart-card" style="margin-bottom:20px;"><h3>Évolution du désendettement</h3><div class="chart-canvas-wrap"><canvas id="chart-debts-trend"></canvas></div></div>`
+    ? `<div class="chart-card" style="margin-bottom:20px;"><h3>${tr('Évolution du désendettement')}</h3><div class="chart-canvas-wrap"><canvas id="chart-debts-trend"></canvas></div></div>`
     : '';
 
   const paidHtml = paidDebts.length
     ? `<div class="panel" style="margin-top:20px;">
-        <div class="panel-header"><h3>Soldées</h3></div>
+        <div class="panel-header"><h3>${tr('Soldées')}</h3></div>
         ${paidDebts
           .map((d) => ({ d, paidDate: latestPaymentDate(d, payments) }))
           .sort((a, b) => (b.paidDate || '').localeCompare(a.paidDate || ''))
@@ -377,7 +391,7 @@ export async function renderDebts() {
   if (hasDebts) {
     const { baseCurrency } = await getExchangeRates();
     const history = await computeDebtHistory(6);
-    renderNetWorthTrendChart('chart-debts-trend', history, baseCurrency, 'Dette restante');
+    renderNetWorthTrendChart('chart-debts-trend', history, baseCurrency, tr('Dette restante'));
   }
 
   await renderSimulator(document.getElementById('debts-simulator'));
@@ -400,7 +414,7 @@ export function initDebtsModule() {
     } else if (btn.dataset.action === 'edit') {
       openDebtModal(d);
     } else if (btn.dataset.action === 'delete') {
-      const ok = await confirmDialog(`Supprimer "${d.personName}" et tout son historique de remboursement (et les mouvements de portefeuille associés) ?`, { danger: true, confirmText: 'Supprimer' });
+      const ok = await confirmDialog(tr('Supprimer "{name}" et tout son historique de remboursement (et les mouvements de portefeuille associés) ?', { name: d.personName }), { danger: true, confirmText: tr('Supprimer') });
       if (ok) {
         const payments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === d.id);
         const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((t) => t.debtId === d.id);
@@ -409,14 +423,14 @@ export function initDebtsModule() {
         await dbDelete(STORES.DEBTS, d.id);
         await logAudit({ entityType: 'debt', entityId: d.id, action: 'delete', before: d });
         notifyDataChanged('debts');
-        showToast('Supprimé.', {
-          actionLabel: 'Annuler',
+        showToast(tr('Supprimé.'), {
+          actionLabel: tr('Annuler'),
           onAction: async () => {
             await dbAdd(STORES.DEBTS, d);
             for (const p of payments) await dbAdd(STORES.DEBT_PAYMENTS, p);
             for (const t of linkedTx) await dbAdd(STORES.TRANSACTIONS, t);
-            await logAudit({ entityType: 'debt', entityId: d.id, action: 'create', after: d, note: 'Restaurée (annulation)' });
-            showToast('Restauré.');
+            await logAudit({ entityType: 'debt', entityId: d.id, action: 'create', after: d, note: tr('Restaurée (annulation)') });
+            showToast(tr('Restauré.'));
             notifyDataChanged('debts');
           },
         });

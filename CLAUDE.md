@@ -1170,9 +1170,10 @@ que certains écrans resteront en français le temps du reste du chantier.
   Catégories, Récurrences, Règles) et leurs modales.
 - ✅ Épargne (lot 4, voir entrée ci-dessous) : objectifs, contributions, archivage.
 - ✅ Investissements (lot 5, voir entrée ci-dessous) : cartes, historique, comparatif de rendement.
-- ⬜ Dettes & créances, Outils, Rapports, Partage,
-  Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit), Recherche globale,
-  mode démo, onboarding.
+- ✅ Dettes & créances (lot 6, voir entrée ci-dessous) : cartes, formulaires, simulateur
+  Avalanche/Boule de neige.
+- ⬜ Outils, Rapports, Partage, Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà
+  traduit), Recherche globale, mode démo, onboarding.
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
 navigation mobile, écran de verrouillage (titre/sous-titre/aria-labels) et tableau de bord entier
@@ -1337,6 +1338,40 @@ nom de l'investissement, types d'entrée traduits dans la liste et le formulaire
 comparatif de rendement, filtres, aucune erreur console.
 
 `CACHE_VERSION` : `v56` → `v57`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 6/N : Dettes & créances)
+
+Écran converti : **Dettes & créances** (`debts.js`) — cartes, formulaire dette/créance (avec le
+mouvement de portefeuille optionnel à la création), modale de remboursement, simulateur stratégique
+Avalanche/Boule de neige, historique du désendettement. Piège `t`/variable reproduit à l'identique
+(voir lots précédents) : `t` utilisé comme nom de variable pour une transaction dans le handler de
+suppression de `initDebtsModule()` — import aliasé `tr` dès le départ.
+
+**Bug potentiel identifié et corrigé avant qu'il ne se produise, le plus important de ce lot** :
+`ensureDebtCategoryId()` retrouve-ou-crée la catégorie "Prêt"/"Créance" réservée aux mouvements de
+dette (voir §6, 13 août — ces catégories existaient déjà avant l'i18n) par **égalité exacte de nom**.
+Traduire naïvement le nom passé à la création (`t('Prêt')` = `'Loan'` en anglais) aurait cassé cette
+recherche : un utilisateur ayant déjà une catégorie "Prêt" (créée en français) qui passe l'app en
+anglais et enregistre une nouvelle dette se serait retrouvé avec une **catégorie "Loan" dupliquée**
+créée à côté de son "Prêt" existant, au lieu de le réutiliser — fragmentant silencieusement ses
+dettes entre deux catégories selon la langue active à chaque création. Exactement le même type de
+piège que `RECURRING_NOTE_PREFIX` (lot 3), mais sur une clé de recherche par nom plutôt qu'un préfixe.
+→ `DEBT_CATEGORY_NAME_VARIANTS` (nouveau, `debts.js`) : toutes les traductions connues (FR + EN) des
+deux noms canoniques, vérifiées à la recherche ; seule la création choisit la traduction courante via
+`tr(...)`. Vérifié explicitement par test : une catégorie "Prêt" injectée avant le passage en anglais
+est bien retrouvée par `ensureDebtCategoryId('debt', 'income')` en mode anglais (aucune catégorie
+"Loan" dupliquée créée).
+
+~55 nouvelles entrées de dictionnaire, 1 doublon détecté et corrigé (`'Créer'`, déjà présent depuis le
+lot Budgets — réutilisé au lieu d'être redéclaré), 384 clés au total après ce lot.
+
+Testé FR→EN→FR : cartes (badge Dette/Créance, montants, échéance), formulaire Nouvelle dette/créance
+(bascule Dette/Créance, case "argent bouge aujourd'hui", sélection de portefeuille), modale de
+remboursement, simulateur (résultat normal avec ordre de remboursement traduit y compris le "(month
+{n})" imbriqué, et message d'alerte quand le budget mensuel ne couvre pas les intérêts), et surtout le
+test explicite de non-régression sur `ensureDebtCategoryId` décrit ci-dessus. Aucune erreur console.
+
+`CACHE_VERSION` : `v57` → `v58`.
 
 ## 7. Pistes prioritaires non traitées
 

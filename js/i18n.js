@@ -442,4 +442,63 @@ const EN = {
   'Valeur du portefeuille': 'Portfolio value',
   'Supprimer l\'investissement "{name}" et tout son historique ?': 'Delete investment "{name}" and all its history?',
   'Investissement supprimé.': 'Investment deleted.',
+
+  // ---------- Dettes & créances (debts.js + en-tête index.html) ----------
+  '+ Dette / créance': '+ Debt / receivable',
+  // Prêt/Créance : noms canoniques des catégories réservées aux mouvements de dette/créance
+  // (ensureDebtCategoryId, debts.js) — traduites au moment de la CRÉATION de la catégorie
+  // uniquement, comme les catégories par défaut (voir DEFAULT_CATEGORIES). La recherche d'une
+  // catégorie déjà créée, elle, vérifie toutes les variantes FR/EN connues (DEBT_CATEGORY_NAME_VARIANTS
+  // dans debts.js), jamais seulement la traduction courante.
+  'Prêt': 'Loan',
+  'Créance': 'Receivable',
+  'Dette': 'Debt',
+  'Enregistrer un remboursement': 'Record a repayment',
+  'Remboursé : {amount}': 'Repaid: {amount}',
+  'Montant initial': 'Initial amount',
+  'Restant dû': 'Remaining balance',
+  "Taux d'intérêt annuel": 'Annual interest rate',
+  'Aucun portefeuille en {currency}': 'No wallet in {currency}',
+  'Dette (je dois)': 'Debt (I owe)',
+  'Créance (on me doit)': 'Receivable (owed to me)',
+  'Nom de la personne / organisme': 'Person / organization name',
+  "Cet argent bouge aujourd'hui": 'This money is moving today',
+  "Décochez si c'est une dette déjà existante avant d'utiliser l'app (aucun mouvement de portefeuille ne sera créé).":
+    "Uncheck if this is a debt that already existed before using the app (no wallet movement will be created).",
+  "Taux d'intérêt annuel % (optionnel)": 'Annual interest rate % (optional)',
+  'Date de départ': 'Start date',
+  'Échéance (optionnel)': 'Due date (optional)',
+  'Nouvelle dette / créance': 'New debt / receivable',
+  'Choisissez un portefeuille, ou décochez "Cet argent bouge aujourd\'hui".': 'Choose a wallet, or uncheck "This money is moving today".',
+  'Prêt reçu de {name}': 'Loan received from {name}',
+  'Prêt accordé à {name}': 'Loan given to {name}',
+  'Mouvement de dette/créance': 'Debt/receivable movement',
+  'Mis à jour.': 'Updated.',
+  'Créé.': 'Created.',
+  'Montant remboursé': 'Amount repaid',
+  'Remboursement — {name}': 'Repayment — {name}',
+  "Créez d'abord un portefeuille en {currency}.": 'First create a wallet in {currency}.',
+  'Remboursement de dette/créance': 'Debt/receivable repayment',
+  'Soldée': 'Paid off',
+  'Remboursement enregistré.': 'Repayment recorded.',
+  'Avec ce budget mensuel, les intérêts dépassent votre capacité de remboursement ({method}). Augmentez le montant mensuel.':
+    'With this monthly budget, interest exceeds your repayment capacity ({method}). Increase the monthly amount.',
+  "Avalanche (taux le plus élevé d'abord)": 'Avalanche (highest rate first)',
+  "Boule de neige (plus petit montant d'abord)": 'Snowball (smallest amount first)',
+  'Durée totale estimée': 'Estimated total duration',
+  '{months} mois (~{years} ans)': '{months} months (~{years} years)',
+  'Intérêts totaux payés': 'Total interest paid',
+  'Ordre de remboursement : {list}': 'Repayment order: {list}',
+  'mois {n}': 'month {n}',
+  'Simulateur de remboursement stratégique': 'Strategic repayment simulator',
+  'Budget mensuel disponible (en {currency}) pour rembourser vos dettes': 'Monthly budget available (in {currency}) to repay your debts',
+  'Comparer Avalanche vs Boule de neige': 'Compare Avalanche vs Snowball',
+  'Aucune dette ni créance active.': 'No active debt or receivable.',
+  'Évolution du désendettement': 'Debt payoff trend',
+  'Soldées': 'Paid off',
+  'Dette restante': 'Remaining debt',
+  'Supprimer "{name}" et tout son historique de remboursement (et les mouvements de portefeuille associés) ?':
+    'Delete "{name}" and all its repayment history (and associated wallet movements)?',
+  'Supprimé.': 'Deleted.',
+  'Restauré.': 'Restored.',
 };
