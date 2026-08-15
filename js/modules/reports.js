@@ -9,6 +9,7 @@ import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, loca
 import { exportTransactionsCsv } from '../backup.js';
 import { getSetting } from '../db.js';
 import { healthScorePanelHtml, calendarPanelHtml, wireCalendarPanel } from './reports-extras.js';
+import { t } from '../i18n.js';
 
 function profileHeaderLines(profile) {
   const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
@@ -19,7 +20,7 @@ let reportMonthKey = currentMonthKey();
 let reportYear = parseInt(currentMonthKey().slice(0, 4), 10);
 
 async function generatePdfReport() {
-  if (!window.jspdf) { showToast("La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant)."); return; }
+  if (!window.jspdf) { showToast(t("La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant).")); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   let y = 20;
@@ -27,10 +28,10 @@ async function generatePdfReport() {
 
   const profile = await getSetting('userProfile', {});
   doc.setFontSize(18);
-  doc.text('GeoFinance System — Bilan financier', 14, y); y += 8;
+  doc.text(t('GeoFinance System — Bilan financier'), 14, y); y += 8;
   doc.setFontSize(11);
   doc.setTextColor(100);
-  doc.text(`Période : ${formatMonthLabel(reportMonthKey)}`, 14, y); y += 6;
+  doc.text(t('Période : {month}', { month: formatMonthLabel(reportMonthKey) }), 14, y); y += 6;
   for (const line of profileHeaderLines(profile)) { doc.text(line, 14, y); y += 5; }
   y += 4;
   doc.setTextColor(0);
@@ -39,17 +40,17 @@ async function generatePdfReport() {
     computeNetWorth(), computeMonthSummary(reportMonthKey), computeExpensesByCategory(reportMonthKey), computeBudgetVsActual(reportMonthKey),
   ]);
 
-  doc.setFontSize(13); doc.text('Résumé', 14, y); y += 7;
+  doc.setFontSize(13); doc.text(t('Résumé'), 14, y); y += 7;
   doc.setFontSize(10);
   [
-    `Patrimoine net global : ${formatCurrency(total, currency)}`,
-    `Entrées du mois : ${formatCurrency(summary.income, summary.currency)}`,
-    `Sorties du mois : ${formatCurrency(summary.expenses, summary.currency)}`,
-    `Épargne nette : ${formatCurrency(summary.netSavings, summary.currency)}`,
+    t('Patrimoine net global : {amount}', { amount: formatCurrency(total, currency) }),
+    t('Entrées du mois : {amount}', { amount: formatCurrency(summary.income, summary.currency) }),
+    t('Sorties du mois : {amount}', { amount: formatCurrency(summary.expenses, summary.currency) }),
+    t('Épargne nette : {amount}', { amount: formatCurrency(summary.netSavings, summary.currency) }),
   ].forEach((line) => { doc.text(line, 14, y); y += 6; });
   y += 6;
 
-  doc.setFontSize(13); doc.text('Dépenses par catégorie', 14, y); y += 7;
+  doc.setFontSize(13); doc.text(t('Dépenses par catégorie'), 14, y); y += 7;
   doc.setFontSize(10);
   if (expensesByCategory.length) {
     for (const row of expensesByCategory) {
@@ -58,11 +59,11 @@ async function generatePdfReport() {
       doc.text(formatCurrency(row.value, summary.currency), 196, y, { align: 'right' });
       y += 6;
     }
-  } else { doc.text('Aucune dépense ce mois-ci.', 14, y); y += 6; }
+  } else { doc.text(t('Aucune dépense ce mois-ci.'), 14, y); y += 6; }
   y += 6;
 
   pageBreakIfNeeded();
-  doc.setFontSize(13); doc.text('Budget vs réel', 14, y); y += 7;
+  doc.setFontSize(13); doc.text(t('Budget vs réel'), 14, y); y += 7;
   doc.setFontSize(10);
   if (budgetVsActual.length) {
     for (const row of budgetVsActual) {
@@ -71,14 +72,14 @@ async function generatePdfReport() {
       doc.text(`${formatCurrency(row.actual, summary.currency)} / ${formatCurrency(row.budget, summary.currency)}`, 196, y, { align: 'right' });
       y += 6;
     }
-  } else { doc.text('Aucun budget défini ce mois-ci.', 14, y); y += 6; }
+  } else { doc.text(t('Aucun budget défini ce mois-ci.'), 14, y); y += 6; }
 
   doc.save(`geofinance-bilan-${reportMonthKey}.pdf`);
-  showToast('Bilan PDF généré.');
+  showToast(t('Bilan PDF généré.'));
 }
 
 async function generateAnnualPdfReport() {
-  if (!window.jspdf) { showToast("La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant)."); return; }
+  if (!window.jspdf) { showToast(t("La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant).")); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   let y = 20;
@@ -88,10 +89,10 @@ async function generateAnnualPdfReport() {
 
   const profile = await getSetting('userProfile', {});
   doc.setFontSize(18);
-  doc.text('GeoFinance System — Bilan annuel', 14, y); y += 8;
+  doc.text(t('GeoFinance System — Bilan annuel'), 14, y); y += 8;
   doc.setFontSize(11);
   doc.setTextColor(100);
-  doc.text(`Année ${reportYear}`, 14, y); y += 6;
+  doc.text(t('Année {year}', { year: reportYear }), 14, y); y += 6;
   for (const line of profileHeaderLines(profile)) { doc.text(line, 14, y); y += 5; }
   y += 4;
   doc.setTextColor(0);
@@ -107,25 +108,25 @@ async function generateAnnualPdfReport() {
   const totalExpenses = monthlySummaries.reduce((s, m) => s + m.expenses, 0);
   const totalNetSavings = monthlySummaries.reduce((s, m) => s + m.netSavings, 0);
 
-  doc.setFontSize(13); doc.text('Résumé annuel', 14, y); y += 7;
+  doc.setFontSize(13); doc.text(t('Résumé annuel'), 14, y); y += 7;
   doc.setFontSize(10);
   [
-    `Revenus totaux : ${formatCurrency(totalIncome, currency)}`,
-    `Dépenses totales : ${formatCurrency(totalExpenses, currency)}`,
-    `Épargne nette totale : ${formatCurrency(totalNetSavings, currency)}`,
-    `Patrimoine net au 1er janvier : ${formatCurrency(netWorthStart, currency)}`,
-    `Patrimoine net au 31 décembre : ${formatCurrency(netWorthEnd, currency)}`,
-    `Variation du patrimoine sur l'année : ${formatCurrency(netWorthEnd - netWorthStart, currency)}`,
+    t('Revenus totaux : {amount}', { amount: formatCurrency(totalIncome, currency) }),
+    t('Dépenses totales : {amount}', { amount: formatCurrency(totalExpenses, currency) }),
+    t('Épargne nette totale : {amount}', { amount: formatCurrency(totalNetSavings, currency) }),
+    t('Patrimoine net au 1er janvier : {amount}', { amount: formatCurrency(netWorthStart, currency) }),
+    t('Patrimoine net au 31 décembre : {amount}', { amount: formatCurrency(netWorthEnd, currency) }),
+    t("Variation du patrimoine sur l'année : {amount}", { amount: formatCurrency(netWorthEnd - netWorthStart, currency) }),
   ].forEach((line) => { doc.text(line, 14, y); y += 6; });
   y += 6;
 
   pageBreakIfNeeded();
-  doc.setFontSize(13); doc.text('Détail mensuel', 14, y); y += 7;
+  doc.setFontSize(13); doc.text(t('Détail mensuel'), 14, y); y += 7;
   doc.setFontSize(10);
-  doc.text('Mois', 14, y);
-  doc.text('Entrées', 100, y, { align: 'right' });
-  doc.text('Sorties', 148, y, { align: 'right' });
-  doc.text('Épargne nette', 196, y, { align: 'right' });
+  doc.text(t('Mois'), 14, y);
+  doc.text(t('Entrées'), 100, y, { align: 'right' });
+  doc.text(t('Sorties'), 148, y, { align: 'right' });
+  doc.text(t('Épargne nette'), 196, y, { align: 'right' });
   y += 5;
   doc.setDrawColor(200); doc.line(14, y, 196, y); y += 5;
   monthKeys.forEach((mk, i) => {
@@ -140,7 +141,7 @@ async function generateAnnualPdfReport() {
   y += 6;
 
   pageBreakIfNeeded();
-  doc.setFontSize(13); doc.text('Dépenses par catégorie (cumul annuel)', 14, y); y += 7;
+  doc.setFontSize(13); doc.text(t('Dépenses par catégorie (cumul annuel)'), 14, y); y += 7;
   doc.setFontSize(10);
   const categoryTotals = new Map();
   for (const mk of monthKeys) {
@@ -159,11 +160,11 @@ async function generateAnnualPdfReport() {
       y += 6;
     }
   } else {
-    doc.text('Aucune dépense cette année.', 14, y); y += 6;
+    doc.text(t('Aucune dépense cette année.'), 14, y); y += 6;
   }
 
   doc.save(`geofinance-bilan-annuel-${reportYear}.pdf`);
-  showToast('Bilan annuel PDF généré.');
+  showToast(t('Bilan annuel PDF généré.'));
 }
 
 export async function renderReports() {
@@ -171,26 +172,26 @@ export async function renderReports() {
   if (!container) return;
   container.innerHTML = `
     <div class="panel">
-      <div class="panel-header"><h3>Bilan financier mensuel</h3></div>
+      <div class="panel-header"><h3>${t('Bilan financier mensuel')}</h3></div>
       <div style="display:flex;align-items:center;gap:4px;margin-bottom:16px;">
-        <button type="button" class="icon-btn" id="rep-prev-month" aria-label="Mois précédent">‹</button>
+        <button type="button" class="icon-btn" id="rep-prev-month" aria-label="${t('Mois précédent')}">‹</button>
         <strong style="min-width:130px;text-align:center;display:inline-block;">${formatMonthLabel(reportMonthKey)}</strong>
-        <button type="button" class="icon-btn" id="rep-next-month" aria-label="Mois suivant">›</button>
+        <button type="button" class="icon-btn" id="rep-next-month" aria-label="${t('Mois suivant')}">›</button>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:10px;">
-        <button type="button" class="btn btn-primary" id="rep-pdf-btn">Générer le bilan PDF</button>
-        <button type="button" class="btn btn-ghost" id="rep-csv-month-btn">Exporter les transactions du mois (CSV)</button>
-        <button type="button" class="btn btn-ghost" id="rep-csv-all-btn">Exporter tout l'historique (CSV)</button>
+        <button type="button" class="btn btn-primary" id="rep-pdf-btn">${t('Générer le bilan PDF')}</button>
+        <button type="button" class="btn btn-ghost" id="rep-csv-month-btn">${t('Exporter les transactions du mois (CSV)')}</button>
+        <button type="button" class="btn btn-ghost" id="rep-csv-all-btn">${t("Exporter tout l'historique (CSV)")}</button>
       </div>
     </div>
     <div class="panel" style="margin-top:16px;">
-      <div class="panel-header"><h3>Bilan annuel</h3></div>
+      <div class="panel-header"><h3>${t('Bilan annuel')}</h3></div>
       <div style="display:flex;align-items:center;gap:4px;margin-bottom:16px;">
-        <button type="button" class="icon-btn" id="rep-prev-year" aria-label="Année précédente">‹</button>
+        <button type="button" class="icon-btn" id="rep-prev-year" aria-label="${t('Année précédente')}">‹</button>
         <strong style="min-width:80px;text-align:center;display:inline-block;">${reportYear}</strong>
-        <button type="button" class="icon-btn" id="rep-next-year" aria-label="Année suivante">›</button>
+        <button type="button" class="icon-btn" id="rep-next-year" aria-label="${t('Année suivante')}">›</button>
       </div>
-      <button type="button" class="btn btn-primary" id="rep-annual-pdf-btn">Générer le bilan annuel PDF</button>
+      <button type="button" class="btn btn-primary" id="rep-annual-pdf-btn">${t('Générer le bilan annuel PDF')}</button>
     </div>
     ${await healthScorePanelHtml(reportMonthKey)}
     ${await calendarPanelHtml(reportMonthKey)}`;
@@ -203,8 +204,8 @@ export async function renderReports() {
   container.querySelector('#rep-next-year').onclick = () => { reportYear += 1; renderReports(); };
   container.querySelector('#rep-annual-pdf-btn').onclick = () => generateAnnualPdfReport();
   container.querySelector('#rep-pdf-btn').onclick = () => generatePdfReport();
-  container.querySelector('#rep-csv-month-btn').onclick = async () => { await exportTransactionsCsv(reportMonthKey); showToast('Export CSV généré.'); };
-  container.querySelector('#rep-csv-all-btn').onclick = async () => { await exportTransactionsCsv(); showToast('Export CSV généré.'); };
+  container.querySelector('#rep-csv-month-btn').onclick = async () => { await exportTransactionsCsv(reportMonthKey); showToast(t('Export CSV généré.')); };
+  container.querySelector('#rep-csv-all-btn').onclick = async () => { await exportTransactionsCsv(); showToast(t('Export CSV généré.')); };
 }
 
 export function initReportsModule() {}

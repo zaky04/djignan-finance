@@ -6,11 +6,14 @@
 
 import { computeFinancialHealthScore, computeDailySpending, getEnrichedTransactions } from '../ledger.js';
 import { formatCurrency, formatPercent, formatDate, escapeHtml, localISODate } from '../utils.js';
+// Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
+// wireCalendarPanel() — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js.
+import { t as tr, getLanguage } from '../i18n.js';
 
 function scoreTier(score) {
-  if (score >= 70) return { cls: 'pos', label: 'Bonne santé financière' };
-  if (score >= 40) return { cls: 'warn', label: 'À surveiller' };
-  return { cls: 'neg', label: 'Fragile' };
+  if (score >= 70) return { cls: 'pos', label: tr('Bonne santé financière') };
+  if (score >= 40) return { cls: 'warn', label: tr('À surveiller') };
+  return { cls: 'neg', label: tr('Fragile') };
 }
 
 export async function healthScorePanelHtml(monthKey) {
@@ -18,21 +21,28 @@ export async function healthScorePanelHtml(monthKey) {
   const tier = scoreTier(health.score);
   return `
     <div class="panel" style="margin-top:16px;">
-      <div class="panel-header"><h3>Score de santé financière</h3></div>
+      <div class="panel-header"><h3>${tr('Score de santé financière')}</h3></div>
       <div style="display:flex;align-items:center;gap:18px;margin-bottom:14px;">
         <div style="width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:24px;font-weight:800;color:#fff;background:${tier.cls === 'pos' ? 'var(--pos)' : tier.cls === 'warn' ? '#f59e0b' : 'var(--neg)'};">${health.score}</div>
         <div>
           <div style="font-weight:700;font-size:15px;">${escapeHtml(tier.label)}</div>
-          <div style="font-size:12.5px;color:var(--text-muted);">Indicateur composite indicatif, pas un conseil personnalisé.</div>
+          <div style="font-size:12.5px;color:var(--text-muted);">${tr('Indicateur composite indicatif, pas un conseil personnalisé.')}</div>
         </div>
       </div>
-      <div class="stat-row"><span class="stat-row-label">Taux d'épargne (mois)</span><span>${formatPercent(health.savingsRate * 100, 0)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Ratio d'endettement</span><span>${formatPercent(health.debtRatio * 100, 0)}</span></div>
-      <div class="stat-row"><span class="stat-row-label">Respect du budget</span><span>${formatPercent(health.budgetAdherencePct, 0)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${tr("Taux d'épargne (mois)")}</span><span>${formatPercent(health.savingsRate * 100, 0)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${tr("Ratio d'endettement")}</span><span>${formatPercent(health.debtRatio * 100, 0)}</span></div>
+      <div class="stat-row"><span class="stat-row-label">${tr('Respect du budget')}</span><span>${formatPercent(health.budgetAdherencePct, 0)}</span></div>
     </div>`;
 }
 
-const WEEKDAY_LABELS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+// Initiales des jours de la semaine (lundi → dimanche) : un tableau complet par langue plutôt qu'un
+// t() par lettre — le français a deux "M" (Mardi/Mercredi) à des positions différentes, une clé de
+// traduction par lettre unique ne pourrait pas les distinguer.
+const WEEKDAY_LABELS_FR = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+const WEEKDAY_LABELS_EN = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+function weekdayLabels() {
+  return getLanguage() === 'en' ? WEEKDAY_LABELS_EN : WEEKDAY_LABELS_FR;
+}
 
 export async function calendarPanelHtml(monthKey) {
   const { totals, currency } = await computeDailySpending(monthKey);
@@ -49,7 +59,7 @@ export async function calendarPanelHtml(monthKey) {
     const intensity = max > 0 ? amount / max : 0;
     const bg = amount > 0 ? `color-mix(in srgb, var(--neg) ${Math.round(10 + intensity * 80)}%, var(--surface-alt))` : 'var(--surface-alt)';
     cells += `
-      <button type="button" class="calendar-day" data-date="${dateStr}" style="background:${bg};" title="${formatDate(dateStr)} : ${formatCurrency(amount, currency)}">
+      <button type="button" class="calendar-day" data-date="${dateStr}" style="background:${bg};" title="${tr('{date} : {amount}', { date: formatDate(dateStr), amount: formatCurrency(amount, currency) })}">
         <span class="calendar-day-num">${day}</span>
         ${amount > 0 ? `<span class="calendar-day-amount">${Math.round(amount)}</span>` : ''}
       </button>`;
@@ -57,9 +67,9 @@ export async function calendarPanelHtml(monthKey) {
 
   return `
     <div class="panel" style="margin-top:16px;" id="calendar-panel">
-      <div class="panel-header"><h3>Calendrier des dépenses</h3></div>
+      <div class="panel-header"><h3>${tr('Calendrier des dépenses')}</h3></div>
       <div class="calendar-grid calendar-grid-head">
-        ${WEEKDAY_LABELS.map((d) => `<div class="calendar-weekday">${d}</div>`).join('')}
+        ${weekdayLabels().map((d) => `<div class="calendar-weekday">${d}</div>`).join('')}
       </div>
       <div class="calendar-grid">${cells}</div>
       <div id="calendar-day-detail" style="margin-top:12px;"></div>
@@ -79,12 +89,12 @@ export function wireCalendarPanel(container, monthKey) {
         ? `<div class="tx-sub" style="margin-bottom:6px;">${formatDate(date)}</div>` + rows.map((t) => `
             <div class="tx-row">
               <div class="tx-main">
-                <div class="tx-title">${escapeHtml(t.category?.name || 'Sans catégorie')}</div>
+                <div class="tx-title">${escapeHtml(t.category?.name || tr('Sans catégorie'))}</div>
                 <div class="tx-sub">${escapeHtml(t.wallet?.name || '')}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
               </div>
               <div class="tx-amount amount neg">−${formatCurrency(t.amount, t.wallet?.currency || 'EUR')}</div>
             </div>`).join('')
-        : `<div class="tx-empty">Aucune dépense le ${formatDate(date)}.</div>`;
+        : `<div class="tx-empty">${tr('Aucune dépense le {date}.', { date: formatDate(date) })}</div>`;
     });
   });
 }

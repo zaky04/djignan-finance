@@ -1173,8 +1173,10 @@ que certains écrans resteront en français le temps du reste du chantier.
 - ✅ Dettes & créances (lot 6, voir entrée ci-dessous) : cartes, formulaires, simulateur
   Avalanche/Boule de neige.
 - ✅ Outils (lot 7, voir entrée ci-dessous) : les 8 outils stratégiques.
-- ⬜ Rapports, Partage, Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà
-  traduit), Recherche globale, mode démo, onboarding.
+- ✅ Rapports (lot 8, voir entrée ci-dessous) : bilans PDF (mensuel + annuel), export CSV, score de
+  santé financière, calendrier des dépenses.
+- ⬜ Partage, Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit),
+  Recherche globale, mode démo, onboarding.
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
 navigation mobile, écran de verrouillage (titre/sous-titre/aria-labels) et tableau de bord entier
@@ -1400,6 +1402,43 @@ mode crédit du simulateur d'achat avec taux d'intérêt non nul, vérifiant l'i
 bilingues), aucune erreur console.
 
 `CACHE_VERSION` : `v58` → `v59`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 8/N : Rapports)
+
+Écran converti : **Rapports** (`reports.js` + `reports-extras.js`) — bilan PDF mensuel et annuel
+(génération jsPDF), export CSV, score de santé financière, calendrier des dépenses (heatmap). Piège
+`t`/variable reproduit à l'identique dans `reports-extras.js` (`wireCalendarPanel` utilise `t` comme
+nom de transaction) — import aliasé `tr` dès le départ ; `reports.js` lui-même n'a aucune collision
+(import direct `t`).
+
+**Décision de ce lot, différente des précédents : le contenu généré du PDF est traduit aussi**, pas
+seulement l'écran qui le déclenche — cohérent avec l'objectif « toute l'app bilingue » de l'auteur.
+Chaque `doc.text(...)` passe maintenant par `t(...)`, y compris les titres de section, les libellés
+de synthèse et le texte des états vides.
+
+**Piège distinct rencontré, propre à ce fichier** : `WEEKDAY_LABELS` (initiales des jours de la
+semaine dans le calendrier) était un tableau à une seule lettre par jour (`['L','M','M','J','V','S',
+'D']`) — le français a deux "M" (Mardi/Mercredi) à des positions différentes. Un simple `t('M')` par
+lettre n'aurait pas pu distinguer ces deux usages ni produire les bonnes initiales anglaises
+(`M,T,W,T,F,S,S`, qui a son propre doublon de "T" à des positions différentes). → Deux tableaux
+complets (`WEEKDAY_LABELS_FR`/`WEEKDAY_LABELS_EN`), sélectionnés via `getLanguage()` plutôt que
+traduits lettre par lettre.
+
+**Deux oublis trouvés et corrigés pendant les tests de ce lot, avant le commit** (le titre du panneau
+"Score de santé financière" et la ponctuation "{date} : {montant}" de l'infobulle du calendrier
+restaient en français en mode anglais — clés manquantes au premier passage) : preuve que le test
+bidirectionnel systématique après chaque lot vaut la peine, pas juste une formalité.
+
+~50 nouvelles entrées de dictionnaire, 2 doublons détectés et corrigés (`'Dépenses par catégorie'`,
+`'Budget vs réel'`, déjà présents depuis le lot Tableau de bord — réutilisés), 492 clés au total.
+
+Testé FR→EN→FR : les deux panneaux de bilan (labels, boutons), score de santé financière (jauge +
+3 indicateurs), calendrier (initiales de semaine, infobulles, détail d'un jour cliqué avec une
+transaction injectée), export CSV (toast), et les chaînes exactes injectées dans le PDF vérifiées
+directement via `t(...)` (titre, période, résumé, patrimoine net, bilan annuel, détail mensuel) —
+aucune erreur console à aucune étape.
+
+`CACHE_VERSION` : `v59` → `v60`.
 
 ## 7. Pistes prioritaires non traitées
 
