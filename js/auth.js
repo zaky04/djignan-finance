@@ -58,7 +58,7 @@ export async function isPinConfigured() {
 }
 
 export async function setupPin(pin) {
-  if (!/^\d{4,6}$/.test(pin)) throw new Error('Le PIN doit contenir entre 4 et 6 chiffres.');
+  if (!/^\d{4,6}$/.test(pin)) throw new Error(t('Le PIN doit contenir entre 4 et 6 chiffres.'));
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await derivePinHash(pin, salt);
   await setSetting('pinSalt', bufToBase64(salt));
@@ -66,7 +66,7 @@ export async function setupPin(pin) {
   await setSetting('pinIterations', PBKDF2_ITERATIONS);
   await setSetting('pinLength', pin.length);
   await setSetting('failedAttempts', 0);
-  await logAudit({ entityType: 'security', entityId: 'pin', action: 'setup', note: 'Code PIN configuré' });
+  await logAudit({ entityType: 'security', entityId: 'pin', action: 'setup', note: t('Code PIN configuré') });
 }
 
 export async function getPinLength() {
@@ -86,7 +86,7 @@ export async function verifyPin(pin) {
 
 export async function changePin(oldPin, newPin) {
   const ok = await verifyPin(oldPin);
-  if (!ok) throw new Error('Ancien code PIN incorrect.');
+  if (!ok) throw new Error(t('Ancien code PIN incorrect.'));
   await setupPin(newPin);
 }
 
@@ -120,22 +120,22 @@ export async function registerBiometric() {
     },
   });
 
-  if (!credential) throw new Error('Enregistrement biométrique annulé.');
+  if (!credential) throw new Error(t('Enregistrement biométrique annulé.'));
   if (typeof credential.response.getPublicKey !== 'function') {
-    throw new Error("Ce navigateur ne permet pas d'extraire la clé publique (getPublicKey indisponible).");
+    throw new Error(t("Ce navigateur ne permet pas d'extraire la clé publique (getPublicKey indisponible)."));
   }
   const spki = credential.response.getPublicKey();
-  if (!spki) throw new Error('Impossible de récupérer la clé publique biométrique.');
+  if (!spki) throw new Error(t('Impossible de récupérer la clé publique biométrique.'));
 
   await setSetting('biometricCredentialId', bufToBase64(credential.rawId));
   await setSetting('biometricPublicKeySpki', bufToBase64(spki));
-  await logAudit({ entityType: 'security', entityId: 'biometric', action: 'register', note: 'Biométrie activée' });
+  await logAudit({ entityType: 'security', entityId: 'biometric', action: 'register', note: t('Biométrie activée') });
 }
 
 export async function removeBiometric() {
   await setSetting('biometricCredentialId', null);
   await setSetting('biometricPublicKeySpki', null);
-  await logAudit({ entityType: 'security', entityId: 'biometric', action: 'remove', note: 'Biométrie désactivée' });
+  await logAudit({ entityType: 'security', entityId: 'biometric', action: 'remove', note: t('Biométrie désactivée') });
 }
 
 /* DER (ASN.1) -> signature brute r||s (P-256, composantes 32 octets) */
@@ -165,7 +165,7 @@ function derToRawSignature(derBuf) {
 export async function verifyBiometric() {
   const credIdB64 = await getSetting('biometricCredentialId');
   const spkiB64 = await getSetting('biometricPublicKeySpki');
-  if (!credIdB64 || !spkiB64) throw new Error('Biométrie non configurée.');
+  if (!credIdB64 || !spkiB64) throw new Error(t('Biométrie non configurée.'));
 
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const assertion = await navigator.credentials.get({

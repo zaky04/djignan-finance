@@ -1177,8 +1177,10 @@ que certains écrans resteront en français le temps du reste du chantier.
   santé financière, calendrier des dépenses.
 - ✅ Partage de dépenses (lot 9, voir entrée ci-dessous) : participants, dépenses partagées, soldes.
 - ✅ Comptes gardés (lot 10, voir entrée ci-dessous) : comptes, mouvements, archivage.
-- ⬜ Paramètres (hors sélecteur de langue lui-même, déjà traduit), Recherche globale, mode démo,
-  onboarding.
+- ✅ Paramètres (lot 11, voir entrée ci-dessous) : profil, sécurité, notifications, installation,
+  mise à jour, tableau de bord, fonctionnalités optionnelles, devise de base, sauvegarde/restauration
+  (hors sauvegarde cloud, voir `firebase-sync.js` — pas encore traduit, section distincte).
+- ⬜ Sauvegarde cloud (`firebase-sync.js`), Recherche globale, mode démo, onboarding.
 
 Testé : bascule FR→EN puis EN→FR (aller-retour complet) — menu latéral, titre de la barre du haut,
 navigation mobile, écran de verrouillage (titre/sous-titre/aria-labels) et tableau de bord entier
@@ -1479,6 +1481,61 @@ séparément), carte de compte (devise + badge "archived"), modale de détail av
 Aucune erreur console.
 
 `CACHE_VERSION` : `v61` → `v62`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 11/N : Paramètres)
+
+Écran converti : **Paramètres** (`settings.js`, 643 lignes — le plus gros fichier converti jusqu'ici),
+hors sauvegarde cloud (`firebase-sync.js`, fichier distinct, prévu en lot séparé juste après). Onze
+sections : profil, sécurité (PIN + biométrie + verrouillage auto), notifications, installation PWA,
+mise à jour, configuration du tableau de bord, fonctionnalités optionnelles, langue (déjà fait au lot
+1, non retouché), devise de base, sauvegarde/restauration (JSON/JSON chiffré/CSV + import générique
+avec mapping de colonnes), zone dangereuse. Aucune collision `t`/variable dans `settings.js` — import
+direct.
+
+**`auth.js` retouché dans ce lot** (déjà converti partiellement au lot 1 pour l'écran de
+verrouillage) : les messages d'erreur renvoyés par `changePin()`/`registerBiometric()`/
+`verifyBiometric()` remontent tels quels jusqu'à l'écran Paramètres (`err.message`) — jamais traduits
+jusqu'ici alors qu'ils s'affichent bien à l'utilisateur. Traduits au passage, ainsi que les notes
+d'audit associées (« Code PIN configuré », « Biométrie activée/désactivée »), cohérent avec le
+principe déjà appliqué ailleurs (notes traduites à la création).
+
+**Deux collisions de clé réelles détectées et corrigées avant duplication** (sur 6 doublons au total,
+les 4 autres de simples réutilisations légitimes de clés déjà correctes) :
+- `'Nom'` existait déjà (« Name », formulaire de catégorie Budgets) mais le champ profil `Nom` désigne
+  ici précisément le nom de famille (à côté de `Prénom`) — réutiliser la traduction générique aurait
+  affiché « Name » / « First name », une asymétrie confuse. → Texte source changé en **`Nom de
+  famille`** (`PROFILE_FIELDS`, `settings.js` — constante partagée avec l'assistant de configuration
+  dans `app.js`, toujours pas converti mais qui héritera de ce libellé plus précis quand son tour
+  viendra), nouvelle clé dédiée « Last name ».
+- `'À jour'` existait déjà (« Settled up », soldes de Partage de dépenses) mais le badge de statut de
+  mise à jour logicielle utilise le même mot français pour un sens totalement différent. → Texte
+  source changé en **`Version à jour`** (`renderUpdateSection`), plus précis de toute façon hors
+  contexte, nouvelle clé dédiée « Up to date ».
+
+**Oubli trouvé et corrigé pendant les tests** : la description du module optionnel "Comptes gardés"
+(`OPTIONAL_MODULES[0].description`) était bien passée à `tr(...)` à l'usage, mais aucune entrée
+correspondante n'avait été ajoutée au dictionnaire — restait donc en français en mode anglais malgré
+l'appel `tr()` en place (le mécanisme de repli silencieux de `t()` masque ce genre d'oubli sans
+erreur, d'où l'importance du test bidirectionnel systématique).
+
+**Constantes partagées avec l'assistant de configuration (`app.js`, onboarding — toujours pas
+converti)** : `AUTO_LOCK_OPTIONS`, `PROFILE_FIELDS`, `DASHBOARD_PANEL_LABELS`, `OPTIONAL_MODULES`
+gardent leurs libellés bruts en français à la déclaration (jamais traduits sur place), traduits
+uniquement à l'usage dans `settings.js` — `app.js` continuera de les afficher en français jusqu'à son
+propre lot, sans aucune régression entre-temps (comportement "pas encore traduit" normal).
+
+~150 nouvelles entrées de dictionnaire (le plus gros lot), 6 doublons détectés et résolus (4 réutilisés,
+2 corrigés en source comme détaillé ci-dessus), 705 clés au total.
+
+Testé FR→EN→FR : les 11 panneaux traduits, formulaire profil (labels désambiguïsés), section sécurité
+(changement de PIN avec message d'erreur réel testé — "Incorrect old PIN code." confirmé via une
+tentative avec un ancien PIN volontairement faux), confirmation de réinitialisation complète
+**annulée volontairement sans jamais confirmer** (pour ne pas effacer les données de test), section
+notifications/installation/mise à jour, configuration du tableau de bord, fonctionnalités optionnelles
+(description corrigée), et les chaînes de la modale de mapping CSV vérifiées directement via `t(...)`.
+Aucune erreur console.
+
+`CACHE_VERSION` : `v62` → `v63`.
 
 ## 7. Pistes prioritaires non traitées
 
