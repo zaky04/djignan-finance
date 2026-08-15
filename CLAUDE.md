@@ -1094,6 +1094,21 @@ habitude après tout changement touchant `ledger.js`/`db.js` indirectement via l
 
 `CACHE_VERSION` : `v50` → `v51`.
 
+### 15 août 2026 (suite) — Le message d'accueil disait toujours "Bonjour", même le soir
+
+Signalé par l'utilisateur (capture d'écran, tableau de bord consulté en soirée). `renderDashboard()`
+(`dashboard.js`) écrivait `Bonjour, ${prénom}` en dur, sans jamais regarder l'heure.
+
+→ Nouvelle fonction `greetingWord()` : "Bonjour" de 5h à 18h, "Bonsoir" de 18h à 5h (convention
+française usuelle), basée sur l'heure locale de l'appareil (`new Date().getHours()`, jamais UTC —
+un salut affiché au mauvais moment de la journée n'aurait aucun sens).
+
+Testé : à l'heure réelle actuelle (17h) → "Bonjour" (correct, sous le seuil) ; bornes vérifiées pour
+0h/4h/5h/6h/9h/12h/17h/18h/19h/22h/23h → bascule exactement à 5h et 18h comme prévu. Les 24
+assertions de `test/ledger.test.html` passent toujours (non concerné, vérifié par habitude).
+
+`CACHE_VERSION` : `v51` → `v52`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

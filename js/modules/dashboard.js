@@ -142,6 +142,14 @@ function renderUpcomingBills(upcoming, currency) {
     : '<div class="tx-empty">Aucune échéance à venir ce mois-ci.</div>';
 }
 
+/** "Bonjour" en journée, "Bonsoir" le soir/la nuit — convention française usuelle (bascule à 18h,
+    reste sur "Bonsoir" jusqu'à l'aube). Heure locale de l'appareil, pas UTC : un salut affiché au
+    mauvais moment de la journée n'a pas de sens. */
+function greetingWord() {
+  const hour = new Date().getHours();
+  return hour >= 18 || hour < 5 ? 'Bonsoir' : 'Bonjour';
+}
+
 export async function renderDashboard() {
   const monthKey = currentMonthKey();
   const panels = { ...DASHBOARD_PANEL_DEFAULTS, ...(await getSetting('dashboardPanels', {})) };
@@ -149,7 +157,7 @@ export async function renderDashboard() {
 
   const profile = await getSetting('userProfile', {});
   const greetingEl = document.getElementById('dashboard-greeting');
-  if (greetingEl) greetingEl.textContent = profile.firstName ? `Bonjour, ${profile.firstName} 👋` : '';
+  if (greetingEl) greetingEl.textContent = profile.firstName ? `${greetingWord()}, ${profile.firstName} 👋` : '';
 
   const watchEl = document.getElementById('panel-watch-categories');
   const billsEl = document.getElementById('panel-upcoming-bills');
