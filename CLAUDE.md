@@ -1168,7 +1168,8 @@ que certains écrans resteront en français le temps du reste du chantier.
   mode scindé, scan de justificatif), rapprochement bancaire, liste + filtres, sélection multiple.
 - ✅ Budgets (lot 3, voir entrée ci-dessous) : les 5 onglets (Budgets du mois, Budgets annuels,
   Catégories, Récurrences, Règles) et leurs modales.
-- ⬜ Épargne, Investissements, Dettes & créances, Outils, Rapports, Partage,
+- ✅ Épargne (lot 4, voir entrée ci-dessous) : objectifs, contributions, archivage.
+- ⬜ Investissements, Dettes & créances, Outils, Rapports, Partage,
   Comptes gardés, Paramètres (hors sélecteur de langue lui-même, déjà traduit), Recherche globale,
   mode démo, onboarding.
 
@@ -1289,6 +1290,25 @@ défaut affichées en anglais (`Housing`, `Food`...) confirmant une fois de plus
 création (lot 1) reste cohérente ici aussi.
 
 `CACHE_VERSION` : `v54` → `v55`.
+
+### 15 août 2026 (suite) — Internationalisation FR/EN (lot 4/N : Épargne)
+
+Écran converti : **Épargne** (`savings.js`) — cartes d'objectif avec jauge circulaire, formulaire
+objectif (création/édition), modale de contribution, archivage/désarchivage, suppression. Petit
+module (157 lignes), aucun piège `t`/variable, converti en un seul passage. Confirmation de
+suppression (`confirmDialog`) vérifiée : message et bouton "Delete" traduits, bouton "Annuler" par
+défaut de `confirmDialog()` toujours en français comme prévu (`utils.js` pas encore converti — même
+limite déjà notée aux lots précédents).
+
+~30 nouvelles entrées de dictionnaire, 0 doublon (290 clés au total).
+
+Testé FR→EN→FR : cartes d'objectif (jauge, échéance formatée en anglais « Jan 01, 2027 »), modale
+Nouvel objectif d'épargne (tous les champs, le sélecteur de devise partagé restant en français comme
+attendu), modale de contribution (titre interpolé avec le nom de l'objectif), confirmation +
+suppression réelle testée de bout en bout (toast "Goal deleted." confirmé), retour en français vérifié
+sans régression.
+
+`CACHE_VERSION` : `v55` → `v56`.
 
 ## 7. Pistes prioritaires non traitées
 
