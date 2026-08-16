@@ -10,7 +10,7 @@ import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigure
 import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder, importEncryptedBackup } from './backup.js';
-import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, resolveCloudUser, checkPendingCloudRedirect, warmUpFirebaseSdk } from './firebase-sync.js';
+import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, warmUpGoogleSignIn } from './firebase-sync.js';
 import { seedDemoData, clearDemoData } from './demo-data.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
@@ -574,10 +574,10 @@ function showRestoreScreenIfNeeded() {
       content.querySelector('#restore-local-btn').addEventListener('click', renderLocalForm);
       content.querySelector('#restore-cloud-btn').addEventListener('click', startCloudSignIn);
       content.querySelector('#restore-skip-btn').addEventListener('click', finish);
-      // Précharge le SDK Firebase dès que ce bouton est visible, pas seulement au clic : sur mobile,
-      // le délai réseau du chargement pouvait faire perdre le geste utilisateur nécessaire à la
-      // popup avant même qu'elle ne s'ouvre (voir warmUpFirebaseSdk(), firebase-sync.js).
-      warmUpFirebaseSdk();
+      // Précharge Google Identity Services + le SDK Firebase dès que ce bouton est visible, pas
+      // seulement au clic : sur mobile, le délai réseau du chargement pouvait faire perdre le geste
+      // utilisateur nécessaire à l'ouverture de la popup (voir warmUpGoogleSignIn(), firebase-sync.js).
+      warmUpGoogleSignIn();
     }
 
     function renderLocalForm() {
@@ -645,8 +645,7 @@ function showRestoreScreenIfNeeded() {
     async function startCloudSignIn() {
       renderLoading(t('Connexion à Google…'));
       try {
-        const user = await signInWithGoogle();
-        if (!user) return; // flux redirection : la page va naviguer vers Google, rien d'autre à faire ici — au retour, boot() repart de zéro et retombe sur le bloc cloudRedirectPending ci-dessous
+        await signInWithGoogle();
         await setSetting('cloudBackupWasSignedIn', true);
         renderCloudPassphraseForm();
       } catch (err) {
@@ -655,24 +654,9 @@ function showRestoreScreenIfNeeded() {
       }
     }
 
-    (async () => {
-      lockScreen.hidden = true;
-      screen.hidden = false;
-      // Retour d'une redirection Google déclenchée par CET écran avant la navigation (voir
-      // startCloudSignIn ci-dessus) : boot() est reparti de zéro (isPinConfigured() toujours faux
-      // tant qu'aucun choix n'a abouti), donc on retombe forcément ici — compléter la connexion et
-      // enchaîner directement sur le mot de passe, sans re-proposer les 3 choix depuis le début.
-      if (await getSetting('cloudRedirectPending', false)) {
-        renderLoading(t('Connexion à Google…'));
-        try {
-          const user = await resolveCloudUser();
-          if (user) { await setSetting('cloudBackupWasSignedIn', true); renderCloudPassphraseForm(); return; }
-        } catch {
-          // Redirection annulée/échouée : retombe sur le choix initial ci-dessous.
-        }
-      }
-      renderChoice();
-    })();
+    lockScreen.hidden = true;
+    screen.hidden = false;
+    renderChoice();
   });
 }
 
@@ -687,13 +671,6 @@ async function onUnlocked() {
   await maybeShowOnboarding();
   maybeShowInstallPrompt();
   checkAndNotify();
-  // Traite un éventuel retour de signInWithRedirect() dès que possible après le déverrouillage,
-  // plutôt que d'attendre passivement que l'utilisateur repense à rouvrir Paramètres (potentiellement
-  // bien plus tard, voire jamais — voir CLAUDE.md, signalé par l'auteur sur iPhone). Se déclenche
-  // AVANT checkCloudStaleness() ci-dessous : les deux se recoupent (même mécanisme sous-jacent), mais
-  // celui-ci est spécifiquement pour rendre visible ce qui vient de se passer (succès, échec
-  // silencieux, ou erreur avec son message réel), pas pour comparer des horodatages.
-  setTimeout(() => checkPendingCloudRedirect(), 1000);
   // En premier parmi les invites au démarrage : avertir d'une sauvegarde cloud plus récente (risque
   // de doublons/données écrasées si l'utilisateur commence à saisir sur cet appareil) prime sur les
   // simples rappels de sauvegarde ci-dessous. checkCloudStaleness() ne charge le SDK Firebase que
@@ -722,9 +699,8 @@ async function onUnlocked() {
     // une sauvegarde — avant même la création du code PIN, sur une toute première installation
     // (jamais pour une install existante — voir les gardes dans showActivationCodeScreenIfNeeded()/
     // showLanguageChoiceScreen()/showRestoreScreenIfNeeded()). La langue n'est redemandée que si
-    // elle n'est pas déjà enregistrée : showRestoreScreenIfNeeded() peut déclencher une navigation
-    // complète vers Google (signInWithRedirect) puis revenir sur cette même branche de boot() —
-    // sans cette garde, l'utilisateur reverrait l'écran de langue à chaque retour de redirection.
+    // elle n'est pas déjà enregistrée — robustesse générale si boot() devait un jour se relancer
+    // avant la création du PIN pour une autre raison, pas de re-harceler inutilement.
     if (!(await isPinConfigured())) {
       await showActivationCodeScreenIfNeeded();
       if (!(await getSetting('language'))) await showLanguageChoiceScreen();
