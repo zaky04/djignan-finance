@@ -1801,6 +1801,52 @@ l'ensemble du dépôt (JS + `index.html`) : aucun résultat restant en dehors de
 utilisateur (noms de catégories/portefeuilles/transactions, volontairement non retraduites) et de
 dictionnaires clé/valeur déjà traduits à l'usage.
 
+### 16 août 2026 (suite) — 3 bugs signalés par l'auteur après relecture visuelle
+
+L'auteur a testé l'app en direct (mode anglais + export PDF) et remonté deux captures d'écran montrant
+des problèmes réels, non liés au fond du chantier i18n mais découverts grâce à lui :
+
+1. **Bouton natif de sélection de fichier bloqué en français** (Ajout rapide → Justificatif photo),
+   même en mode anglais. Diagnostic : le libellé natif du navigateur pour `<input type="file">`
+   ("Choisir un fichier"/"Aucun fichier choisi") suit la langue d'AFFICHAGE du navigateur lui-même
+   (`chrome://settings/languages`), **pas** l'attribut `lang` de la page ni notre i18n — contrairement
+   aux autres textes générés par le navigateur (validation de formulaire, sélecteur de date), ce bouton
+   précis ignore `document.documentElement.lang`. Confirmé par recherche externe (comportement Chromium
+   documenté, ex. Firefox bug 1538027). Aucun changement de `lang`/i18n ne peut le corriger. **Fix** :
+   remplacement par un bouton stylé traduisible (`#qa-receipt-trigger`, `data-i18n="Choisir un
+   fichier"`) qui déclenche `input.click()` sur le vrai `<input type="file">`, désormais rendu
+   visuellement invisible (`clip:rect(0,0,0,0)`) mais fonctionnellement intact (capture photo mobile,
+   accessibilité, `capture="environment"` préservés). `index.html` (template Ajout rapide) +
+   `js/modules/transactions.js` (câblage du clic).
+2. **Export PDF ("Bilan financier") : séparateur de milliers affiché en "/"** au lieu d'un espace
+   (ex: "823/500 F/CFA" au lieu de "823 500 F CFA"). Diagnostic : `formatCurrency()` (utils.js), en
+   locale `fr-FR`, produit des espaces Unicode fines/insécables (U+202F, U+00A0) comme séparateur —
+   correct à l'écran (police web normale), mais la police intégrée de jsPDF (Helvetica, encodage
+   WinAnsi 1 octet) n'a pas ces glyphes et affiche un caractère de repli qui ressemble à "/". Aucune
+   sanitisation n'existait pour le contexte PDF. **Fix** : nouvelle fonction `pdfAmount(amount,
+   currency)` dans `js/modules/reports.js`, qui appelle `formatCurrency()` puis remplace ces espaces
+   Unicode par un espace normal — utilisée à la place de `formatCurrency()` dans TOUS les appels
+   `doc.text(...)` des deux générateurs PDF (mensuel et annuel). L'affichage à l'écran (hors PDF) garde
+   le formatage Intl d'origine, inchangé.
+3. **Bug non lié, trouvé pendant les tests de vérification** (pas dans le diff de session, remonte au
+   commit `6e6db5a`, bien avant le chantier i18n) : le flux "Découvrir avec des données d'exemple" de
+   l'assistant d'onboarding (`app.js`, étape 1) appelait `notifyDataChanged('all')` sans jamais
+   l'importer — `ReferenceError` silencieuse en pleine navigation, empêchant le rafraîchissement de
+   l'UI après le chargement des données de démo. **Fix** : ajout de `notifyDataChanged` à l'import
+   groupé depuis `./state.js` en tête de `app.js`.
+
+Testé : bouton fichier vérifié dans les deux langues (FR "Choisir un fichier" / EN "Choose file"),
+clic confirmé déclenchant bien le vrai `<input type="file">` sous-jacent ; PDF vérifié en interceptant
+tous les appels `doc.text(...)` d'un vrai `generatePdfReport()` (jsPDF patché pour capturer le texte au
+lieu de télécharger) — confirmé par code de caractère (`charCodeAt`) que le texte envoyé au PDF ne
+contient plus ni U+202F ni U+00A0, alors que `formatCurrency()` brut les contient toujours (l'affichage
+écran n'est pas dégradé) ; `notifyDataChanged` vérifié résolu et fonctionnel via le bus d'événements
+réel. Un `console.error` `notifyDataChanged is not defined` avait été observé une fois en cours de
+test — confirmé stale (onglet précédent, avant le fix) via un onglet neuf sans historique. Aucune
+nouvelle entrée de dictionnaire pour ce lot hormis `'Choisir un fichier'` → `'Choose file'`.
+
+`CACHE_VERSION` : `v70` → `v71`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

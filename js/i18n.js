@@ -1078,4 +1078,8 @@ const EN = {
   'Sombre': 'Dark',
   "Une erreur a empêché le démarrage de l'application. Rechargez la page ; si le problème persiste, essayez de vider le cache du navigateur pour ce site.":
     'An error prevented the app from starting. Reload the page; if the problem persists, try clearing this site\'s browser cache.',
+
+  // ---------- Correction (bug rapporté) : bouton de sélection de fichier stylé, remplace le bouton
+  // natif de <input type="file"> dont le libellé suit la langue du navigateur, pas celle de la page ----------
+  'Choisir un fichier': 'Choose file',
 };

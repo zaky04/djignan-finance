@@ -7,7 +7,7 @@
 
 import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAULT_CATEGORIES } from './db.js';
 import { initLockScreen, isBiometricAvailable, registerBiometric } from './auth.js';
-import { bus, EVENTS, appState } from './state.js';
+import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder } from './backup.js';
 import { checkWeeklyCloudBackupReminder, checkCloudStaleness } from './firebase-sync.js';

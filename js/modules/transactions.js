@@ -70,6 +70,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
   const targetWalletSelect = form.elements.targetWalletId;
   const categorySelect = form.elements.categoryId;
   const receiptInput = form.elements.receipt;
+  const receiptTriggerBtn = backdrop.querySelector('#qa-receipt-trigger');
   const receiptPreviewWrap = backdrop.querySelector('#qa-receipt-preview');
   const receiptPreviewImg = backdrop.querySelector('#qa-receipt-preview-img');
   const receiptRemoveBtn = backdrop.querySelector('#qa-receipt-remove');
@@ -85,6 +86,10 @@ export function openQuickAdd({ editTransaction = null } = {}) {
   }
   if (editTransaction?.receiptBlob) showReceiptPreview(editTransaction.receiptBlob);
 
+  // Bouton stylé à la place du bouton natif de <input type="file"> : son libellé ("Choisir un
+  // fichier"/"Aucun fichier choisi") suit la langue du NAVIGATEUR (pas celle de la page), donc
+  // notre i18n ne peut jamais le traduire — voir data-i18n="Choisir un fichier" sur ce bouton.
+  receiptTriggerBtn.addEventListener('click', () => receiptInput.click());
   receiptInput.addEventListener('change', () => {
     receiptRemoved = false;
     if (receiptInput.files[0]) showReceiptPreview(receiptInput.files[0]);

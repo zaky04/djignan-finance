@@ -11,6 +11,15 @@ import { getSetting } from '../db.js';
 import { healthScorePanelHtml, calendarPanelHtml, wireCalendarPanel } from './reports-extras.js';
 import { t } from '../i18n.js';
 
+/** formatCurrency() insère des espaces insécables/fines (ex: séparateur de milliers en fr-FR) que
+    la police intégrée de jsPDF (Helvetica, encodage WinAnsi) ne sait pas dessiner — elle affiche à
+    la place un caractère de repli qui ressemble à "/". On les remplace par un espace normal
+    uniquement pour le rendu PDF (l'affichage à l'écran, lui, garde le formatage Intl d'origine). */
+const PDF_UNSAFE_SPACES_RE = new RegExp('[' + [0x202f, 0x00a0, 0x2009, 0x2007].map((c) => String.fromCharCode(c)).join('') + ']', 'g');
+function pdfAmount(amount, currency) {
+  return formatCurrency(amount, currency).replace(PDF_UNSAFE_SPACES_RE, ' ');
+}
+
 function profileHeaderLines(profile) {
   const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
   return [fullName, profile.jobTitle, profile.address, profile.phone].filter(Boolean);
@@ -43,10 +52,10 @@ async function generatePdfReport() {
   doc.setFontSize(13); doc.text(t('Résumé'), 14, y); y += 7;
   doc.setFontSize(10);
   [
-    t('Patrimoine net global : {amount}', { amount: formatCurrency(total, currency) }),
-    t('Entrées du mois : {amount}', { amount: formatCurrency(summary.income, summary.currency) }),
-    t('Sorties du mois : {amount}', { amount: formatCurrency(summary.expenses, summary.currency) }),
-    t('Épargne nette : {amount}', { amount: formatCurrency(summary.netSavings, summary.currency) }),
+    t('Patrimoine net global : {amount}', { amount: pdfAmount(total, currency) }),
+    t('Entrées du mois : {amount}', { amount: pdfAmount(summary.income, summary.currency) }),
+    t('Sorties du mois : {amount}', { amount: pdfAmount(summary.expenses, summary.currency) }),
+    t('Épargne nette : {amount}', { amount: pdfAmount(summary.netSavings, summary.currency) }),
   ].forEach((line) => { doc.text(line, 14, y); y += 6; });
   y += 6;
 
@@ -56,7 +65,7 @@ async function generatePdfReport() {
     for (const row of expensesByCategory) {
       pageBreakIfNeeded();
       doc.text(row.label, 14, y);
-      doc.text(formatCurrency(row.value, summary.currency), 196, y, { align: 'right' });
+      doc.text(pdfAmount(row.value, summary.currency), 196, y, { align: 'right' });
       y += 6;
     }
   } else { doc.text(t('Aucune dépense ce mois-ci.'), 14, y); y += 6; }
@@ -69,7 +78,7 @@ async function generatePdfReport() {
     for (const row of budgetVsActual) {
       pageBreakIfNeeded();
       doc.text(row.label, 14, y);
-      doc.text(`${formatCurrency(row.actual, summary.currency)} / ${formatCurrency(row.budget, summary.currency)}`, 196, y, { align: 'right' });
+      doc.text(`${pdfAmount(row.actual, summary.currency)} / ${pdfAmount(row.budget, summary.currency)}`, 196, y, { align: 'right' });
       y += 6;
     }
   } else { doc.text(t('Aucun budget défini ce mois-ci.'), 14, y); y += 6; }
@@ -111,12 +120,12 @@ async function generateAnnualPdfReport() {
   doc.setFontSize(13); doc.text(t('Résumé annuel'), 14, y); y += 7;
   doc.setFontSize(10);
   [
-    t('Revenus totaux : {amount}', { amount: formatCurrency(totalIncome, currency) }),
-    t('Dépenses totales : {amount}', { amount: formatCurrency(totalExpenses, currency) }),
-    t('Épargne nette totale : {amount}', { amount: formatCurrency(totalNetSavings, currency) }),
-    t('Patrimoine net au 1er janvier : {amount}', { amount: formatCurrency(netWorthStart, currency) }),
-    t('Patrimoine net au 31 décembre : {amount}', { amount: formatCurrency(netWorthEnd, currency) }),
-    t("Variation du patrimoine sur l'année : {amount}", { amount: formatCurrency(netWorthEnd - netWorthStart, currency) }),
+    t('Revenus totaux : {amount}', { amount: pdfAmount(totalIncome, currency) }),
+    t('Dépenses totales : {amount}', { amount: pdfAmount(totalExpenses, currency) }),
+    t('Épargne nette totale : {amount}', { amount: pdfAmount(totalNetSavings, currency) }),
+    t('Patrimoine net au 1er janvier : {amount}', { amount: pdfAmount(netWorthStart, currency) }),
+    t('Patrimoine net au 31 décembre : {amount}', { amount: pdfAmount(netWorthEnd, currency) }),
+    t("Variation du patrimoine sur l'année : {amount}", { amount: pdfAmount(netWorthEnd - netWorthStart, currency) }),
   ].forEach((line) => { doc.text(line, 14, y); y += 6; });
   y += 6;
 
@@ -133,9 +142,9 @@ async function generateAnnualPdfReport() {
     pageBreakIfNeeded();
     const m = monthlySummaries[i];
     doc.text(formatMonthLabel(mk), 14, y);
-    doc.text(formatCurrency(m.income, m.currency), 100, y, { align: 'right' });
-    doc.text(formatCurrency(m.expenses, m.currency), 148, y, { align: 'right' });
-    doc.text(formatCurrency(m.netSavings, m.currency), 196, y, { align: 'right' });
+    doc.text(pdfAmount(m.income, m.currency), 100, y, { align: 'right' });
+    doc.text(pdfAmount(m.expenses, m.currency), 148, y, { align: 'right' });
+    doc.text(pdfAmount(m.netSavings, m.currency), 196, y, { align: 'right' });
     y += 6;
   });
   y += 6;
@@ -156,7 +165,7 @@ async function generateAnnualPdfReport() {
     for (const [label, amount] of sortedCategories) {
       pageBreakIfNeeded();
       doc.text(label, 14, y);
-      doc.text(formatCurrency(amount, currency), 196, y, { align: 'right' });
+      doc.text(pdfAmount(amount, currency), 196, y, { align: 'right' });
       y += 6;
     }
   } else {
