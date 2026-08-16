@@ -1,6 +1,6 @@
 {
-  "name": "GeoFinance System",
-  "short_name": "GeoFinance",
+  "name": "Djignan Financial System",
+  "short_name": "Djignan",
   "description": "Gestion complète de vos finances personnelles — 100% locale et hors-ligne.",
   "start_url": "./index.html",
   "scope": "./",

@@ -1,4 +1,4 @@
-# GeoFinance System — Notes de suivi du projet
+# Djignan Financial System — Notes de suivi du projet
 
 > Ce fichier sert de mémoire du projet pour toute personne (ou IA) qui reprend le développement.
 > À tenir à jour à chaque session de travail significative : ce qui a été fait, pourquoi, et ce qui reste ouvert.
@@ -6,7 +6,8 @@
 
 ## 1. C'est quoi ce projet
 
-**GeoFinance System** — une PWA de gestion financière personnelle, tout-en-un : portefeuilles multi-devises,
+**Djignan Financial System** (anciennement « GeoFinance », renommé le 16 août 2026 — voir l'entrée du
+journal correspondante) — une PWA de gestion financière personnelle, tout-en-un : portefeuilles multi-devises,
 transactions, budgets (mode enveloppe façon YNAB), épargne, investissements (financiers + biens physiques),
 dettes/créances, partage de dépenses, rapports, outils de simulation (achat important, fonds d'urgence,
 remboursement de dette), OCR de justificatifs.
@@ -42,7 +43,7 @@ js/
   ledger.js                — Moteur de calcul financier partagé (soldes, patrimoine net, agrégats mensuels...)
                               → TOUTE la logique de calcul vit ici, les modules de vue ne font qu'afficher
   auth.js                  — PIN (PBKDF2-SHA256) + biométrie WebAuthn + écran de verrouillage (machine à états)
-  backup.js                — Export/import JSON (clair + chiffré AES-GCM), import CSV (GeoFinance + générique
+  backup.js                — Export/import JSON (clair + chiffré AES-GCM), import CSV (Djignan + générique
                               avec mapping de colonnes), rappel hebdomadaire de sauvegarde
   utils.js                 — Formatage devises/dates, conversion multi-devises, helpers UI (modal, toast...)
   charts.js                — Wrapper autour de Chart.js (vendorisé)
@@ -286,7 +287,7 @@ PIN d'origine toujours fonctionnel après reload.
 - **`Number(x) || 0` ne filtre pas `Infinity`** (il est "truthy", contrairement à `NaN`/`0`/`undefined`) —
   idiome utilisé partout dans `ledger.js`. Une valeur `"Infinity"` dans un CSV/JSON importé s'y propageait
   donc telle quelle. Ajoute `safeNumber()` dans `utils.js` (rejette aussi Infinity/-Infinity), utilisée à
-  l'import CSV format GeoFinance ; ajoute un sanitizer générique dans `importAllData()` qui ramène à 0 tout
+  l'import CSV format Djignan ; ajoute un sanitizer générique dans `importAllData()` qui ramène à 0 tout
   champ `number` non fini sur les lignes importées, tous stores confondus. Vérifié par attaque simulée
   (portefeuille importé avec `initialBalance: Infinity` → stocké à `0`).
 - **Content-Security-Policy ajoutée** (`index.html`) — défense en profondeur : aucune faille XSS connue,
@@ -677,7 +678,7 @@ ligne ignorée pour date ou montant illisible. Toast mis à jour dans `settings.
 décompte : *"X transaction(s) importée(s). Y doublon(s) ignoré(s). Z ligne(s) invalide(s)
 ignorée(s) (date ou montant illisible — vérifiez le mapping des colonnes)."*
 
-`importGeoFinanceCsvRows` (ré-import du propre format d'export CSV de GeoFinance) n'a volontairement
+`importDjignanCsvRows` (ré-import du propre format d'export CSV de Djignan) n'a volontairement
 pas été touché : c'est un format fixe et fiable généré par l'app elle-même, contrairement au CSV
 générique dont le mapping est manuel et sujet à erreur — le risque de ligne mal formée y est
 structurellement bien plus faible.
@@ -1711,7 +1712,7 @@ Détection de format CSV rendue bilingue : `GEOFINANCE_CSV_HEADER_FR` (renommé 
 compare désormais l'en-tête lu aux deux variantes (FR canonique et EN traduite) au lieu d'une seule —
 même principe que `RECURRING_NOTE_PREFIXES` (ledger.js, lot 3) et `DEBT_CATEGORY_NAME_VARIANTS`
 (debts.js, lot 6) : un CSV exporté par cette app en anglais doit se réimporter correctement. Idem pour
-la colonne "Pointée/Reconciled" : `importGeoFinanceCsvRows` accepte désormais `['oui', 'yes']` au lieu
+la colonne "Pointée/Reconciled" : `importDjignanCsvRows` accepte désormais `['oui', 'yes']` au lieu
 de `.startsWith('oui')` seul. Le gabarit `tpl-modal-backup-reminder` étant un `<template>` (donc inerte
 tant que non cloné), `showBackupReminderModal()` relance `applyStaticTranslations()` juste après
 l'insertion du clone — même pattern que `openQuickAdd()` (transactions.js, lot 2).
@@ -2172,6 +2173,88 @@ boutons d'action hors champ). 768px et 1280px vérifiés uniquement par scan aut
 d'anomalie visuelle attendue à ces largeurs, moins contraintes).
 
 `CACHE_VERSION` : `v77` → `v78`.
+
+### 16 août 2026 (suite) — Renommage complet : GeoFinance → Djignan Financial System
+
+Demande de l'auteur : renommer l'app et son logo. Nom principal affiché : **Djignan** (court) /
+**Djignan Finance**, sous-titre/branding complet : **Djignan Financial System**. Logo fourni par
+l'auteur (`C:\Users\djaka\Downloads\djignan Finance.jpg`, 2832×1504) — un motif géométrique en fil de
+fer façon coquillage cauri, dégradé bleu→vert→or, sur fond bleu marine (#111226).
+
+**Icônes** — aucun outil de traitement d'image (ImageMagick/PIL/sharp) installé sur la machine ;
+utilisé PowerShell + `System.Drawing` (.NET, natif Windows, zéro dépendance à installer). Recadrage de
+l'icône seule (sans le texte "Djignan FINANCE" à droite) à x=445,y=305,800×800px dans l'image source,
+validé visuellement avant de continuer (un premier essai à 860px de large mordait sur le texte,
+resserré à 800px). Fichiers régénérés dans `icons/` :
+- `icon-192.png` / `icon-512.png` ("any") : recadrage direct redimensionné.
+- `icon-maskable-192.png` / `icon-maskable-512.png` : glyphe replacé sur un canevas 1120×1120 (fond
+  #111226 échantillonné directement sur l'image source, pour une jonction invisible) avant
+  redimensionnement — le glyphe touche presque les bords de son cadre naturel, sans cette marge il
+  aurait été rogné par le masque circulaire/squircle qu'Android applique aux icônes "maskable".
+- `icon.svg` : image source photographique (dégradés/lueurs), pas raisonnablement vectorisable à la
+  main — remplacé par un wrapper SVG encapsulant `icon-192.png` en base64 (`<image href="data:...">`),
+  191 Ko (le choix du PNG 192px plutôt que 512px pour cet encapsulage réduit le poids d'un favicon qui
+  ne s'affiche jamais au-delà de ~48px). `icon-maskable.svg` (fichier orphelin, jamais référencé nulle
+  part) supprimé.
+- 3 logos vectoriels dessinés à la main dans `index.html` (`.lock-logo` ×2, `.sidebar-brand`)
+  remplacés par des `<img src="icons/icon-192.png">` — `.lock-logo` étiré en `object-fit:cover` pour
+  remplir entièrement son badge arrondi (le fond bleu marine du logo masque totalement l'ancien fond
+  `var(--accent)` violet du badge, sans transition visible).
+
+**Renommage textuel** — script Node : remplacement ordonné (`"GeoFinance System"` →
+`"Djignan Financial System"` D'ABORD, puis `"GeoFinance"` → `"Djignan"` ensuite, sur tout le dépôt
+`.js`/`.html`/`.json` — l'ordre compte, sinon la phrase composée aurait été mutilée par la règle du mot
+seul en premier). 93 remplacements sur 34 fichiers. Cette seule règle a aussi renommé automatiquement
+les identifiants de code contenant "GeoFinance" en sous-chaîne exacte (`isGeoFinanceFormat` →
+`isDjignanFormat`, `importGeoFinanceCsvRows` → `importDjignanCsvRows`, dans `backup.js`/`settings.js`)
+— cohérent puisque le script a traité tous les sites d'appel et l'export en une seule passe atomique,
+vérifié après coup par `node --check` sur tous les fichiers + zéro doublon dans `i18n.js` (883 clés).
+
+**Identifiants techniques VOLONTAIREMENT préservés** (tous en minuscules, donc naturellement épargnés
+par le remplacement sensible à la casse, mais vérifiés un par un pour confirmer que c'était le bon
+choix) :
+- `DB_NAME = 'geofinance-db'` (`db.js`) — le nom de la base IndexedDB. Le changer aurait fait
+  disparaître aux yeux de l'appli TOUTES les données existantes des utilisateurs déjà actifs (l'ancienne
+  base resterait sur leur appareil, orpheline, mais l'appli ouvrirait une base différente et vide).
+  Ne JAMAIS renommer cet identifiant, même dans un futur rebranding.
+- `payload.geofinanceEncryptedBackup` (`backup.js`) — marqueur de format dans les sauvegardes
+  chiffrées déjà exportées par des utilisateurs. Le renommer aurait rendu illisibles toutes les
+  sauvegardes chiffrées existantes (le contrôle `if (!payload?.geofinanceEncryptedBackup)` aurait
+  échoué sur d'anciens fichiers).
+- `CACHE_NAME` / filtre de nettoyage (`sw.js`) — nom du cache Service Worker, jamais vu par
+  l'utilisateur ; renommer le préfixe aurait laissé les anciens caches `geofinance-vNN` orphelins
+  (jamais nettoyés par le filtre s'il avait aussi changé de préfixe) — zéro bénéfice utilisateur pour ce
+  risque, laissé tel quel.
+- `firebase-config.js` (`authDomain`/`projectId`/`storageBucket` = `geofinance-backup...`) — identité
+  d'un vrai projet Firebase existant. Renommer le texte ici ne renomme pas le projet Firebase
+  lui-même (ça se fait dans la console Firebase) — l'aurait juste cassé (pointerait vers un projet
+  inexistant). Non touché.
+
+**Renommés pour cohérence** (visibles par l'utilisateur, sans risque de compatibilité) :
+`manifest.json` (`name`/`short_name`), noms des fichiers exportés (`geofinance-backup-*.json` →
+`djignan-backup-*.json`, idem transactions CSV et bilans PDF), le marqueur de format CSV interne
+`'geofinance'`/`'djignan'` (cohérent avec le renommage de `isDjignanFormat`).
+
+**`CLAUDE.md` lui-même** : titre et intro mis à jour, plus les 2 références à
+`importGeoFinanceCsvRows` dans le texte (function réellement renommée en code). **2 mentions
+laissées intactes délibérément** : la citation de l'identité git historique
+`GeoFinance <karidja810@gmail.com>` (§ 13 août, fait historique exact — le renommer réécrirait
+silencieusement un fait), et une phrase de test datée du 15 août citant "Déverrouiller GeoFinance"
+comme résultat observé à l'époque (idem, exactitude historique).
+
+Testé FR→EN de bout en bout : titre d'onglet, écran de choix de langue, logo sur les 2 écrans de
+verrouillage et la sidebar (icône 192px, lisible même réduite à 28px), `manifest.json`
+(`name`/`short_name`), chargement des 4 PNG + SVG confirmé (`fetch().ok`), traductions FR/EN de
+plusieurs chaînes clés (`Bienvenue sur Djignan`, `Déverrouiller Djignan`, écran d'installation,
+confirmation de suppression totale). Aucune erreur console.
+
+**Pas encore fait** : renommage du dépôt GitHub et de l'URL d'hébergement (`zaky04.github.io/geofinance`)
+— demandé par l'auteur, mais traité comme une étape séparée (voir entrée suivante) car GitHub ne
+redirige PAS automatiquement les Pages d'un dépôt renommé (contrairement au dépôt lui-même) : ça casse
+l'ancienne URL pour de bon, contrairement à ce qu'on pourrait attendre par analogie avec le
+comportement de redirection classique de GitHub.
+
+`CACHE_VERSION` : `v78` → `v79`.
 
 ## 7. Pistes prioritaires non traitées
 

@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<title>GeoFinance — Tests ledger.js</title>
+<title>Djignan — Tests ledger.js</title>
 <style>
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 760px; margin: 32px auto; padding: 0 16px; background: #12162b; color: #eef0fb; }
   h1 { font-size: 18px; }
@@ -16,7 +16,7 @@
 </style>
 </head>
 <body>
-<h1>GeoFinance — Tests de non-régression pour ledger.js</h1>
+<h1>Djignan — Tests de non-régression pour ledger.js</h1>
 <p class="detail">
   Rejoue quelques scénarios de calcul connus contre le vrai <code>ledger.js</code>, dans une base
   IndexedDB isolée (<code>geofinance-ledger-test-db</code>, jamais celle de l'utilisateur — voir
@@ -188,7 +188,7 @@ function render() {
   const allPass = passCount === results.length;
   summary.className = allPass ? 'pass' : 'fail';
   summary.textContent = `${passCount} / ${results.length} tests réussis`;
-  document.title = `${allPass ? '✓' : '✗'} ${passCount}/${results.length} — GeoFinance ledger tests`;
+  document.title = `${allPass ? '✓' : '✗'} ${passCount}/${results.length} — Djignan ledger tests`;
 }
 
 runTests().catch((err) => {

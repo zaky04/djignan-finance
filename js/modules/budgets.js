@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Budgets, Catégories & Récurrences
+   Djignan Financial System — Module Budgets, Catégories & Récurrences
    Trois onglets : Budgets du mois (plafonds + alertes 70/90%), Catégories
    (arborescence éditable), Récurrences & Échéancier (abonnements/factures
    avec génération automatique des transactions dues et prévision de solde

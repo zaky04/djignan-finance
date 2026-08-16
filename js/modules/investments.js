@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Investissements
+   Djignan Financial System — Module Investissements
    Capital investi vs valeur actuelle, ROI %, dividendes, et tableau
    comparatif du rendement annualisé (yield) par classe d'actif.
    ========================================================================== */

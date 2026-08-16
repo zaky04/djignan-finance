@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Épargne
+   Djignan Financial System — Module Épargne
    Objectifs personnalisés avec jauge de progression circulaire. Les
    objectifs sont des enveloppes de suivi manuel (indépendantes des
    portefeuilles) pour rester simples et éviter tout double comptage dans

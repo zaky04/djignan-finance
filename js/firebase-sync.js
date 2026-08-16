@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Sauvegarde cloud optionnelle (Firebase Auth + Firestore)
+   Djignan Financial System — Sauvegarde cloud optionnelle (Firebase Auth + Firestore)
    Connexion Google + sauvegarde/restauration À LA DEMANDE d'un blob chiffré
    AES-GCM (buildEncryptedPayload/decryptPayload, backup.js — même chiffrement
    que l'export chiffré local, déjà testé). Volontairement PAS de synchro

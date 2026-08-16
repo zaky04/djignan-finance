@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Extensions du module Rapports
+   Djignan Financial System — Extensions du module Rapports
    Score de santé financière + vue calendrier des dépenses (heatmap).
    Séparé de reports.js pour ne pas alourdir la génération PDF.
    ========================================================================== */

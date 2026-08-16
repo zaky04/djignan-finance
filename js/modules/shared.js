@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Partage de dépenses
+   Djignan Financial System — Module Partage de dépenses
    Suivi façon Splitwise entre participants (colocation, voyage, couple…) :
    chaque dépense partagée est payée par une personne et répartie à parts
    égales entre les participants concernés ; le solde net de chacun indique

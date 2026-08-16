@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Enregistrement du Service Worker
+   Djignan Financial System — Enregistrement du Service Worker
    Fichier externe (pas de <script> inline dans index.html) pour permettre une
    Content-Security-Policy stricte sans script-src 'unsafe-inline'.
    ========================================================================== */

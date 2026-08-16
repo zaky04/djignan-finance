@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Configuration Firebase (sauvegarde cloud optionnelle)
+   Djignan Financial System — Configuration Firebase (sauvegarde cloud optionnelle)
    Ces valeurs ne sont PAS secrètes : elles identifient le projet Firebase,
    elles n'authentifient rien. La sécurité réelle vient des règles Firestore
    (accès restreint à chaque utilisateur pour son propre document, voir

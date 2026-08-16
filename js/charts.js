@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Wrappers Chart.js
+   Djignan Financial System — Wrappers Chart.js
    Chart.js est chargé en global (vendor/chart.min.js, <script defer>) avant
    ce module. Les instances sont mises en registre pour être détruites avant
    chaque re-rendu (évite les fuites mémoire lors des changements de vue).

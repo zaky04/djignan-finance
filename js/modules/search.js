@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Recherche globale
+   Djignan Financial System — Recherche globale
    Cherche en mémoire (jeu de données personnel, donc petit) parmi
    transactions, portefeuilles, dettes/créances, objectifs d'épargne,
    investissements, comptes gardés et dépenses partagées. Ouverture via

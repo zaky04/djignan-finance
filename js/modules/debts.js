@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Dettes & Créances
+   Djignan Financial System — Module Dettes & Créances
    Suivi des remboursements + simulateur stratégique Avalanche / Boule de neige.
    ========================================================================== */
 

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Comptes gardés
+   Djignan Financial System — Module Comptes gardés
    Argent de tiers (famille, proches) que l'utilisateur garde/gère pour eux
    (petit frère, conjointe, mère…). Totalement autonome des portefeuilles
    personnels : stores dédiés (KEPT_ACCOUNTS/KEPT_ACCOUNT_ENTRIES), jamais lus

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Internationalisation (FR/EN)
+   Djignan Financial System — Internationalisation (FR/EN)
    Pas de framework i18n : la clé de traduction EST le texte français
    d'origine (pas d'identifiants artificiels à inventer/maintenir). t(fr)
    renvoie la traduction anglaise si la langue courante est 'en' ET qu'une
@@ -102,7 +102,7 @@ const EN = {
   'Choisissez un code à 4-6 chiffres pour protéger vos données locales.': 'Choose a 4-6 digit code to protect your local data.',
   'Confirmez votre code PIN': 'Confirm your PIN code',
   'Ressaisissez le même code pour confirmer.': 'Re-enter the same code to confirm.',
-  'Déverrouiller GeoFinance': 'Unlock GeoFinance',
+  'Déverrouiller Djignan': 'Unlock Djignan',
   'Saisissez votre code PIN.': 'Enter your PIN code.',
   'Déverrouillage biométrique': 'Biometric unlock',
   'Valider le code': 'Confirm code',
@@ -574,7 +574,7 @@ const EN = {
 
   // ---------- Rapports (reports.js + reports-extras.js + en-tête index.html) ----------
   "La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant).": 'The PDF library is not loaded (vendor/jspdf.umd.min.js missing).',
-  'GeoFinance System — Bilan financier': 'GeoFinance System — Financial statement',
+  'Djignan Financial System — Bilan financier': 'Djignan Financial System — Financial statement',
   'Période : {month}': 'Period: {month}',
   'Résumé': 'Summary',
   'Patrimoine net global : {amount}': 'Total net worth: {amount}',
@@ -584,7 +584,7 @@ const EN = {
   'Aucune dépense ce mois-ci.': 'No expenses this month.',
   'Aucun budget défini ce mois-ci.': 'No budget set this month.',
   'Bilan PDF généré.': 'PDF statement generated.',
-  'GeoFinance System — Bilan annuel': 'GeoFinance System — Annual statement',
+  'Djignan Financial System — Bilan annuel': 'Djignan Financial System — Annual statement',
   'Année {year}': 'Year {year}',
   'Résumé annuel': 'Annual summary',
   'Revenus totaux : {amount}': 'Total income: {amount}',
@@ -690,8 +690,8 @@ const EN = {
   // ---------- Paramètres (settings.js + auth.js + en-tête index.html) ----------
   'Version à jour': 'Up to date',
   '{col} (colonne {n})': '{col} (column {n})',
-  "Ce fichier ne correspond pas au format d'export GeoFinance. Indiquez à quoi correspond chaque colonne pour l'importer quand même ({count} ligne(s) détectée(s)).":
-    "This file doesn't match the GeoFinance export format. Indicate what each column corresponds to in order to import it anyway ({count} row(s) detected).",
+  "Ce fichier ne correspond pas au format d'export Djignan. Indiquez à quoi correspond chaque colonne pour l'importer quand même ({count} ligne(s) détectée(s)).":
+    "This file doesn't match the Djignan export format. Indicate what each column corresponds to in order to import it anyway ({count} row(s) detected).",
   'Portefeuille de destination': 'Destination wallet',
   'Colonne Date': 'Date column',
   'Colonne Description / libellé (optionnel)': 'Description / label column (optional)',
@@ -769,8 +769,8 @@ const EN = {
     'All your data stays local. Export a copy regularly (full JSON or CSV) to avoid any loss. A reminder appears automatically if no backup has been made in 7 days.',
   'Dernière sauvegarde': 'Last backup',
   'Sauvegarde automatique hebdomadaire': 'Weekly automatic backup',
-  "Si un dossier est choisi, GeoFinance y écrit un export JSON automatiquement à chaque rappel hebdomadaire, sans action de votre part.":
-    'If a folder is chosen, GeoFinance automatically writes a JSON export there on each weekly reminder, with no action needed from you.',
+  "Si un dossier est choisi, Djignan y écrit un export JSON automatiquement à chaque rappel hebdomadaire, sans action de votre part.":
+    'If a folder is chosen, Djignan automatically writes a JSON export there on each weekly reminder, with no action needed from you.',
   'Exporter (JSON)': 'Export (JSON)',
   'Importer (JSON)': 'Import (JSON)',
   'Exporter (JSON chiffré)': 'Export (encrypted JSON)',
@@ -792,8 +792,8 @@ const EN = {
   'Mot de passe de chiffrement': 'Encryption password',
   'Sauvegarde chiffrée exportée.': 'Encrypted backup exported.',
   'Fusionner avec les données existantes ?': 'Merge with existing data?',
-  'Supprimer DÉFINITIVEMENT toutes les données de GeoFinance (portefeuilles, transactions, budgets, investissements, dettes…) ? Cette action est irréversible. Exportez une sauvegarde avant si besoin.':
-    'PERMANENTLY delete all GeoFinance data (wallets, transactions, budgets, investments, debts…)? This action is irreversible. Export a backup first if needed.',
+  'Supprimer DÉFINITIVEMENT toutes les données de Djignan (portefeuilles, transactions, budgets, investissements, dettes…) ? Cette action est irréversible. Exportez une sauvegarde avant si besoin.':
+    'PERMANENTLY delete all Djignan data (wallets, transactions, budgets, investments, debts…)? This action is irreversible. Export a backup first if needed.',
   'Tout supprimer': 'Delete everything',
   'Dernière confirmation : voulez-vous vraiment tout réinitialiser ?': 'Final confirmation: do you really want to reset everything?',
   'Oui, réinitialiser': 'Yes, reset',
@@ -802,8 +802,8 @@ const EN = {
   'Tester': 'Test',
   'Bloquées par le navigateur': 'Blocked by the browser',
   'Notifications': 'Notifications',
-  "Rappels locaux pour vos échéances récurrentes proches (3 jours), vos dettes/créances arrivant à échéance (3 jours), vos budgets qui approchent leur limite et vos portefeuilles passant sous leur seuil d'alerte (réglable sur chaque portefeuille). Ces rappels s'affichent quand l'application est ouverte ou récemment réactivée — un envoi en arrière-plan app totalement fermée nécessiterait un serveur distant, ce qui irait à l'encontre du principe 100% local de GeoFinance.":
-    "Local reminders for your upcoming recurring bills (3 days), your debts/receivables coming due (3 days), your budgets approaching their limit, and your wallets dropping below their alert threshold (adjustable per wallet). These reminders show when the app is open or recently active — sending them while the app is fully closed would require a remote server, which would go against GeoFinance's 100% local principle.",
+  "Rappels locaux pour vos échéances récurrentes proches (3 jours), vos dettes/créances arrivant à échéance (3 jours), vos budgets qui approchent leur limite et vos portefeuilles passant sous leur seuil d'alerte (réglable sur chaque portefeuille). Ces rappels s'affichent quand l'application est ouverte ou récemment réactivée — un envoi en arrière-plan app totalement fermée nécessiterait un serveur distant, ce qui irait à l'encontre du principe 100% local de Djignan.":
+    "Local reminders for your upcoming recurring bills (3 days), your debts/receivables coming due (3 days), your budgets approaching their limit, and your wallets dropping below their alert threshold (adjustable per wallet). These reminders show when the app is open or recently active — sending them while the app is fully closed would require a remote server, which would go against Djignan's 100% local principle.",
   'Statut': 'Status',
   'Vous avez bloqué les notifications pour ce site. Autorisez-les dans les paramètres de votre navigateur pour les réactiver.':
     'You have blocked notifications for this site. Allow them in your browser settings to re-enable them.',
@@ -826,19 +826,19 @@ const EN = {
   'Pas encore proposée': 'Not offered yet',
   'Ouvrez le menu ⋮ de votre navigateur et choisissez « Installer l\'application » ou « Ajouter à l\'écran d\'accueil ».':
     'Open your browser\'s ⋮ menu and choose "Install app" or "Add to Home screen".',
-  'Cherchez une icône d\'installation dans la barre d\'adresse, ou le menu du navigateur → « Installer GeoFinance ».':
-    'Look for an install icon in the address bar, or the browser menu → "Install GeoFinance".',
+  'Cherchez une icône d\'installation dans la barre d\'adresse, ou le menu du navigateur → « Installer Djignan ».':
+    'Look for an install icon in the address bar, or the browser menu → "Install Djignan".',
   'Installation': 'Installation',
-  "Installez GeoFinance sur cet appareil pour un accès direct depuis l'écran d'accueil, en plein écran et 100% hors-ligne.":
-    "Install GeoFinance on this device for direct access from the home screen, full screen and 100% offline.",
+  "Installez Djignan sur cet appareil pour un accès direct depuis l'écran d'accueil, en plein écran et 100% hors-ligne.":
+    "Install Djignan on this device for direct access from the home screen, full screen and 100% offline.",
   'Réafficher le rappel automatique': 'Show the automatic reminder again',
   'Application installée !': 'App installed!',
   'Installation annulée.': 'Installation cancelled.',
   "Le rappel d'installation réapparaîtra à la prochaine ouverture (si votre navigateur le propose).":
     'The install reminder will reappear next time you open the app (if your browser offers it).',
   'Mise à jour': 'Update',
-  "GeoFinance fonctionne hors-ligne grâce à une copie locale de l'application. Vérifiez ici si une nouvelle version a été publiée : seul le code de l'application est remplacé, vos données (portefeuilles, transactions, budgets…) restent intactes.":
-    "GeoFinance works offline thanks to a local copy of the app. Check here if a new version has been published: only the app's code is replaced, your data (wallets, transactions, budgets…) stays intact.",
+  "Djignan fonctionne hors-ligne grâce à une copie locale de l'application. Vérifiez ici si une nouvelle version a été publiée : seul le code de l'application est remplacé, vos données (portefeuilles, transactions, budgets…) restent intactes.":
+    "Djignan works offline thanks to a local copy of the app. Check here if a new version has been published: only the app's code is replaced, your data (wallets, transactions, budgets…) stays intact.",
   'Non vérifié': 'Not checked',
   'Vérifier les mises à jour': 'Check for updates',
   'Mises à jour automatiques non supportées par ce navigateur.': 'Automatic updates not supported by this browser.',
@@ -917,7 +917,7 @@ const EN = {
 
   // ---------- Assistant de configuration + mode démo (app.js) ----------
   'Passer cette étape': 'Skip this step',
-  'Bienvenue sur GeoFinance': 'Welcome to GeoFinance',
+  'Bienvenue sur Djignan': 'Welcome to Djignan',
   "Choisissez d'abord la devise dans laquelle suivre votre argent au quotidien — vous pourrez quand même créer des portefeuilles dans d'autres devises ensuite.":
     "First choose the currency to track your everyday money in — you can still create wallets in other currencies afterward.",
   'Devise principale': 'Main currency',
@@ -1027,7 +1027,7 @@ const EN = {
   '{expenses} dépensé, {income} reçu · épargne nette {netSavings}.': '{expenses} spent, {income} received · net savings {netSavings}.',
 
   // ---------- Sauvegarde / import CSV (backup.js + gabarit tpl-modal-backup-reminder) ----------
-  "Ce n'est pas une sauvegarde chiffrée GeoFinance valide.": 'This is not a valid encrypted GeoFinance backup.',
+  "Ce n'est pas une sauvegarde chiffrée Djignan valide.": 'This is not a valid encrypted Djignan backup.',
   'Mot de passe incorrect ou sauvegarde corrompue.': 'Incorrect password or corrupted backup.',
   'Vers portefeuille': 'To wallet',
   'Note': 'Note',
@@ -1061,9 +1061,9 @@ const EN = {
   // ---------- Corrections transverses (lot 18, suite) : install-prompt.js, entièrement oublié ----------
   "Installer l'application": 'Install the app',
   'Installer': 'Install',
-  'Installer GeoFinance sur cet appareil': 'Install GeoFinance on this device',
+  'Installer Djignan sur cet appareil': 'Install Djignan on this device',
   "Accès direct depuis l'écran d'accueil et fonctionnement 100% hors-ligne.": 'Direct access from the home screen and 100% offline operation.',
-  "Installez GeoFinance sur l'écran d'accueil": 'Install GeoFinance on the home screen',
+  "Installez Djignan sur l'écran d'accueil": 'Install Djignan on the home screen',
   'Appuyez sur {icon} <strong>Partager</strong>, puis <strong>« Sur l\'écran d\'accueil »</strong>.':
     'Tap {icon} <strong>Share</strong>, then <strong>"Add to Home Screen"</strong>.',
 

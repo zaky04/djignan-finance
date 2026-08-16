@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Rappels proactifs (budgets, échéances récurrentes)
+   Djignan Financial System — Rappels proactifs (budgets, échéances récurrentes)
    Utilise l'API Notification (locale), pas l'API Push : une vraie
    notification "app fermée" nécessiterait un serveur d'envoi, ce qui irait
    à l'encontre du principe 100% local de l'application. Ces rappels

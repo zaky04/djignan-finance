@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Couche IndexedDB
+   Djignan Financial System — Couche IndexedDB
    Toutes les données de l'application vivent exclusivement dans IndexedDB.
    Les identifiants sont des UUID applicatifs (pas d'autoIncrement) afin que
    l'import/export JSON puisse fusionner ou restaurer sans collision.

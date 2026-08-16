@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Sécurité locale (PIN + biométrie WebAuthn)
+   Djignan Financial System — Sécurité locale (PIN + biométrie WebAuthn)
    Le code PIN n'est jamais stocké en clair : dérivation PBKDF2-SHA256 avec
    sel aléatoire (Web Crypto). La biométrie utilise l'authenticator de
    plateforme (Windows Hello / Touch ID / empreinte Android) via WebAuthn,
@@ -111,7 +111,7 @@ export async function registerBiometric() {
   const credential = await navigator.credentials.create({
     publicKey: {
       challenge,
-      rp: { name: 'GeoFinance System' },
+      rp: { name: 'Djignan Financial System' },
       user: { id: userId, name: 'local-user', displayName: 'Utilisateur local' },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }], // ES256
       authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
@@ -265,7 +265,7 @@ export function initLockScreen({ onUnlock }) {
     mode = 'unlock';
     buffer = '';
     expectedLength = await getPinLength();
-    title.textContent = t('Déverrouiller GeoFinance');
+    title.textContent = t('Déverrouiller Djignan');
     subtitle.textContent = t('Saisissez votre code PIN.');
     errorEl.hidden = true;
     renderDots(expectedLength);

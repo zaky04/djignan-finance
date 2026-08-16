@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Sauvegarde / Restauration
+   Djignan Financial System — Sauvegarde / Restauration
    Export/import JSON complet (avec variante chiffrée AES-GCM pour la copie
    distante hebdomadaire) + rappel hebdomadaire de sauvegarde.
    ========================================================================== */
@@ -81,7 +81,7 @@ export async function markBackupDone() {
 export async function exportJsonBackup() {
   const data = await exportAllData();
   await serializeReceiptsForExport(data);
-  downloadFile(`geofinance-backup-${todayISO()}.json`, JSON.stringify(data, null, 2), 'application/json');
+  downloadFile(`djignan-backup-${todayISO()}.json`, JSON.stringify(data, null, 2), 'application/json');
   await markBackupDone();
 }
 
@@ -115,7 +115,7 @@ export async function buildEncryptedPayload(passphrase) {
 }
 
 export async function decryptPayload(payload, passphrase) {
-  if (!payload?.geofinanceEncryptedBackup) throw new Error(tr("Ce n'est pas une sauvegarde chiffrée GeoFinance valide."));
+  if (!payload?.geofinanceEncryptedBackup) throw new Error(tr("Ce n'est pas une sauvegarde chiffrée Djignan valide."));
   const key = await deriveAesKey(passphrase, base64ToBuf(payload.salt));
   let plainBuf;
   try {
@@ -128,7 +128,7 @@ export async function decryptPayload(payload, passphrase) {
 
 export async function exportEncryptedBackup(passphrase) {
   const payload = await buildEncryptedPayload(passphrase);
-  downloadFile(`geofinance-backup-chiffre-${todayISO()}.json`, JSON.stringify(payload), 'application/json');
+  downloadFile(`djignan-backup-chiffre-${todayISO()}.json`, JSON.stringify(payload), 'application/json');
   await markBackupDone();
 }
 
@@ -168,7 +168,7 @@ export async function exportTransactionsCsv(monthKey = null) {
     ].map(csvEscape).join(';'));
   }
   const suffix = monthKey || tr('historique-complet');
-  downloadFile(`geofinance-transactions-${suffix}.csv`, '﻿' + lines.join('\n'), 'text/csv;charset=utf-8');
+  downloadFile(`djignan-transactions-${suffix}.csv`, '﻿' + lines.join('\n'), 'text/csv;charset=utf-8');
 }
 
 function parseCsvLine(line, delimiter = ';') {
@@ -205,7 +205,7 @@ function detectDelimiter(headerLine) {
 }
 
 /** Lit et analyse un CSV de transactions : détecte le délimiteur et si le format correspond
-    exactement à l'export GeoFinance (import direct possible) ou non (relevé bancaire générique,
+    exactement à l'export Djignan (import direct possible) ou non (relevé bancaire générique,
     nécessite un mapping manuel des colonnes par l'utilisateur avant import). */
 export async function analyzeTransactionsCsv(file) {
   const text = await readFileAsText(file);
@@ -215,9 +215,9 @@ export async function analyzeTransactionsCsv(file) {
   const headerCells = parseCsvLine(lines[0], delimiter).map((h) => h.trim());
   const rows = lines.slice(1).map((l) => parseCsvLine(l, delimiter));
   const headerFrEn = GEOFINANCE_CSV_HEADER_FR.map((h) => [h.toLowerCase(), tr(h).toLowerCase()]);
-  const isGeoFinanceFormat = headerCells.length === headerFrEn.length
+  const isDjignanFormat = headerCells.length === headerFrEn.length
     && headerCells.every((h, i) => headerFrEn[i].includes(h.toLowerCase()));
-  return { format: isGeoFinanceFormat ? 'geofinance' : 'generic', headerCells, rows, delimiter };
+  return { format: isDjignanFormat ? 'djignan' : 'generic', headerCells, rows, delimiter };
 }
 
 /** Détecte un doublon probable : même portefeuille, même date, montant quasi identique et même
@@ -231,9 +231,9 @@ function isDuplicateTransaction(existingTransactions, candidate) {
   );
 }
 
-/** Importe des lignes déjà parsées au format GeoFinance (Date;Type;Portefeuille;...). Crée les portefeuilles/catégories manquants.
+/** Importe des lignes déjà parsées au format Djignan (Date;Type;Portefeuille;...). Crée les portefeuilles/catégories manquants.
     Retourne { imported, skipped } — skipped compte les lignes ignorées car déjà présentes. */
-export async function importGeoFinanceCsvRows(rows) {
+export async function importDjignanCsvRows(rows) {
   const wallets = await dbGetAll(STORES.WALLETS);
   const categories = await dbGetAll(STORES.CATEGORIES);
   const existingTransactions = await dbGetAll(STORES.TRANSACTIONS);
@@ -365,7 +365,7 @@ export async function importGenericCsvRows(rows, mapping) {
 }
 
 /* ---------- Sauvegarde automatique locale (File System Access API) ----------
-   Optionnelle : l'utilisateur choisit un dossier une fois, GeoFinance y écrit
+   Optionnelle : l'utilisateur choisit un dossier une fois, Djignan y écrit
    ensuite un export JSON automatiquement au moment du rappel hebdomadaire,
    sans qu'il ait à cliquer sur "Exporter" à chaque fois. Uniquement supporté
    par les navigateurs basés Chromium sur ordinateur ; repli gracieux sinon
@@ -405,7 +405,7 @@ export async function runAutoBackupIfConfigured() {
     if (!(await ensureAutoBackupPermission(handle))) return false;
     const data = await exportAllData();
     await serializeReceiptsForExport(data);
-    const fileHandle = await handle.getFileHandle(`geofinance-backup-${todayISO()}.json`, { create: true });
+    const fileHandle = await handle.getFileHandle(`djignan-backup-${todayISO()}.json`, { create: true });
     const writable = await fileHandle.createWritable();
     await writable.write(JSON.stringify(data, null, 2));
     await writable.close();

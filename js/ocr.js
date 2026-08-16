@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — OCR local des justificatifs (Tesseract.js)
+   Djignan Financial System — OCR local des justificatifs (Tesseract.js)
    100% local : le moteur, le cœur WASM et le modèle de reconnaissance
    français sont vendorisés dans vendor/ et précachés par le service worker.
    Aucun appel réseau externe n'est jamais effectué, y compris hors-ligne.

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Invite à l'installation (PWA)
+   Djignan Financial System — Invite à l'installation (PWA)
    Chrome / Edge (Android + PC) exposent l'API beforeinstallprompt : on
    l'intercepte pour proposer un vrai bouton "Installer" au lieu de compter
    sur l'icône discrète de la barre d'adresse. iOS Safari ne propose AUCUNE
@@ -88,13 +88,13 @@ export async function maybeShowInstallPrompt() {
   let html;
   if (deferredPrompt) {
     html = bannerHtml({
-      title: t('Installer GeoFinance sur cet appareil'),
+      title: t('Installer Djignan sur cet appareil'),
       body: t("Accès direct depuis l'écran d'accueil et fonctionnement 100% hors-ligne."),
       showInstallBtn: true,
     });
   } else if (isIOS() && isSafari()) {
     html = bannerHtml({
-      title: t("Installez GeoFinance sur l'écran d'accueil"),
+      title: t("Installez Djignan sur l'écran d'accueil"),
       body: t('Appuyez sur {icon} <strong>Partager</strong>, puis <strong>« Sur l\'écran d\'accueil »</strong>.', { icon: SHARE_ICON }),
       showInstallBtn: false,
     });

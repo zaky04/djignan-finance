@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Fonctions utilitaires partagées
+   Djignan Financial System — Fonctions utilitaires partagées
    Formatage devises/dates, conversion multi-devises, helpers UI génériques.
    ========================================================================== */
 

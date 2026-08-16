@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Paramètres
+   Djignan Financial System — Module Paramètres
    Sécurité (PIN/biométrie), devise de base, sauvegarde/restauration
    (JSON, JSON chiffré, CSV), remise à zéro complète.
    ========================================================================== */
@@ -8,7 +8,7 @@ import { STORES, dbGetAll, dbBulkPut, getSetting, setSetting, wipeAllData } from
 import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric } from '../auth.js';
 import {
   exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup,
-  analyzeTransactionsCsv, importGeoFinanceCsvRows, importGenericCsvRows, exportTransactionsCsv,
+  analyzeTransactionsCsv, importDjignanCsvRows, importGenericCsvRows, exportTransactionsCsv,
   isFileSystemAccessSupported, chooseAutoBackupDirectory, getAutoBackupDirectory, clearAutoBackupDirectory,
 } from '../backup.js';
 import { isNotificationSupported, getNotificationPermission, requestNotificationPermission, checkAndNotify } from '../notifications.js';
@@ -35,7 +35,7 @@ function openCsvMappingModal(analysis) {
 
   const modal = openModal(`
     <form id="csv-mapping-form">
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Ce fichier ne correspond pas au format d'export GeoFinance. Indiquez à quoi correspond chaque colonne pour l'importer quand même ({count} ligne(s) détectée(s)).", { count: rows.length })}</p>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Ce fichier ne correspond pas au format d'export Djignan. Indiquez à quoi correspond chaque colonne pour l'importer quand même ({count} ligne(s) détectée(s)).", { count: rows.length })}</p>
       <div class="form-row"><label>${t('Portefeuille de destination')}</label><select name="walletId" id="csv-map-wallet" required></select></div>
       <div class="form-row"><label>${t('Colonne Date')}</label><select name="dateCol">${colOptions}</select></div>
       <div class="form-row"><label>${t('Colonne Description / libellé (optionnel)')}</label><select name="noteCol"><option value="">${t('Aucune')}</option>${colOptions}</select></div>
@@ -294,7 +294,7 @@ async function renderBackupSection(container) {
       <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Toutes vos données restent locales. Exportez régulièrement une copie (JSON complet ou CSV) pour éviter toute perte. Un rappel s'affiche automatiquement si aucune sauvegarde n'a été faite depuis 7 jours.")}</p>
       <div class="stat-row"><span class="stat-row-label">${t('Dernière sauvegarde')}</span><span>${lastBackupLabel}${snoozedLabel}</span></div>
       <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">${t('Sauvegarde automatique hebdomadaire')}</span><span>${autoBackupHtml}</span></div>
-      <p style="font-size:12px;color:var(--text-faint);margin:6px 0 0;">${t("Si un dossier est choisi, GeoFinance y écrit un export JSON automatiquement à chaque rappel hebdomadaire, sans action de votre part.")}</p>
+      <p style="font-size:12px;color:var(--text-faint);margin:6px 0 0;">${t("Si un dossier est choisi, Djignan y écrit un export JSON automatiquement à chaque rappel hebdomadaire, sans action de votre part.")}</p>
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
         <button type="button" class="btn btn-primary" id="export-json-btn">${t('Exporter (JSON)')}</button>
         <button type="button" class="btn btn-ghost" id="import-json-btn">${t('Importer (JSON)')}</button>
@@ -365,8 +365,8 @@ async function renderBackupSection(container) {
     hiddenFileInput('.csv,text/csv', async (file) => {
       try {
         const analysis = await analyzeTransactionsCsv(file);
-        if (analysis.format === 'geofinance') {
-          const { imported, skipped } = await importGeoFinanceCsvRows(analysis.rows);
+        if (analysis.format === 'djignan') {
+          const { imported, skipped } = await importDjignanCsvRows(analysis.rows);
           let message = t('{count} transaction(s) importée(s).', { count: imported });
           if (skipped) message += ' ' + t('{count} doublon(s) ignoré(s).', { count: skipped });
           showToast(message);
@@ -378,7 +378,7 @@ async function renderBackupSection(container) {
   });
 
   container.querySelector('#wipe-data-btn').addEventListener('click', async () => {
-    const ok = await confirmDialog(t('Supprimer DÉFINITIVEMENT toutes les données de GeoFinance (portefeuilles, transactions, budgets, investissements, dettes…) ? Cette action est irréversible. Exportez une sauvegarde avant si besoin.'), { danger: true, confirmText: t('Tout supprimer') });
+    const ok = await confirmDialog(t('Supprimer DÉFINITIVEMENT toutes les données de Djignan (portefeuilles, transactions, budgets, investissements, dettes…) ? Cette action est irréversible. Exportez une sauvegarde avant si besoin.'), { danger: true, confirmText: t('Tout supprimer') });
     if (!ok) return;
     const ok2 = await confirmDialog(t('Dernière confirmation : voulez-vous vraiment tout réinitialiser ?'), { danger: true, confirmText: t('Oui, réinitialiser') });
     if (!ok2) return;
@@ -407,7 +407,7 @@ async function renderNotificationsSection(container) {
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>${t('Notifications')}</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Rappels locaux pour vos échéances récurrentes proches (3 jours), vos dettes/créances arrivant à échéance (3 jours), vos budgets qui approchent leur limite et vos portefeuilles passant sous leur seuil d'alerte (réglable sur chaque portefeuille). Ces rappels s'affichent quand l'application est ouverte ou récemment réactivée — un envoi en arrière-plan app totalement fermée nécessiterait un serveur distant, ce qui irait à l'encontre du principe 100% local de GeoFinance.")}</p>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Rappels locaux pour vos échéances récurrentes proches (3 jours), vos dettes/créances arrivant à échéance (3 jours), vos budgets qui approchent leur limite et vos portefeuilles passant sous leur seuil d'alerte (réglable sur chaque portefeuille). Ces rappels s'affichent quand l'application est ouverte ou récemment réactivée — un envoi en arrière-plan app totalement fermée nécessiterait un serveur distant, ce qui irait à l'encontre du principe 100% local de Djignan.")}</p>
       <div class="stat-row"><span class="stat-row-label">${t('Statut')}</span><span>${statusHtml}</span></div>
       ${permission === 'denied' ? `<p style="font-size:12px;color:var(--text-faint);margin-top:8px;">${t('Vous avez bloqué les notifications pour ce site. Autorisez-les dans les paramètres de votre navigateur pour les réactiver.')}</p>` : ''}
       <div class="stat-row" style="margin-top:10px;align-items:center;">
@@ -429,8 +429,8 @@ async function renderNotificationsSection(container) {
   container.querySelector('#notif-test-btn')?.addEventListener('click', async () => {
     const reg = await navigator.serviceWorker?.getRegistration();
     const opts = { body: t('Voici à quoi ressemblera un rappel.'), icon: 'icons/icon-192.png' };
-    if (reg?.showNotification) await reg.showNotification('GeoFinance', opts);
-    else new Notification('GeoFinance', opts);
+    if (reg?.showNotification) await reg.showNotification('Djignan', opts);
+    else new Notification('Djignan', opts);
   });
 
   const saveThresholds = async () => {
@@ -466,13 +466,13 @@ async function renderInstallSection(container) {
     extraHtml = `<p style="font-size:12.5px;color:var(--text-muted);margin-top:10px;">${t('Ouvrez le menu ⋮ de votre navigateur et choisissez « Installer l\'application » ou « Ajouter à l\'écran d\'accueil ».')}</p>`;
   } else {
     statusHtml = `<span class="badge">${t('Pas encore proposée')}</span>`;
-    extraHtml = `<p style="font-size:12.5px;color:var(--text-muted);margin-top:10px;">${t('Cherchez une icône d\'installation dans la barre d\'adresse, ou le menu du navigateur → « Installer GeoFinance ».')}</p>`;
+    extraHtml = `<p style="font-size:12.5px;color:var(--text-muted);margin-top:10px;">${t('Cherchez une icône d\'installation dans la barre d\'adresse, ou le menu du navigateur → « Installer Djignan ».')}</p>`;
   }
 
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>${t('Installation')}</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Installez GeoFinance sur cet appareil pour un accès direct depuis l'écran d'accueil, en plein écran et 100% hors-ligne.")}</p>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Installez Djignan sur cet appareil pour un accès direct depuis l'écran d'accueil, en plein écran et 100% hors-ligne.")}</p>
       <div class="stat-row"><span class="stat-row-label">${t('Statut')}</span><span>${statusHtml}</span></div>
       ${extraHtml}
       ${!standalone ? `<button type="button" class="btn btn-ghost" id="reset-install-snooze-btn" style="margin-top:12px;">${t('Réafficher le rappel automatique')}</button>` : ''}
@@ -495,7 +495,7 @@ async function renderUpdateSection(container) {
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>${t('Mise à jour')}</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("GeoFinance fonctionne hors-ligne grâce à une copie locale de l'application. Vérifiez ici si une nouvelle version a été publiée : seul le code de l'application est remplacé, vos données (portefeuilles, transactions, budgets…) restent intactes.")}</p>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Djignan fonctionne hors-ligne grâce à une copie locale de l'application. Vérifiez ici si une nouvelle version a été publiée : seul le code de l'application est remplacé, vos données (portefeuilles, transactions, budgets…) restent intactes.")}</p>
       <div class="stat-row"><span class="stat-row-label">${t('Statut')}</span><span id="update-status"><span class="badge">${t('Non vérifié')}</span></span></div>
       <button type="button" class="btn btn-primary" id="check-update-btn" style="margin-top:12px;">${t('Vérifier les mises à jour')}</button>
     </div>`;

@@ -1,10 +1,10 @@
 /* ==========================================================================
-   GeoFinance System — Service Worker
+   Djignan Financial System — Service Worker
    Stratégie : precache complet de l'app shell + cache-first avec mise à jour
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v78';
+const CACHE_VERSION = 'v79';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 
 const APP_SHELL = [

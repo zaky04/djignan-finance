@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Store applicatif léger (pub/sub)
+   Djignan Financial System — Store applicatif léger (pub/sub)
    Pas de framework : un bus d'événements + un état partagé suffisent pour
    coordonner les modules (ex: une transaction ajoutée doit rafraîchir le
    dashboard s'il est visible).

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Rapports
+   Djignan Financial System — Module Rapports
    Génération d'un bilan PDF (patrimoine, résumé mensuel, dépenses par
    catégorie, budget vs réel) et export CSV des transactions.
    ========================================================================== */
@@ -185,7 +185,7 @@ async function generatePdfReport() {
 
   const profile = await getSetting('userProfile', {});
   doc.setFontSize(18);
-  doc.text(t('GeoFinance System — Bilan financier'), 14, y); y += 8;
+  doc.text(t('Djignan Financial System — Bilan financier'), 14, y); y += 8;
   doc.setFontSize(11);
   doc.setTextColor(100);
   doc.text(t('Période : {month}', { month: formatMonthLabel(reportMonthKey) }), 14, y); y += 6;
@@ -231,7 +231,7 @@ async function generatePdfReport() {
     }
   } else { doc.text(t('Aucun budget défini ce mois-ci.'), 14, y); y += 6; }
 
-  doc.save(`geofinance-bilan-${reportMonthKey}.pdf`);
+  doc.save(`djignan-bilan-${reportMonthKey}.pdf`);
   showToast(t('Bilan PDF généré.'));
 }
 
@@ -246,7 +246,7 @@ async function generateAnnualPdfReport() {
 
   const profile = await getSetting('userProfile', {});
   doc.setFontSize(18);
-  doc.text(t('GeoFinance System — Bilan annuel'), 14, y); y += 8;
+  doc.text(t('Djignan Financial System — Bilan annuel'), 14, y); y += 8;
   doc.setFontSize(11);
   doc.setTextColor(100);
   doc.text(t('Année {year}', { year: reportYear }), 14, y); y += 6;
@@ -320,7 +320,7 @@ async function generateAnnualPdfReport() {
     doc.text(t('Aucune dépense cette année.'), 14, y); y += 6;
   }
 
-  doc.save(`geofinance-bilan-annuel-${reportYear}.pdf`);
+  doc.save(`djignan-bilan-annuel-${reportYear}.pdf`);
   showToast(t('Bilan annuel PDF généré.'));
 }
 

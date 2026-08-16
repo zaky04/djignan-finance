@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Moteur de calcul financier partagé
+   Djignan Financial System — Moteur de calcul financier partagé
    Centralise tous les calculs (soldes, agrégats mensuels, historique du
    patrimoine) pour que dashboard/wallets/budgets/investissements/dettes/
    outils/rapports affichent des chiffres strictement cohérents entre eux.

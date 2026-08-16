@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Données de démonstration
+   Djignan Financial System — Données de démonstration
    Jeu de données fictif proposé au premier lancement ("Découvrir avec des
    données d'exemple"), pour se faire une idée de l'app avant d'y entrer ses
    vraies finances. Jamais mélangé silencieusement à de vraies données :

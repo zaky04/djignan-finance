@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Transactions
+   Djignan Financial System — Module Transactions
    Contient : la modale "Saisie express" (création + édition, réutilisée
    dans toute l'app), la liste filtrée des transactions, et le
    rapprochement bancaire ("check-in").

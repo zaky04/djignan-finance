@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Bootstrap & routeur SPA
+   Djignan Financial System — Bootstrap & routeur SPA
    Point d'entrée : câble l'écran de verrouillage, initialise tous les
    modules, gère la navigation entre vues et la réaction aux changements
    de données (bus d'événements).
@@ -251,7 +251,7 @@ async function maybeShowOnboarding() {
 
   const steps = [
     {
-      title: t('Bienvenue sur GeoFinance'),
+      title: t('Bienvenue sur Djignan'),
       async render(el, { next }) {
         el.innerHTML = `
           <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t("Choisissez d'abord la devise dans laquelle suivre votre argent au quotidien — vous pourrez quand même créer des portefeuilles dans d'autres devises ensuite.")}</p>
@@ -554,7 +554,7 @@ async function onUnlocked() {
 
     lockScreenApi = initLockScreen({ onUnlock: onUnlocked });
   } catch (err) {
-    console.error('[GeoFinance] Échec critique au démarrage :', err);
+    console.error('[Djignan] Échec critique au démarrage :', err);
     const lockScreen = document.getElementById('lock-screen');
     if (lockScreen) {
       lockScreen.innerHTML = `

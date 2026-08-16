@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Outils stratégiques
+   Djignan Financial System — Module Outils stratégiques
    Simulateur de trajectoire patrimoniale, calculateur d'inflation, fonds
    d'urgence, enveloppes 50/30/20, détection d'anomalies de dépenses,
    journal d'audit.

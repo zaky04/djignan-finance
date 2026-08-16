@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Tableau de bord
+   Djignan Financial System — Module Tableau de bord
    ========================================================================== */
 
 import { formatCurrency, formatDate, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';

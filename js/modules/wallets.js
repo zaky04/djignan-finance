@@ -1,5 +1,5 @@
 /* ==========================================================================
-   GeoFinance System — Module Portefeuilles & Devises
+   Djignan Financial System — Module Portefeuilles & Devises
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, dbGetAllByIndex, logAudit, getSetting, setSetting } from '../db.js';
