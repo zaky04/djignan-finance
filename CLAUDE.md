@@ -96,7 +96,7 @@ Ou via `.claude/launch.json` (config `geofinance`, port 8123) avec les outils de
 
 | # | Sujet | Détail | Sévérité |
 |---|---|---|---|
-| 1 | ~~Pas de tests automatisés~~ | **Résolu le 14 août 2026** — voir §10 (`test/ledger.test.html`). | — |
+| 1 | ~~Pas de tests automatisés~~ | **Résolu le 14 août 2026** — voir §11 (`test/ledger.test.html`). | — |
 | 2 | Arithmétique flottante | Les montants sont des `Number` JS sommés directement, pas de représentation en centimes entiers. L'affichage arrondit (masque la plupart des cas). **Comparaisons de seuil corrigées le 14 août 2026** (tolérance 0.005, voir §6) — reste vrai pour toute future comparaison exacte à ajouter : y penser. | Faible |
 | 3 | PIN : limite inhérente au 100% client-side | PBKDF2 150k itérations protège contre un accès "casual", pas contre une extraction forensique de l'IndexedDB brute (pas de coffre matériel disponible sans backend). Ce n'est pas un bug corrigible facilement, juste une limite du modèle à garder en tête. | Info (pas actionnable) |
 | 4 | ~~Import CSV générique silencieux sur montant invalide~~ | **Résolu le 14 août 2026** — voir §6. | — |
@@ -705,7 +705,7 @@ comme dépassé.
 Une vraie migration vers des centimes entiers en stockage reste volontairement hors scope — voir
 §7.4 pour le raisonnement (chantier disproportionné pour un problème jamais rapporté en pratique).
 
-Testé : ajout d'un scénario dédié dans `test/ledger.test.html` (§10) — un budget de 0.3 € consommé
+Testé : ajout d'un scénario dédié dans `test/ledger.test.html` (§11) — un budget de 0.3 € consommé
 par deux dépenses de 0.1 € et 0.2 € (qui dérive réellement à `0.30000000000000004` en JS, vérifié
 explicitement) reste compté comme respecté (`budgetAdherencePct === 100`) grâce à la tolérance.
 
@@ -785,7 +785,7 @@ historique sur 6 mois relit donc l'intégralité des portefeuilles/transactions/
 l'utilisent — même principe que `computeInvestmentValueHistory`/`computeDebtHistory`, qui n'avaient
 jamais eu ce problème.
 
-Testé : les 24 assertions de `test/ledger.test.html` (§10) passent toujours après le refactor (le
+Testé : les 24 assertions de `test/ledger.test.html` (§11) passent toujours après le refactor (le
 comportement observable est strictement identique, seul le nombre de lectures DB change) ;
 rechronométré sur le même jeu de données de 14 600 transactions → **1555ms → 473ms** (≈3,3x).
 
@@ -1943,7 +1943,7 @@ Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
 
 1. ~~**Rendre la sauvegarde vraiment robuste**~~ — **fait, voir §6** (sauvegarde cloud Google + rappel
    périodique dédié, entrées du 14 août 2026).
-2. ~~**Tests de non-régression légers pour `ledger.js`**~~ — **fait, voir §10** (`test/ledger.test.html`).
+2. ~~**Tests de non-régression légers pour `ledger.js`**~~ — **fait, voir §11** (`test/ledger.test.html`).
 3. ~~**Avertir l'utilisateur sur les imports CSV avec montants invalides**~~ — **fait, voir §6** (entrée
    du 14 août 2026).
 4. ~~**Arrondi en centimes entiers dans `ledger.js`**~~ — **tolérance appliquée aux 2 comparaisons de
@@ -2026,7 +2026,42 @@ committés dans ce dépôt — un keystore est un secret, sa perte empêcherait 
 signée de la même app). **À sauvegarder par l'utilisateur dans un endroit sûr, durablement** —
 nécessaire pour toute regénération future de l'APK sous le même `packageId`.
 
-## 10. Tests automatisés
+## 10. Exécutables installables multi-plateformes (pistes pour plus tard)
+
+### 16 août 2026 — Objectif : pouvoir installer l'app sans dépendre de GitHub
+
+Discuté avec l'auteur suite à une question sur la résilience du projet en cas de disparition du
+dépôt GitHub : que se passerait-il pour les utilisateurs déjà actifs ? Réponse détaillée dans le
+journal de conversation, résumé ici pour référence future. Cette section est **une piste à
+implémenter plus tard**, rien n'a encore été construit — l'auteur compilera lui-même les
+installables quand il sera prêt.
+
+**Point de départ important — l'APK actuel ne résout PAS ce besoin.** L'APK généré via TWA/Bubblewrap
+(§9 ci-dessus) est une coquille native qui charge le contenu en direct depuis
+`https://zaky04.github.io/geofinance/` à chaque lancement. Si l'hébergement GitHub Pages disparaît,
+cet APK casse aussi (sauf ce qui était déjà en cache localement sur l'appareil via le Service Worker).
+Un vrai exécutable "autonome" doit embarquer TOUS les fichiers de l'app à l'intérieur de l'installeur
+lui-même, sans jamais dépendre d'une URL réseau au runtime.
+
+**Par plateforme :**
+
+| Plateforme | Faisable ? | Outil recommandé | Notes |
+|---|---|---|---|
+| Windows | Oui | **Tauri** (léger, utilise WebView2 déjà présent sur Win10/11) ou Electron (plus lourd ~150-200 Mo, mais plus mature/documenté) | Produit un `.exe` autonome, tout embarqué, zéro dépendance réseau |
+| macOS | Oui | **Tauri** (utilise WebKit natif) ou Electron | Produit un `.app`/`.dmg`, distribuable hors App Store (notarisation Apple recommandée pour éviter l'avertissement Gatekeeper, pas strictement obligatoire pour une distribution directe/personnelle) |
+| Android | Oui, mais **changement d'approche nécessaire** | Capacitor (Ionic) ou Tauri 2.0 | Remplace la TWA actuelle : les fichiers sont embarqués dans l'APK et chargés en `file://` (ou équivalent), plus jamais en `https://` vers GitHub Pages |
+| iOS | **Non, pas de vrai équivalent** — limite de plateforme Apple, pas technique | — | Impossible de distribuer un simple fichier à installer comme sur Android sans passer par l'App Store (compte développeur Apple, 99 $/an, review) ou du sideloading qui expire périodiquement (AltStore, TestFlight — nécessite un Apple ID et une re-signature régulière). La seule option sans compte payant reste "Ajouter à l'écran d'accueil" depuis Safari (déjà disponible aujourd'hui) — mais ça nécessite d'atteindre l'URL au moins une fois pour l'installation initiale, contrairement à un vrai exécutable |
+
+**Compromis à garder en tête avant de se lancer :** Tauri/Electron/Capacitor sont tous de **nouveaux
+outils de build** — le projet n'en a aujourd'hui aucun (JS vanilla pur, zéro étape de build, voir §3).
+Passer à l'un de ces outils est un changement d'architecture pour la distribution (pas pour le code
+applicatif lui-même, qui reste le même HTML/CSS/JS servi tel quel), pas juste une commande à lancer.
+
+**Ordre suggéré si l'auteur se lance** : commencer par **Windows avec Tauri** — la demande initiale la
+plus concrète, l'outil le plus léger, et ça valide l'approche avant de dupliquer l'effort sur macOS et
+Android (dont la config Tauri se réutilise en grande partie une fois la première plateforme en place).
+
+## 11. Tests automatisés
 
 ### 14 août 2026 — Tests de non-régression pour `ledger.js`
 
