@@ -53,7 +53,11 @@ export async function seedDemoData() {
   // jamais l'une de l'autre en silence.
   const categories = DEFAULT_CATEGORIES.map((c) => ({ id: uuid(), parentId: null, createdAt: now, ...c, name: t(c.name) }));
   await dbBulkPut(STORES.CATEGORIES, categories);
-  const cat = (name) => categories.find((c) => c.name === name)?.id || null;
+  // Les appels ci-dessous passent le nom FRANÇAIS canonique (ex: cat('Alimentation')) alors que
+  // `categories` ci-dessus contient des noms déjà traduits (name: t(c.name)) — sans retraduire ici
+  // aussi, la recherche échoue silencieusement en anglais (categoryId: null partout) puisque aucune
+  // catégorie ne s'appelle littéralement "Alimentation" une fois nommée "Food".
+  const cat = (name) => categories.find((c) => c.name === t(name))?.id || null;
 
   const transactions = [
     { amount: 275000, type: 'income', categoryId: cat('Salaire'), walletId: walletBank.id, date: daysAgo(58), note: t('Salaire juin') },

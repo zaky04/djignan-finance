@@ -1847,6 +1847,49 @@ nouvelle entrée de dictionnaire pour ce lot hormis `'Choisir un fichier'` → `
 
 `CACHE_VERSION` : `v70` → `v71`.
 
+### 16 août 2026 (suite) — Vérification post-push : demo-data.js perdait la catégorie en anglais
+
+Après le push, l'auteur a demandé une vérification explicite de la traduction et du thème sombre/clair.
+Méthode (le rendu visuel du panneau Browser n'était pas affiché dans cette session, donc pas de
+captures d'écran possibles) : rendu direct de chaque module (`renderDashboard`, `renderWallets`,
+`renderTransactions`, `renderBudgets`, `renderSavings`, `renderInvestments`, `renderDebts`,
+`renderTools`, `renderReports`, `renderShared`, `renderKeptAccounts`, `renderSettings`) avec de
+vraies données de démo, extraction du texte réel de chaque section via `textContent`, en français
+d'abord puis en anglais après re-semis des données de démo en anglais — plus une vérification
+programmatique des variables CSS de thème (contraste WCAG) et du bouton de bascule de thème.
+
+**Bug trouvé, invisible à l'audit statique précédent** (celui-ci cherchait du texte français non
+traduit dans le code source — ce bug-ci est une erreur de LOGIQUE, pas de texte manquant) :
+`demo-data.js`, fonction `cat(name)` (ligne ~56) — comparait le nom français canonique passé en
+argument (ex: `cat('Alimentation')`) directement à `categories[i].name`, qui contient en réalité le nom
+DÉJÀ TRADUIT (`t(c.name)`, donc `"Food"` en anglais). Résultat : en anglais, **toutes** les transactions
+et tous les budgets de démonstration perdaient leur catégorie (`categoryId: null` → affiché "No
+category" partout : tableau de bord, transactions, budgets, "Categories to watch"), alors que les
+catégories elles-mêmes ÉTAIENT correctement nommées en anglais. Repéré en comparant le texte rendu :
+"Transport" restait correctement assigné (le seul nom identique en FR/EN) tandis que "Alimentation"/
+"Loisirs"/etc. donnaient tous "No category". **Fix** : `cat()` retraduit maintenant aussi son argument
+avant comparaison (`categories.find((c) => c.name === t(name))`), pour matcher la même transformation
+appliquée aux catégories à leur création. Comportement inchangé en français (`t()` renvoie l'entrée telle
+quelle quand `currentLang !== 'en'`).
+
+Reste du bilan de vérification, **rien d'autre trouvé** :
+- Tout le texte des 12 écrans testés (Dashboard, Portefeuilles, Transactions, Budgets, Épargne,
+  Investissements, Dettes & créances, Outils, Rapports, Partage de dépenses, Comptes gardés,
+  Paramètres) s'affiche intégralement en anglais après le correctif ci-dessus — plus aucune occurrence
+  de "No category"/"Sans catégorie" injustifiée, plus aucun texte français résiduel repéré dans le
+  texte extrait.
+- Thème sombre/clair : architecture CSS saine (`:root` = palette claire par défaut, `[data-theme="dark"]`
+  = surcharge explicite, `body[data-theme="auto"]` sous `@media (prefers-color-scheme: dark)` = détection
+  système, cohérent avec les conventions Artifact). Contrastes WCAG calculés sur les vraies valeurs de
+  variables CSS : texte principal sur fond 16.5:1 (clair) / 16.9:1 (sombre), texte atténué 4.5:1 / 7.5:1,
+  couleurs de statut (accent/positif/négatif) 3.3–5.4:1 — cohérent avec un usage sur éléments larges/
+  icônes/boutons, pas de texte de contenu. Bouton de bascule (`#theme-toggle`) testé sur 4 clics
+  consécutifs : `appState.theme` et `document.body.dataset.theme` restent parfaitement synchronisés à
+  chaque clic, cycle correct `auto → dark → light → auto → ...`, persistance en base confirmée
+  (`getSetting('theme')` reflète chaque changement).
+
+`CACHE_VERSION` : `v71` → `v72`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
