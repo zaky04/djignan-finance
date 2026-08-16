@@ -2139,6 +2139,40 @@ repliés sur leur propre ligne à cette largeur. Aucune erreur console.
 
 `CACHE_VERSION` : `v76` → `v77`.
 
+### 16 août 2026 (suite) — Audit responsive complet (confirmé par l'auteur sur iPhone 14 réel)
+
+L'auteur a confirmé que le correctif de la barre du haut (entrée ci-dessus) fonctionne bien sur son
+iPhone 14 réel, et a demandé d'en profiter pour vérifier le mode responsive de toute l'app. Méthode :
+les 12 vues (Dashboard, Portefeuilles, Transactions, Budgets, Épargne, Investissements, Dettes &
+créances, Outils, Rapports, Partage, Comptes gardés, Paramètres) parcourues par **vraie navigation**
+(clic sur `[data-view-target]`, pas juste appel direct de `renderX()` qui laisse la vue `hidden` et
+fausse toute mesure de largeur — piège rencontré une fois pendant cet audit : un premier script de
+scan annonçait 0 débordement partout alors qu'une vraie régression existait, parce qu'il scannait des
+vues restées cachées). Trois largeurs testées : 375px (mobile), 768px (tablette), 1280px (desktop) —
+scan automatique (élément dont le bord droit dépasse le viewport) + inspection visuelle par capture
+d'écran sur chaque vue à 375px.
+
+**Bug trouvé et corrigé** : `index.html`, en-tête de la vue Transactions — le groupe de 3 boutons
+("Sélection multiple", "Rapprochement", "+ Nouvelle transaction") était dans un conteneur
+`display:flex;gap:8px` **sans** `flex-wrap:wrap`. Sur un écran étroit, les 3 boutons ne pouvaient pas
+passer à la ligne et débordaient horizontalement — le dernier bouton ("+ Nouvelle transaction") se
+retrouvait coupé, avec une barre de défilement horizontale sur toute la page. Une règle
+`@media (max-width:480px) { .view-header .btn { flex: 1 1 100%; } }` existait déjà pour forcer chaque
+bouton en pleine largeur, mais ne pouvait rien faire tant que son parent immédiat refusait
+explicitement le retour à la ligne. Fix : ajout de `flex-wrap:wrap` sur ce conteneur (seul endroit du
+fichier avec ce motif précis — les autres vues n'ont qu'un seul bouton dans leur en-tête, donc pas
+concernées).
+
+**Reste du bilan, rien d'autre trouvé** : après correctif, 0 débordement horizontal sur les 12 vues ×
+3 largeurs (scan automatique par vraie navigation, cette fois fiable). Inspection visuelle à 375px
+confirmée propre sur toutes les vues, y compris les cas les plus denses (formulaire Paramètres avec
+tous ses boutons de sauvegarde, section Graphiques de Rapports avec ses sélecteurs/cases à cocher,
+nom de participant long dans Partage de dépenses qui passe correctement à la ligne sans pousser les
+boutons d'action hors champ). 768px et 1280px vérifiés uniquement par scan automatique (pas
+d'anomalie visuelle attendue à ces largeurs, moins contraintes).
+
+`CACHE_VERSION` : `v77` → `v78`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
