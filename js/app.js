@@ -15,6 +15,7 @@ import { seedDemoData, clearDemoData } from './demo-data.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
 import { initI18n, t } from './i18n.js';
+import { REQUIRE_ACTIVATION_CODE, ACTIVATION_CODE_HASH } from './activation-config.js';
 
 import { renderDashboard, initDashboardModule, DASHBOARD_PANEL_DEFAULTS } from './modules/dashboard.js';
 import { renderWallets, initWalletsModule, openWalletModal } from './modules/wallets.js';
@@ -465,6 +466,46 @@ async function renderDemoModeBanner() {
   });
 }
 
+/** Code d'activation optionnel (dépôt "pro" uniquement — voir activation-config.js), affiché avant
+    même le choix de la langue, sur une toute première installation. Ne fait rien si
+    REQUIRE_ACTIVATION_CODE est désactivé (dépôt gratuit) ou si cet appareil est déjà activé. La
+    vérification par hash SHA-256 (Web Crypto, natif navigateur) n'est PAS une sécurité réelle — le
+    hash de référence est visible dans le code source livré au client, donc retrouvable par une
+    personne déterminée à lire le JS. C'est un filtre de distribution pratique, pas une protection
+    cryptographique. */
+async function showActivationCodeScreenIfNeeded() {
+  if (!REQUIRE_ACTIVATION_CODE) return;
+  if (await getSetting('activated', false)) return;
+  return new Promise((resolve) => {
+    const screen = document.getElementById('activation-screen');
+    const lockScreen = document.getElementById('lock-screen');
+    lockScreen.hidden = true;
+    screen.hidden = false;
+    const form = document.getElementById('activation-form');
+    const input = document.getElementById('activation-code-input');
+    const errorEl = document.getElementById('activation-error');
+    input.focus();
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const code = input.value.trim().toUpperCase();
+      if (!code) return;
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(code));
+      const hashHex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+      if (hashHex === ACTIVATION_CODE_HASH) {
+        await setSetting('activated', true);
+        errorEl.hidden = true;
+        screen.hidden = true;
+        lockScreen.hidden = false;
+        resolve();
+      } else {
+        errorEl.hidden = false;
+        input.value = '';
+        input.focus();
+      }
+    });
+  });
+}
+
 /** Affiché une seule fois, avant même l'écran de création du code PIN, sur une toute première
     installation uniquement (même garde que maybeShowOnboarding() : un PIN déjà configuré signifie
     que ce n'est pas une première installation, on ne redemande jamais après coup à un utilisateur
@@ -524,9 +565,13 @@ async function onUnlocked() {
     // utilisateur en anglais verrait un flash de français le temps que le reste du boot s'exécute.
     await initI18n();
 
-    // Choix de la langue, avant même la création du code PIN, sur une toute première installation
-    // (jamais pour une install existante — voir la garde dans showLanguageChoiceScreen()).
-    if (!(await isPinConfigured())) await showLanguageChoiceScreen();
+    // Code d'activation (dépôt pro uniquement) puis choix de la langue, avant même la création du
+    // code PIN, sur une toute première installation (jamais pour une install existante — voir les
+    // gardes dans showActivationCodeScreenIfNeeded()/showLanguageChoiceScreen()).
+    if (!(await isPinConfigured())) {
+      await showActivationCodeScreenIfNeeded();
+      await showLanguageChoiceScreen();
+    }
 
     await seedDefaultsIfNeeded();
     await migrateDebtTransactionCategories();

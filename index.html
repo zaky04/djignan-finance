@@ -36,6 +36,29 @@
 <!-- ============================================================ -->
 <!-- LOCK SCREEN : setup PIN (1er lancement) / déverrouillage      -->
 <!-- ============================================================ -->
+<!-- Code d'activation : affiché avant même le choix de la langue, sur une toute première
+     installation uniquement, UNIQUEMENT si REQUIRE_ACTIVATION_CODE est activé (voir
+     activation-config.js) — le dépôt "gratuit" ne l'active pas du tout. Vérification côté client
+     par hash SHA-256 (Web Crypto) : ce n'est PAS une sécurité réelle (le hash est visible dans le
+     code source), juste un filtre pratique pour contrôler la distribution. Libellés bilingues en
+     dur pour la même raison que l'écran de langue ci-dessous : la langue n'est pas encore choisie
+     à ce stade. -->
+<div id="activation-screen" class="lock-screen" hidden>
+  <div class="lock-card">
+    <div class="lock-logo" aria-hidden="true">
+      <img src="icons/icon-192.png" alt="" width="64" height="64" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;">
+    </div>
+    <h1 class="lock-title">Code d'activation / Activation code</h1>
+    <p class="lock-subtitle">Cette version nécessite un code fourni par l'éditeur. / This version requires a code provided by the publisher.</p>
+    <form id="activation-form" style="width:100%;max-width:280px;margin-top:18px;display:flex;flex-direction:column;gap:10px;">
+      <input type="text" id="activation-code-input" autocomplete="off" autocapitalize="characters" spellcheck="false"
+        placeholder="XXXXX-XXXXX" style="text-align:center;letter-spacing:2px;text-transform:uppercase;font-weight:700;">
+      <p id="activation-error" class="lock-error" aria-live="assertive" hidden>Code invalide / Invalid code</p>
+      <button type="submit" class="btn btn-primary btn-block">Valider / Submit</button>
+    </form>
+  </div>
+</div>
+
 <!-- Choix de la langue : affiché une seule fois, avant même l'écran de création du code PIN, sur
      une toute première installation uniquement (voir showLanguageChoiceScreen(), app.js). Les
      libellés ne sont volontairement pas passés par data-i18n : chaque langue s'auto-désigne dans

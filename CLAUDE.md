@@ -2256,6 +2256,66 @@ comportement de redirection classique de GitHub.
 
 `CACHE_VERSION` : `v78` → `v79`.
 
+### 16 août 2026 (suite) — Stratégie à 2 dépôts (gratuit / pro) + code d'activation
+
+Suite à la discussion sur le renommage du dépôt GitHub (voir entrée précédente) : l'auteur a choisi la
+migration propre plutôt qu'un renommage sec — **deux dépôts distincts désormais**, pas un seul renommé :
+- **`geofinance`** (existant, inchangé) : reste la version **gratuite**, toujours sous l'ancienne marque
+  GeoFinance, toujours à `zaky04.github.io/geofinance` — aucune interruption pour les utilisateurs déjà
+  actifs. Une bannière "cette app a une nouvelle version" y sera ajoutée séparément (pas encore fait),
+  SANS toucher au reste du code de ce dépôt (pas de rebranding, pas de nouvelle fonctionnalité).
+- **`djignan-finance`** (nouveau, pas encore créé sur GitHub) : la version **pro**, sous la marque
+  Djignan, avec le code d'activation ci-dessous. C'est CE dépôt local qui en devient la base.
+
+**Pourquoi Firebase ne casse pas** : le domaine autorisé pour Firebase Auth est `zaky04.github.io` (le
+nom d'hôte seul, voir §"Config Firebase" plus haut) — GitHub Pages sert tous les dépôts d'un même
+compte sous ce même nom d'hôte, seul le chemin change (`/geofinance/` vs `/djignan-finance/`). Le
+projet Firebase, `authDomain`/`projectId`/`storageBucket` et les règles Firestore (basées sur l'UID,
+pas le domaine) restent valides sans aucun changement pour la nouvelle URL.
+
+**Code d'activation** (nouveau `js/activation-config.js`) : l'auteur veut réserver la version pro à des
+personnes choisies, à qui il donnera un code. **Ce n'est pas une sécurité réelle** — le hash de
+référence est visible dans le code source livré au navigateur, donc en théorie retrouvable par une
+personne déterminée à lire le JS (view-source). C'est un filtre de distribution pratique (savoir qui a
+reçu le code), explicitement accepté comme tel par l'auteur après explication, pas une protection
+cryptographique contre un accès non autorisé — cohérent avec l'architecture 100% cliente de l'appli
+(aucun serveur pour valider quoi que ce soit).
+
+- Écran `#activation-screen` (`index.html`), affiché AVANT même le choix de la langue, sur une toute
+  première installation uniquement (`!isPinConfigured()`, même garde que
+  `showLanguageChoiceScreen()`) et seulement si `REQUIRE_ACTIVATION_CODE` est actif. Libellés bilingues
+  en dur (pas de `data-i18n`) — même raison que l'écran de langue : la langue n'est pas encore choisie
+  à ce stade.
+- Vérification par hash SHA-256 (`crypto.subtle.digest`, natif navigateur, aucune dépendance) : le code
+  saisi est normalisé (`trim().toUpperCase()`) puis haché et comparé à `ACTIVATION_CODE_HASH`. Bonne
+  saisie → `setSetting('activated', true)` (persiste, jamais redemandé sur cet appareil) puis enchaîne
+  sur le choix de la langue. Mauvaise saisie → message d'erreur bilingue, champ vidé, ressaisie
+  possible sans limite (pas de throttle anti-bruteforce type PIN — inutile pour un simple filtre de
+  distribution, pas une vraie barrière de sécurité).
+- `js/activation-config.js` est le SEUL fichier qui divergera entre les deux dépôts : ici (pro),
+  `REQUIRE_ACTIVATION_CODE = true` + le hash réel. Dans le dépôt gratuit, une copie séparée du fichier
+  avec `REQUIRE_ACTIVATION_CODE = false` et un hash vide — tout le reste du code reste partagé/commun.
+- **Le code en clair n'est écrit NULLE PART dans ce dépôt** (ni ici, ni dans le code, ni dans l'historique
+  git) — seul son hash SHA-256 est committé. Généré aléatoirement (10 caractères, alphabet excluant les
+  caractères ambigus 0/O/1/I/L, formaté en `XXXXX-XXXXX`) et communiqué à l'auteur uniquement via le
+  chat de cette session — à lui de le distribuer et de le conserver en lieu sûr : s'il le perd, il
+  faudra en régénérer un nouveau (donc republier `ACTIVATION_CODE_HASH`) puisqu'aucune copie en clair
+  n'existe ailleurs.
+
+Testé de bout en bout (config temporairement activée le temps du test, remise à l'état définitif
+`true`+hash réel juste après puisque CE dépôt est bien la version pro) : mauvais code → erreur affichée,
+champ vidé ; bon code saisi en minuscules → accepté (confirme la normalisation `toUpperCase()`),
+`activated` persisté, enchaîne correctement sur l'écran de langue puis la création du PIN ; rechargement
+après PIN configuré → écrans d'activation ET de langue tous deux sautés, va directement à l'écran de
+déverrouillage. Aucune erreur console.
+
+**Pas encore fait** : création réelle du dépôt `djignan-finance` sur GitHub, push de ce dépôt local
+dessus, et ajout de la bannière "nouvelle version disponible" dans l'ancien dépôt `geofinance` (sur une
+branche/état basé sur `b6fcf93`, le dernier commit poussé avant le rebranding — PAS sur l'état actuel
+qui contient déjà tout le renommage Djignan).
+
+`CACHE_VERSION` : `v79` → `v80`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
