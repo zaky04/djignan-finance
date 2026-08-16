@@ -117,6 +117,17 @@ export async function signOutGoogle() {
   await authMod.signOut(firebaseAuth);
 }
 
+/** Regroupe la séquence "compléter une redirection Google en attente puis attendre l'état de
+    connexion réel" — utilisée à la fois par renderCloudBackupSection() (Paramètres) et par l'écran
+    de restauration au premier lancement (app.js, showRestoreScreenIfNeeded()) : les deux ont
+    exactement le même besoin (savoir si un utilisateur est connecté, y compris juste après un
+    retour de signInWithRedirect()). Renvoie l'utilisateur Firebase ou null. */
+export async function resolveCloudUser() {
+  const { authMod } = await ensureFirebase();
+  await handlePendingRedirect(authMod);
+  return waitForAuthReady(authMod);
+}
+
 // Firestore refuse un document de plus de ~1 048 487 octets. Avec l'historique de transactions
 // et les justificatifs photo (convertis en data URL base64 dans le payload — voir
 // serializeReceiptsForExport() dans backup.js), la sauvegarde complète dépasse vite cette limite
@@ -284,9 +295,8 @@ export async function checkCloudStaleness() {
   const timeout = setTimeout(() => { cancelled = true; }, 8000);
 
   try {
-    const { authMod, firestoreMod } = await ensureFirebase();
-    await handlePendingRedirect(authMod);
-    const user = await waitForAuthReady(authMod);
+    const { firestoreMod } = await ensureFirebase();
+    const user = await resolveCloudUser();
     if (!user || cancelled) return;
 
     const snap = await firestoreMod.getDoc(firestoreMod.doc(firebaseDb, 'backups', user.uid));
@@ -386,9 +396,7 @@ export async function renderCloudBackupSection(container) {
   // ne déclenche jamais le chargement réseau du SDK Firebase rien qu'en ouvrant ses Paramètres.
   if (await getSetting('cloudBackupWasSignedIn', false) || await getSetting('cloudRedirectPending', false)) {
     try {
-      const { authMod } = await ensureFirebase();
-      await handlePendingRedirect(authMod);
-      user = await waitForAuthReady(authMod);
+      user = await resolveCloudUser();
       if (!user) await setSetting('cloudBackupWasSignedIn', false);
     } catch {
       // Hors-ligne ou service indisponible : reste affiché comme déconnecté, pas d'erreur bloquante.

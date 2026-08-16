@@ -9,8 +9,8 @@ import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAU
 import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigured } from './auth.js';
 import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
-import { checkWeeklyBackupReminder } from './backup.js';
-import { checkWeeklyCloudBackupReminder, checkCloudStaleness } from './firebase-sync.js';
+import { checkWeeklyBackupReminder, importEncryptedBackup } from './backup.js';
+import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, resolveCloudUser } from './firebase-sync.js';
 import { seedDemoData, clearDemoData } from './demo-data.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
@@ -530,6 +530,148 @@ function showLanguageChoiceScreen() {
   });
 }
 
+/** Affiché une seule fois, après le choix de la langue et avant la création du code PIN, sur une
+    toute première installation uniquement (même garde que les écrans précédents). Propose de
+    restaurer une sauvegarde (locale, prioritaire, ou cloud) plutôt que de repartir de zéro — pont
+    de migration pour un utilisateur qui bascule depuis une autre installation (ex: GeoFinance vers
+    Djignan). Nécessaire car le stockage du navigateur n'est PAS toujours partagé entre deux apps
+    de la même origine : sur PC, GeoFinance et Djignan partagent la même IndexedDB (même origine
+    zaky04.github.io, DB_NAME volontairement inchangé) donc les données de l'une apparaissent déjà
+    dans l'autre sans rien faire — mais une PWA "Ajoutée à l'écran d'accueil" sur iOS reçoit un bac
+    à sable de stockage totalement isolé PAR APP, même si les deux pointent vers la même origine :
+    limite de plateforme WebKit, aucun moyen de la contourner en code. Les deux chemins de
+    restauration excluent toujours le PIN de l'appareil source (DEVICE_LOCAL_SETTING_KEYS, db.js) :
+    un nouveau code PIN reste à créer sur CET appareil quelle que soit l'option choisie, par
+    conception (voir le correctif de sécurité du 13 août dans CLAUDE.md — un fichier de sauvegarde
+    ne doit jamais pouvoir poser un PIN sur un nouvel appareil). */
+function showRestoreScreenIfNeeded() {
+  return new Promise((resolve) => {
+    const screen = document.getElementById('restore-screen');
+    const lockScreen = document.getElementById('lock-screen');
+    const content = document.getElementById('restore-screen-content');
+
+    function finish() {
+      screen.hidden = true;
+      lockScreen.hidden = false;
+      resolve();
+    }
+
+    function renderLoading(message) {
+      content.innerHTML = `
+        <h1 class="lock-title">${t('Restauration en cours…')}</h1>
+        <p class="lock-subtitle">${message}</p>`;
+    }
+
+    function renderChoice() {
+      content.innerHTML = `
+        <h1 class="lock-title">${t('Restaurer vos données ?')}</h1>
+        <p class="lock-subtitle">${t('Si vous basculez depuis une autre installation (ex: GeoFinance), importez votre sauvegarde pour retrouver vos données et réglages sur cet appareil.')}</p>
+        <div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:18px;">
+          <button type="button" class="btn btn-primary btn-block" id="restore-local-btn">${t('Importer une sauvegarde locale')}</button>
+          <button type="button" class="btn btn-ghost btn-block" id="restore-cloud-btn">${t('Restaurer depuis le cloud (Google)')}</button>
+          <button type="button" class="btn btn-ghost btn-block" id="restore-skip-btn" style="opacity:.75;">${t('Configurer un nouveau compte')}</button>
+        </div>`;
+      content.querySelector('#restore-local-btn').addEventListener('click', renderLocalForm);
+      content.querySelector('#restore-cloud-btn').addEventListener('click', startCloudSignIn);
+      content.querySelector('#restore-skip-btn').addEventListener('click', finish);
+    }
+
+    function renderLocalForm() {
+      content.innerHTML = `
+        <h1 class="lock-title">${t('Importer une sauvegarde locale')}</h1>
+        <p class="lock-subtitle">${t('Sélectionnez le fichier de sauvegarde chiffrée (.json) et son mot de passe.')}</p>
+        <form id="restore-local-form" style="width:100%;margin-top:18px;display:flex;flex-direction:column;gap:10px;">
+          <input type="file" id="restore-local-file" accept="application/json,.json" required>
+          <input type="password" id="restore-local-passphrase" placeholder="${t('Mot de passe de chiffrement')}" required minlength="6" autocomplete="off">
+          <p class="lock-error" id="restore-local-error" aria-live="assertive" hidden></p>
+          <button type="submit" class="btn btn-primary btn-block">${t('Restaurer')}</button>
+          <button type="button" class="btn btn-ghost btn-block" id="restore-local-cancel">${t('Retour')}</button>
+        </form>`;
+      const errorEl = content.querySelector('#restore-local-error');
+      content.querySelector('#restore-local-cancel').addEventListener('click', renderChoice);
+      content.querySelector('#restore-local-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const file = content.querySelector('#restore-local-file').files[0];
+        const passphrase = content.querySelector('#restore-local-passphrase').value;
+        if (!file) return;
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        errorEl.hidden = true;
+        try {
+          await importEncryptedBackup(file, passphrase, { merge: false });
+          finish();
+        } catch (err) {
+          errorEl.textContent = err.message || t('Restauration impossible.');
+          errorEl.hidden = false;
+          submitBtn.disabled = false;
+        }
+      });
+    }
+
+    function renderCloudPassphraseForm() {
+      content.innerHTML = `
+        <h1 class="lock-title">${t('Restaurer depuis le cloud')}</h1>
+        <p class="lock-subtitle">${t('Connecté. Entrez le mot de passe de chiffrement de votre sauvegarde cloud.')}</p>
+        <form id="restore-cloud-form" style="width:100%;margin-top:18px;display:flex;flex-direction:column;gap:10px;">
+          <input type="password" id="restore-cloud-passphrase" placeholder="${t('Mot de passe de chiffrement')}" required minlength="6" autocomplete="off">
+          <p class="lock-error" id="restore-cloud-error" aria-live="assertive" hidden></p>
+          <button type="submit" class="btn btn-primary btn-block">${t('Restaurer')}</button>
+          <button type="button" class="btn btn-ghost btn-block" id="restore-cloud-cancel">${t('Retour')}</button>
+        </form>`;
+      const errorEl = content.querySelector('#restore-cloud-error');
+      content.querySelector('#restore-cloud-cancel').addEventListener('click', renderChoice);
+      content.querySelector('#restore-cloud-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const passphrase = content.querySelector('#restore-cloud-passphrase').value;
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        submitBtn.disabled = true;
+        errorEl.hidden = true;
+        try {
+          await pullBackupFromCloud(passphrase, { merge: false });
+          await setSetting('cloudBackupWasSignedIn', true);
+          finish();
+        } catch (err) {
+          errorEl.textContent = err.message || t('Restauration impossible.');
+          errorEl.hidden = false;
+          submitBtn.disabled = false;
+        }
+      });
+    }
+
+    async function startCloudSignIn() {
+      renderLoading(t('Connexion à Google…'));
+      try {
+        const user = await signInWithGoogle();
+        if (!user) return; // flux redirection : la page va naviguer vers Google, rien d'autre à faire ici — au retour, boot() repart de zéro et retombe sur le bloc cloudRedirectPending ci-dessous
+        await setSetting('cloudBackupWasSignedIn', true);
+        renderCloudPassphraseForm();
+      } catch (err) {
+        renderChoice();
+        showToast(t('Erreur : {message}', { message: err.message || t('connexion impossible.') }));
+      }
+    }
+
+    (async () => {
+      lockScreen.hidden = true;
+      screen.hidden = false;
+      // Retour d'une redirection Google déclenchée par CET écran avant la navigation (voir
+      // startCloudSignIn ci-dessus) : boot() est reparti de zéro (isPinConfigured() toujours faux
+      // tant qu'aucun choix n'a abouti), donc on retombe forcément ici — compléter la connexion et
+      // enchaîner directement sur le mot de passe, sans re-proposer les 3 choix depuis le début.
+      if (await getSetting('cloudRedirectPending', false)) {
+        renderLoading(t('Connexion à Google…'));
+        try {
+          const user = await resolveCloudUser();
+          if (user) { await setSetting('cloudBackupWasSignedIn', true); renderCloudPassphraseForm(); return; }
+        } catch {
+          // Redirection annulée/échouée : retombe sur le choix initial ci-dessous.
+        }
+      }
+      renderChoice();
+    })();
+  });
+}
+
 async function onUnlocked() {
   document.getElementById('lock-screen').hidden = true;
   document.getElementById('app').hidden = false;
@@ -565,12 +707,17 @@ async function onUnlocked() {
     // utilisateur en anglais verrait un flash de français le temps que le reste du boot s'exécute.
     await initI18n();
 
-    // Code d'activation (dépôt pro uniquement) puis choix de la langue, avant même la création du
-    // code PIN, sur une toute première installation (jamais pour une install existante — voir les
-    // gardes dans showActivationCodeScreenIfNeeded()/showLanguageChoiceScreen()).
+    // Code d'activation (dépôt pro uniquement), choix de la langue, puis proposition de restaurer
+    // une sauvegarde — avant même la création du code PIN, sur une toute première installation
+    // (jamais pour une install existante — voir les gardes dans showActivationCodeScreenIfNeeded()/
+    // showLanguageChoiceScreen()/showRestoreScreenIfNeeded()). La langue n'est redemandée que si
+    // elle n'est pas déjà enregistrée : showRestoreScreenIfNeeded() peut déclencher une navigation
+    // complète vers Google (signInWithRedirect) puis revenir sur cette même branche de boot() —
+    // sans cette garde, l'utilisateur reverrait l'écran de langue à chaque retour de redirection.
     if (!(await isPinConfigured())) {
       await showActivationCodeScreenIfNeeded();
-      await showLanguageChoiceScreen();
+      if (!(await getSetting('language'))) await showLanguageChoiceScreen();
+      await showRestoreScreenIfNeeded();
     }
 
     await seedDefaultsIfNeeded();

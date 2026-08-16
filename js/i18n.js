@@ -1085,4 +1085,21 @@ const EN = {
   'Épargne nette mensuelle': 'Monthly net savings',
   'Afficher en %': 'Show as %',
   'Budget vs réel — tendance annuelle': 'Budget vs actual — yearly trend',
+
+  // ---------- Écran de restauration au premier lancement (pont de migration GeoFinance → Djignan) ----------
+  'Restauration en cours…': 'Restoring…',
+  'Restaurer vos données ?': 'Restore your data?',
+  'Si vous basculez depuis une autre installation (ex: GeoFinance), importez votre sauvegarde pour retrouver vos données et réglages sur cet appareil.':
+    'If you\'re switching from another installation (e.g. GeoFinance), import your backup to get your data and settings back on this device.',
+  'Importer une sauvegarde locale': 'Import a local backup',
+  'Restaurer depuis le cloud (Google)': 'Restore from the cloud (Google)',
+  'Configurer un nouveau compte': 'Set up a new account',
+  'Sélectionnez le fichier de sauvegarde chiffrée (.json) et son mot de passe.':
+    'Select the encrypted backup file (.json) and its password.',
+  'Restaurer': 'Restore',
+  'Retour': 'Back',
+  'Restauration impossible.': 'Restoration failed.',
+  'Connecté. Entrez le mot de passe de chiffrement de votre sauvegarde cloud.':
+    'Signed in. Enter the encryption password for your cloud backup.',
+  'Connexion à Google…': 'Connecting to Google…',
 };
