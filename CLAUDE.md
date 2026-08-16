@@ -2090,6 +2090,55 @@ erreur console sur l'ensemble du test.
 
 `CACHE_VERSION` : `v75` → `v76`.
 
+### 16 août 2026 (suite) — Barre du haut inutilisable sur iPhone à encoche/île dynamique
+
+Signalé par l'auteur : sur iPhone 14, les boutons de la barre du haut (recherche, masquer les
+montants, thème, "Saisie express") ne sont pas cliquables sans zoomer.
+
+**Diagnostic** : `index.html` a bien `viewport-fit=cover` (nécessaire pour que `env(safe-area-inset-*)`
+prenne effet), mais **seule** la barre du bas (`.bottom-nav`) et certains éléments (modales, écran de
+PIN) compensaient l'encoche/l'île dynamique/la barre d'accueil via `env(safe-area-inset-bottom)`. La
+barre du HAUT (`.topbar`) n'avait aucun `padding-top` de ce type — pire, elle utilisait `height:
+var(--topbar-h)` (64px, fixe) au lieu de `min-height`. Avec `box-sizing:border-box` (règle globale du
+projet), ajouter un `padding-top` à une hauteur FIXE aurait mangé cette hauteur au lieu d'en ajouter —
+sur un iPhone 14 (îlot dynamique ≈ 59px d'insécable), les boutons (cercles 38px de diamètre) se
+seraient retrouvés compressés dans les ~5px restants de la boîte de 64px, débordant hors de leur
+conteneur et devenant impossibles à taper au bon endroit. Le même défaut existait en double sur
+`.bottom-nav` (qui AVAIT déjà le `padding-bottom`, mais toujours avec `height` fixe au lieu de
+`min-height` — bug latent moins visible côté bas car la barre d'accueil, ≈34px, est plus petite que
+l'îlot dynamique du haut, ≈59px, donc moins susceptible d'écraser complètement les icônes, mais
+potentiellement déjà compressées).
+
+**Fix** (`css/styles.css`) :
+- `.topbar` : `height` → `min-height`, `padding: 0 28px` → `padding: env(safe-area-inset-top) 28px
+  0` (+ même correction dans la surcharge mobile `@media (max-width:900px)` qui écrasait
+  complètement ce padding).
+- `.bottom-nav` : `height` → `min-height` (le `padding-bottom: env(safe-area-inset-bottom)` existait
+  déjà, il lui manquait juste une boîte capable de grandir).
+- `.view-root` (mobile) : le padding bas fixe (`100px`, pour dégager le contenu défilant de la barre
+  du bas) devient `calc(100px + env(safe-area-inset-bottom))` — sinon le dernier contenu resterait
+  caché derrière la barre du bas désormais plus haute sur un écran à barre d'accueil.
+- `.toast-container` / `.install-banner` : leur position (`bottom: calc(var(--bottom-nav-h) + 16px)`)
+  intègre maintenant `+ env(safe-area-inset-bottom)`, sinon ils se seraient superposés au sommet de
+  la barre du bas désormais plus haute.
+- `.lock-screen` (écran de PIN) vérifié SANS changement nécessaire : contenu centré verticalement
+  (`align-items:center`), rien d'actionnable ne se trouve physiquement sous l'encoche.
+
+Testé : ce dépôt de test n'a pas d'appareil réellement encoché disponible, donc `env(safe-area-inset-*)`
+s'y résout systématiquement à `0px` — confirmé que ça ne change RIEN au rendu sur un écran normal (pas
+de régression). Pour prouver que le correctif fonctionne réellement avec une encoche non nulle, valeur
+forcée manuellement en `padding-top: 59px` (îlot dynamique iPhone 14 Pro) sur `.topbar` en direct dans
+le navigateur : la barre grandit de 64px à ~98px (au lieu de rester bloquée à 64px), et le bouton
+recherche se retrouve entièrement sous la zone simulée (y=59 à y=97, hauteur 38px intacte) au lieu
+d'être compressé/débordant — comportement AVANT/APRÈS comparé directement, confirme le mécanisme.
+Vérification plus large de l'adaptation mobile demandée par l'auteur : aucun débordement horizontal
+détecté (scan automatique de tous les éléments de Dashboard/Transactions/Budgets/Rapports à 375px de
+large, y compris la nouvelle section Graphiques du lot précédent — 0 élément dépassant le viewport) ;
+contrôles de la section Graphiques (sélecteurs, cases à cocher) confirmés lisibles et correctement
+repliés sur leur propre ligne à cette largeur. Aucune erreur console.
+
+`CACHE_VERSION` : `v76` → `v77`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
