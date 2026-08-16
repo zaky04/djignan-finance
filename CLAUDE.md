@@ -1972,6 +1972,57 @@ le conteneur suit via `height:auto`.
 
 `CACHE_VERSION` : `v73` → `v74`.
 
+### 16 août 2026 (suite) — Suppression du graphique de flux, ajout de 2 courbes de variation mensuelle
+
+Suite à la discussion sur le graphique "Répartition des revenus du mois" (voir entrée ci-dessus) :
+l'auteur, après explication, a jugé le graphique redondant avec le donut "Dépenses par catégorie"
+juste à côté (même source de données, `computeExpensesByCategory`) et a demandé sa suppression pure
+et simple, remplacé par deux nouvelles courbes plus utiles : variation mensuelle des dépenses et des
+entrées, chacune filtrable par année et par catégorie.
+
+**Suppression** : `renderIncomeFlowSankey()` (dernière fonction SVG-à-la-main du fichier,
+`charts.js`), son appel dans `dashboard.js`, son conteneur `#dashboard-income-flow` (`index.html`),
+et les 3 entrées de dictionnaire devenues orphelines (`'Pas assez de données...'`, `'Revenus'`,
+`'Revenus du mois : {amount}'`) — plus aucun graphique de ce module n'est fait main, tous passent
+maintenant par Chart.js.
+
+**Ajout** : deux nouveaux panneaux sur le tableau de bord, à la place de l'ancien, chacun avec un
+sélecteur d'année (‹ › comme le "Bilan annuel" de Rapports) et un filtre de catégorie
+("Toutes catégories" ou une catégorie précise) :
+- `ledger.js` : nouvelle fonction `computeMonthlyTypeHistory(year, type, categoryId)` — total par mois
+  (12 points) d'un type de transaction (income/expense) sur une année donnée, filtré à une catégorie
+  si fournie. Contrairement aux fonctions d'historique existantes (`computeNetWorthHistory` etc.), les
+  libellés de mois utilisent `intlLocale()` (déjà exporté depuis `utils.js`) au lieu d'un `'fr-FR'`
+  câblé en dur — pas de nouveau trou i18n introduit. Nouvelle fonction `getCategoriesByType(type)`
+  pour peupler les filtres.
+- `js/modules/dashboard.js` : `renderNetWorthTrendChart()` (déjà générique, `charts.js`) réutilisée
+  telle quelle pour les deux courbes — aucun nouveau code de rendu Chart.js nécessaire. État des
+  filtres (année/catégorie) au niveau module, comme `reportYear`/`reportMonthKey` dans `reports.js`,
+  pour persister entre les re-rendus du tableau de bord. Nouveau `initDashboardModule()` (jusqu'ici
+  absent, dashboard.js n'avait aucun câblage à faire une seule fois) pour les boutons année précédente/
+  suivante et le `<select>` de catégorie — appelé une fois depuis `boot()` (`app.js`), comme les autres
+  modules.
+
+~2 nouvelles entrées de dictionnaire (`'Variation mensuelle des dépenses'`, `'Variation mensuelle des
+entrées'`) — `'Toutes catégories'`, `'Dépenses'`, `'Entrées'` déjà existantes, réutilisées telles
+quelles.
+
+Testé FR→EN de bout en bout avec des transactions réparties sur plusieurs mois de l'année (ajoutées
+manuellement pour valider la variation, les données de démo ne couvrant que les ~2 derniers mois) :
+- Total "Toutes catégories" vs filtré à "Alimentation" : les deux courbes affichent des valeurs
+  différentes et correctes mois par mois.
+- Navigation année précédente/suivante : le label d'année et les données du graphique se mettent à
+  jour ensemble, testé sur une instance de module propre (un premier test avec des instances mélangées
+  — import direct vs import avec `?v=` de cache-busting — a donné un résultat trompeur : chaque import
+  différemment paramétré crée sa PROPRE instance de module avec son PROPRE état, alors que les
+  écouteurs réels ne sont attachés qu'à l'instance chargée par `app.js` au démarrage ; reproduit
+  proprement avec un seul import cohérent, comportement confirmé correct).
+- Anglais : titres des deux panneaux, première option du filtre ("All categories"), libellés de mois
+  ("Jan 26" au lieu de "janv. 26") et libellé de la série ("Expenses") tous corrects.
+- Aucune erreur console.
+
+`CACHE_VERSION` : `v74` → `v75`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

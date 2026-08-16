@@ -295,8 +295,28 @@
             <div class="chart-canvas-wrap"><canvas id="chart-budget-vs-actual"></canvas></div>
           </div>
           <div class="chart-card chart-card-wide">
-            <h3 data-i18n="Répartition des revenus du mois">Répartition des revenus du mois</h3>
-            <div id="dashboard-income-flow"></div>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+              <h3 style="margin:0;" data-i18n="Variation mensuelle des dépenses">Variation mensuelle des dépenses</h3>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <button type="button" class="icon-btn" id="dash-expenses-trend-prev-year" aria-label="Année précédente" data-i18n-aria-label="Année précédente">‹</button>
+                <strong id="dash-expenses-trend-year-label" style="min-width:44px;text-align:center;display:inline-block;">—</strong>
+                <button type="button" class="icon-btn" id="dash-expenses-trend-next-year" aria-label="Année suivante" data-i18n-aria-label="Année suivante">›</button>
+                <select id="dash-expenses-trend-category"></select>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="chart-expenses-trend"></canvas></div>
+          </div>
+          <div class="chart-card chart-card-wide">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+              <h3 style="margin:0;" data-i18n="Variation mensuelle des entrées">Variation mensuelle des entrées</h3>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <button type="button" class="icon-btn" id="dash-income-trend-prev-year" aria-label="Année précédente" data-i18n-aria-label="Année précédente">‹</button>
+                <strong id="dash-income-trend-year-label" style="min-width:44px;text-align:center;display:inline-block;">—</strong>
+                <button type="button" class="icon-btn" id="dash-income-trend-next-year" aria-label="Année suivante" data-i18n-aria-label="Année suivante">›</button>
+                <select id="dash-income-trend-category"></select>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap"><canvas id="chart-income-trend"></canvas></div>
           </div>
         </div>
 

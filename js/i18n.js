@@ -145,7 +145,8 @@ const EN = {
   'Dépenses par catégorie': 'Expenses by category',
   'Évolution de la valeur nette': 'Net worth trend',
   'Budget vs réel': 'Budget vs actual',
-  'Répartition des revenus du mois': 'This month’s income breakdown',
+  'Variation mensuelle des dépenses': 'Monthly expense trend',
+  'Variation mensuelle des entrées': 'Monthly income trend',
   'Transactions récentes': 'Recent transactions',
   'Voir tout': 'See all',
   'Voir le détail des budgets →': 'See budget details →',
@@ -1065,11 +1066,6 @@ const EN = {
   "Installez GeoFinance sur l'écran d'accueil": 'Install GeoFinance on the home screen',
   'Appuyez sur {icon} <strong>Partager</strong>, puis <strong>« Sur l\'écran d\'accueil »</strong>.':
     'Tap {icon} <strong>Share</strong>, then <strong>"Add to Home Screen"</strong>.',
-
-  // ---------- Corrections transverses (lot 18, suite) : charts.js, diagramme de flux des revenus ----------
-  'Pas assez de données ce mois-ci pour afficher le flux.': 'Not enough data this month to display the flow.',
-  'Revenus': 'Income',
-  'Revenus du mois : {amount}': 'Income this month: {amount}',
 
   // ---------- Corrections transverses (lot 18, suite) : app.js, toast de thème + écran d'erreur de démarrage ----------
   'Thème : {mode}': 'Theme: {mode}',

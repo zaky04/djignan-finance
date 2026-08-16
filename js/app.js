@@ -16,7 +16,7 @@ import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
 import { initI18n, t } from './i18n.js';
 
-import { renderDashboard, DASHBOARD_PANEL_DEFAULTS } from './modules/dashboard.js';
+import { renderDashboard, initDashboardModule, DASHBOARD_PANEL_DEFAULTS } from './modules/dashboard.js';
 import { renderWallets, initWalletsModule, openWalletModal } from './modules/wallets.js';
 import { renderTransactions, initTransactionsModule, openQuickAdd } from './modules/transactions.js';
 import { renderBudgets, initBudgetsModule, generateDueRecurring } from './modules/budgets.js';
@@ -531,6 +531,7 @@ async function onUnlocked() {
     await seedDefaultsIfNeeded();
     await migrateDebtTransactionCategories();
 
+    initDashboardModule();
     initWalletsModule();
     initTransactionsModule();
     initBudgetsModule();

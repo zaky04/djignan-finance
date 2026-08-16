@@ -12,7 +12,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, getSetting } from './db.js';
-import { convertAmount, currentMonthKey, localISODate } from './utils.js';
+import { convertAmount, currentMonthKey, localISODate, intlLocale } from './utils.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // plusieurs fonctions — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js/
 // reports-extras.js/search.js/backup.js.
@@ -261,6 +261,36 @@ export async function computeExpensesByCategory(monthKey = currentMonthKey()) {
   const autres = sorted.slice(7).reduce((s, r) => s + r.value, 0);
   top.push({ label: 'Autres', value: autres, color: null });
   return top;
+}
+
+/** Historique mensuel (12 mois d'une année donnée) du total des transactions d'un type
+    (income/expense), optionnellement filtré à une seule catégorie (categoryId null -> toutes
+    catégories confondues). Alimente les courbes de variation mensuelle du tableau de bord,
+    filtrables par année et par catégorie. */
+export async function computeMonthlyTypeHistory(year, type = 'expense', categoryId = null) {
+  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const totals = new Array(12).fill(0);
+  for (const t of transactions) {
+    if (t.type !== type || !t.date || !t.date.startsWith(String(year))) continue;
+    if (t.debtId) continue;
+    if (categoryId && t.categoryId !== categoryId) continue;
+    const cur = walletCurrency[t.walletId] || baseCurrency;
+    const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
+    const monthIdx = parseInt(t.date.slice(5, 7), 10) - 1;
+    if (monthIdx >= 0 && monthIdx < 12) totals[monthIdx] += amt;
+  }
+  const points = totals.map((value, i) => ({
+    label: new Intl.DateTimeFormat(intlLocale(), { month: 'short', year: '2-digit' }).format(new Date(year, i, 1)),
+    value: Math.round(value * 100) / 100,
+  }));
+  return { points, currency: baseCurrency };
+}
+
+/** Catégories d'un type donné, triées par nom — pour peupler le filtre des courbes de variation. */
+export async function getCategoriesByType(type) {
+  const { categories } = await ctx();
+  return categories.filter((c) => c.type === type).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Budget vs réel du mois, par catégorie budgétée. */

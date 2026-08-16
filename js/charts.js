@@ -5,7 +5,7 @@
    chaque re-rendu (évite les fuites mémoire lors des changements de vue).
    ========================================================================== */
 
-import { formatCurrency, escapeHtml } from './utils.js';
+import { formatCurrency } from './utils.js';
 import { t } from './i18n.js';
 
 const registry = new Map();
@@ -155,65 +155,6 @@ export function renderBudgetVsActualChart(canvasId, rows, currency = 'EUR') {
     },
   });
   registry.set(canvasId, chart);
-}
-
-/** Diagramme de flux simplifié (façon Sankey) : revenus du mois se répartissant vers les
-    catégories de dépenses et l'épargne nette. SVG généré à la main (pas de librairie tierce)
-    pour rester léger — un seul nœud source (Revenus), un nœud par flux à droite.
-    flows = [{label, value, color}]. */
-export function renderIncomeFlowSankey(containerId, { income, flows, currency }) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  const positiveFlows = (flows || []).filter((f) => f.value > 0);
-  if (!income || income <= 0 || !positiveFlows.length) {
-    container.innerHTML = `<div class="empty-state">${t('Pas assez de données ce mois-ci pour afficher le flux.')}</div>`;
-    return;
-  }
-  const colors = baseColors();
-  const total = positiveFlows.reduce((s, f) => s + f.value, 0);
-  const rowH = 30;
-  // Hauteur minimale par flux, sinon un flux dont la valeur est faible face aux autres (ex: une
-  // grosse "Épargne nette" à côté d'une dizaine de petites catégories de dépenses) reçoit une bande
-  // proportionnelle de quelques pixels à peine — largement trop fine pour son étiquette (police
-  // 12px), les libellés se chevauchent alors en un bloc illisible. Le graphique grandit plutôt que
-  // de sacrifier la lisibilité : chaque flux garde AU MOINS cette hauteur, même si ça dépasse la
-  // hauteur "naturelle" (nombre de flux × rowH) — les flux réellement dominants (au-dessus du
-  // plancher) gardent leur proportion normale.
-  const MIN_ROW_H = 20;
-  const width = 640;
-  const leftX = 58, leftW = 8, rightX = 500, rightW = 8;
-  const midX = (leftX + leftW + rightX) / 2;
-
-  const baseHeight = Math.max(rowH, positiveFlows.length * rowH);
-  const rowHeights = positiveFlows.map((f) => Math.max(MIN_ROW_H, (f.value / total) * baseHeight));
-  const height = rowHeights.reduce((s, h) => s + h, 0);
-
-  let y = 0;
-  const rights = positiveFlows.map((f, i) => {
-    const h = rowHeights[i];
-    const row = { ...f, y, h };
-    y += h;
-    return row;
-  });
-
-  const paths = rights.map((r) => `
-    <path d="M ${leftX + leftW} ${r.y} C ${midX} ${r.y}, ${midX} ${r.y}, ${rightX} ${r.y}
-             L ${rightX} ${r.y + r.h}
-             C ${midX} ${r.y + r.h}, ${midX} ${r.y + r.h}, ${leftX + leftW} ${r.y + r.h} Z"
-          fill="${r.color}" opacity="0.32"/>`).join('');
-
-  const labels = rights.map((r) => `
-    <rect x="${rightX}" y="${r.y}" width="${rightW}" height="${Math.max(1, r.h - 2)}" fill="${r.color}"/>
-    <text x="${rightX + rightW + 10}" y="${r.y + r.h / 2}" dominant-baseline="middle" font-size="12" fill="${colors.text}">${escapeHtml(r.label)} · ${formatCurrency(r.value, currency)}</text>`).join('');
-
-  container.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:100%;height:auto;display:block;" preserveAspectRatio="xMinYMin meet">
-      <rect x="${leftX}" y="0" width="${leftW}" height="${height}" fill="${colors.accent}"/>
-      <text x="${leftX - 8}" y="${height / 2}" text-anchor="end" dominant-baseline="middle" font-size="12" font-weight="700" fill="${colors.text}">${t('Revenus')}</text>
-      ${paths}
-      ${labels}
-    </svg>
-    <div style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:6px;">${t('Revenus du mois : {amount}', { amount: formatCurrency(income, currency) })}</div>`;
 }
 
 /** Détruit tous les graphiques enregistrés (ex: avant changement de thème global). */
