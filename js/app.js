@@ -10,7 +10,7 @@ import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigure
 import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder, importEncryptedBackup } from './backup.js';
-import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, resolveCloudUser, checkPendingCloudRedirect } from './firebase-sync.js';
+import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, resolveCloudUser, checkPendingCloudRedirect, warmUpFirebaseSdk } from './firebase-sync.js';
 import { seedDemoData, clearDemoData } from './demo-data.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
@@ -574,6 +574,10 @@ function showRestoreScreenIfNeeded() {
       content.querySelector('#restore-local-btn').addEventListener('click', renderLocalForm);
       content.querySelector('#restore-cloud-btn').addEventListener('click', startCloudSignIn);
       content.querySelector('#restore-skip-btn').addEventListener('click', finish);
+      // Précharge le SDK Firebase dès que ce bouton est visible, pas seulement au clic : sur mobile,
+      // le délai réseau du chargement pouvait faire perdre le geste utilisateur nécessaire à la
+      // popup avant même qu'elle ne s'ouvre (voir warmUpFirebaseSdk(), firebase-sync.js).
+      warmUpFirebaseSdk();
     }
 
     function renderLocalForm() {
