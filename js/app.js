@@ -142,7 +142,7 @@ function wireGlobalChrome() {
     appState.theme = order[(idx + 1) % order.length];
     applyTheme(appState.theme);
     await setSetting('theme', appState.theme);
-    showToast(`Thème : ${{ auto: 'Automatique', light: 'Clair', dark: 'Sombre' }[appState.theme]}`);
+    showToast(t('Thème : {mode}', { mode: t({ auto: 'Automatique', light: 'Clair', dark: 'Sombre' }[appState.theme]) }));
     VIEW_RENDERERS[appState.currentView]?.();
   });
 
@@ -530,7 +530,7 @@ async function onUnlocked() {
     if (lockScreen) {
       lockScreen.innerHTML = `
         <div class="lock-card">
-          <p class="lock-error">Une erreur a empêché le démarrage de l'application. Rechargez la page ; si le problème persiste, essayez de vider le cache du navigateur pour ce site.</p>
+          <p class="lock-error">${t("Une erreur a empêché le démarrage de l'application. Rechargez la page ; si le problème persiste, essayez de vider le cache du navigateur pour ce site.")}</p>
         </div>`;
       lockScreen.hidden = false;
     }

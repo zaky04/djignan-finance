@@ -1736,6 +1736,71 @@ erreur console sur l'ensemble du test.
 
 `CACHE_VERSION` : `v68` → `v69`.
 
+### 16 août 2026 (suite) — Internationalisation FR/EN (lot 18/N, dernier lot : corrections transverses)
+
+Dernière passe : au lieu de traiter un écran, un audit **systématique** de tout le dépôt pour vérifier
+l'affirmation « l'app est totalement bilingue » avant de la refaire au auteur — méthode : `grep`
+combiné (import i18n manquant par fichier + recherche de tout texte accentué français non enveloppé
+dans `t(`/`tr(` à travers **tous** les fichiers, pas seulement ceux touchés récemment) plutôt que de se
+fier à la liste des lots déjà faits. Trouvés et corrigés :
+
+- **`utils.js`** (`confirmDialog`) : les valeurs par défaut `title`/`confirmText`/`cancelText` n'étaient
+  jamais traduites — impacte QUASIMENT toutes les boîtes de confirmation de l'app (suppression d'une
+  transaction, d'un portefeuille, d'un objectif, etc.), la plupart ne passant pas `cancelText`
+  explicitement. Piège évité : la clé `'Annuler'` existe déjà dans le dictionnaire mais mappée à
+  `'Undo'` (toasts d'annulation après suppression, lot 2) — un commentaire posé à l'époque avertissait
+  justement de ne pas la réutiliser ici. Solution : contournement direct par `getLanguage()` (comme
+  `intlLocale()` dans le même fichier) plutôt que par le dictionnaire, pour ce cas précis. `'Confirmer'`
+  déjà traduit, `'Confirmation'` ajouté. `currencySelectHtml()` : l'option "Autre devise…" et son
+  placeholder n'étaient pas non plus traduits — présents sur quasiment tous les formulaires impliquant
+  une devise.
+- **`ledger.js`** : les deux libellés de repli `'Sans catégorie'` (donut de dépenses par catégorie,
+  budget vs réel) n'étaient pas enveloppés — clé déjà existante, juste manquait le `tr()`.
+- **`charts.js`** : le libellé `'Réel'` du graphique Budget vs réel n'était pas traduit ; le diagramme
+  de flux des revenus (`renderIncomeFlowSankey`, page Tableau de bord) était **entièrement oublié** —
+  état vide, libellé "Revenus" du nœud source, et légende "Revenus du mois : {montant}".
+- **`install-prompt.js`** — module **complètement oublié**, comme `wallets.js` au lot 15 : la bannière
+  d'invitation à l'installation PWA (bouton Chrome/Edge natif, instructions iOS Safari "Partager > Sur
+  l'écran d'accueil"), affichée après chaque déverrouillage tant que l'app n'est pas installée. Aucune
+  collision `t` (import direct).
+- **`app.js`** : le toast affiché en basculant le thème ("Thème : Automatique/Clair/Sombre") n'était pas
+  traduit ; l'écran d'erreur affiché en cas d'échec critique au démarrage non plus — vérifié que `t()`
+  reste utilisable même si `initI18n()` lui-même a échoué (`currentLang` vaut `'fr'` par défaut au
+  chargement du module, donc pas de risque d'erreur en cascade dans ce chemin d'erreur).
+- **`settings.js`** : suppression d'un avertissement bilingue devenu obsolète dans la section
+  Langue/Language ("Certains écrans pas encore traduits resteront en français. / Some screens not yet
+  translated will stay in French.") — posé au tout début du chantier (lot 1) quand c'était encore vrai,
+  jamais retiré depuis. Laissé en place aurait été un mensonge actif envers l'utilisateur final une fois
+  ce lot terminé.
+
+~30 nouvelles entrées de dictionnaire, 0 doublon (880 clés au total).
+
+Testé FR→EN→FR de bout en bout (SW/caches vidés avant chaque test) : `confirmDialog()` par défaut
+("Confirmation" / "Annuler"↔"Cancel" / "Confirmer"↔"Confirm", `'Annuler'`→`'Undo'` du toast d'annulation
+vérifié inchangé en parallèle) ; `currencySelectHtml()` (option "Autre devise…" + placeholder) ;
+`renderBudgetVsActualChart` (libellés des deux séries) ; `renderIncomeFlowSankey` (état vide + nœud +
+légende, avec des données réalistes) ; bannière d'installation simulée via un faux événement
+`beforeinstallprompt` (branche Chrome/Edge testée en direct dans les deux langues ; branche iOS Safari
+vérifiée via `t()` direct, même limite que la connexion Google réelle — UA non simulable de façon fiable
+dans ce navigateur automatisé) ; toast de changement de thème (3 valeurs) ; écran d'erreur de démarrage ;
+section Langue/Language de Paramètres rendue en direct pour confirmer la disparition de l'avertissement
+obsolète. Aucune erreur console sur l'ensemble du test.
+
+**Bug pré-existant trouvé et corrigé en cours de route (lot 17, avant son commit)** : voir l'entrée du
+lot 17 ci-dessus — `analyzeTransactionsCsv()` retournait une variable `rows` jamais définie.
+
+`CACHE_VERSION` : `v69` → `v70`.
+
+**Bilan de l'audit final (lots 15-18)** : après cette passe, tous les fichiers `.js` du dépôt contenant
+du texte destiné à l'utilisateur importent `i18n.js`, à l'exception de `db.js` (définit
+`DEFAULT_CATEGORIES`, traduit à l'usage lors de la création, jamais rétroactivement — voir le principe
+documenté plus haut), `firebase-config.js` (config technique, pas de texte affiché), `ocr.js`/`state.js`
+(aucun texte utilisateur), et `sw-register.js` (un seul `console.error` de diagnostic). Recherche
+supplémentaire de tout texte français non enveloppé (accents non suivis de `t(`/`tr(`) à travers
+l'ensemble du dépôt (JS + `index.html`) : aucun résultat restant en dehors de commentaires, de données
+utilisateur (noms de catégories/portefeuilles/transactions, volontairement non retraduites) et de
+dictionnaires clé/valeur déjà traduits à l'usage.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

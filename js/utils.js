@@ -3,7 +3,8 @@
    Formatage devises/dates, conversion multi-devises, helpers UI génériques.
    ========================================================================== */
 
-import { getLanguage } from './i18n.js';
+// Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour un timer dans debounce().
+import { t as tr, getLanguage } from './i18n.js';
 
 export function uuid() {
   return crypto.randomUUID();
@@ -34,9 +35,9 @@ export function currencySelectHtml(selected = 'EUR', name = 'currency') {
   return `
     <select name="${escapeHtml(name)}" data-currency-select>
       ${codes.map((c) => `<option value="${escapeHtml(c)}" ${c === selected ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
-      <option value="__other__">Autre devise…</option>
+      <option value="__other__">${tr('Autre devise…')}</option>
     </select>
-    <input type="text" name="${escapeHtml(name)}Other" maxlength="3" placeholder="Code devise (ex: BRL)" data-currency-other
+    <input type="text" name="${escapeHtml(name)}Other" maxlength="3" placeholder="${escapeHtml(tr('Code devise (ex: BRL)'))}" data-currency-other
       style="display:none;margin-top:8px;text-transform:uppercase;">`;
 }
 
@@ -286,7 +287,14 @@ export function openModal(bodyHtml, { title = '', onClose = null } = {}) {
 }
 
 /** Boîte de confirmation stylée (remplace window.confirm). Résout un booléen. */
-export function confirmDialog(message, { title = 'Confirmation', confirmText = 'Confirmer', cancelText = 'Annuler', danger = false } = {}) {
+export function confirmDialog(message, { title, confirmText, cancelText, danger = false } = {}) {
+  title = title ?? tr('Confirmation');
+  confirmText = confirmText ?? tr('Confirmer');
+  // Pas de tr('Annuler') ici : ce mot français sert déjà de clé pour le bouton "Annuler" des toasts
+  // d'annulation (i18n.js), qui se traduit par 'Undo' — un sens différent de "Cancel" attendu ici.
+  // Voir le commentaire sur la clé 'Annuler' dans i18n.js. Contournement direct par langue plutôt
+  // que par une clé dictionnaire, même pattern que intlLocale() ci-dessus dans ce fichier.
+  cancelText = cancelText ?? (getLanguage() === 'en' ? 'Cancel' : 'Annuler');
   return new Promise((resolve) => {
     let decided = false;
     const modal = openModal(`

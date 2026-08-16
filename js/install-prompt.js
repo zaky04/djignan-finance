@@ -8,6 +8,7 @@
    ========================================================================== */
 
 import { getSetting, setSetting } from './db.js';
+import { t } from './i18n.js';
 
 let deferredPrompt = null;
 
@@ -57,8 +58,8 @@ const SHARE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" style="verti
 
 function bannerHtml({ title, body, showInstallBtn }) {
   return `
-    <div class="install-banner" id="install-banner" role="dialog" aria-label="Installer l'application">
-      <button type="button" class="install-banner-close" aria-label="Fermer">
+    <div class="install-banner" id="install-banner" role="dialog" aria-label="${t("Installer l'application")}">
+      <button type="button" class="install-banner-close" aria-label="${t('Fermer')}">
         <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12 19 6.4 17.6 5 12 10.6Z"/></svg>
       </button>
       <div class="install-banner-icon">
@@ -68,7 +69,7 @@ function bannerHtml({ title, body, showInstallBtn }) {
         <div class="install-banner-title">${title}</div>
         <div class="install-banner-text">${body}</div>
       </div>
-      ${showInstallBtn ? '<button type="button" class="btn btn-primary" id="install-banner-btn">Installer</button>' : ''}
+      ${showInstallBtn ? `<button type="button" class="btn btn-primary" id="install-banner-btn">${t('Installer')}</button>` : ''}
     </div>`;
 }
 
@@ -87,14 +88,14 @@ export async function maybeShowInstallPrompt() {
   let html;
   if (deferredPrompt) {
     html = bannerHtml({
-      title: 'Installer GeoFinance sur cet appareil',
-      body: "Accès direct depuis l'écran d'accueil et fonctionnement 100% hors-ligne.",
+      title: t('Installer GeoFinance sur cet appareil'),
+      body: t("Accès direct depuis l'écran d'accueil et fonctionnement 100% hors-ligne."),
       showInstallBtn: true,
     });
   } else if (isIOS() && isSafari()) {
     html = bannerHtml({
-      title: "Installez GeoFinance sur l'écran d'accueil",
-      body: `Appuyez sur ${SHARE_ICON} <strong>Partager</strong>, puis <strong>« Sur l'écran d'accueil »</strong>.`,
+      title: t("Installez GeoFinance sur l'écran d'accueil"),
+      body: t('Appuyez sur {icon} <strong>Partager</strong>, puis <strong>« Sur l\'écran d\'accueil »</strong>.', { icon: SHARE_ICON }),
       showInstallBtn: false,
     });
   } else {

@@ -223,16 +223,14 @@ async function renderProfileSection(container) {
   });
 }
 
-/** Langue de l'interface (FR/EN). Voir js/i18n.js pour l'état d'avancement de la traduction — un
-    écran pas encore converti reste simplement affiché en français en mode anglais, jamais une clé
-    brute ou une erreur. setLanguage() recharge la page pour appliquer la traduction partout d'un
-    coup, plutôt que de rendre chaque écran individuellement réactif à ce changement rare. */
+/** Langue de l'interface (FR/EN). setLanguage() recharge la page pour appliquer la traduction
+    partout d'un coup, plutôt que de rendre chaque écran individuellement réactif à ce changement
+    rare. */
 async function renderLanguageSection(container) {
   const lang = getLanguage();
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>Langue / Language</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:10px;">Certains écrans pas encore traduits resteront en français. / Some screens not yet translated will stay in French.</p>
       <div class="form-row" style="max-width:200px;">
         <select id="language-select">
           <option value="fr" ${lang === 'fr' ? 'selected' : ''}>Français</option>

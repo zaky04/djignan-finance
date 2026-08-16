@@ -6,6 +6,7 @@
    ========================================================================== */
 
 import { formatCurrency, escapeHtml } from './utils.js';
+import { t } from './i18n.js';
 
 const registry = new Map();
 
@@ -136,8 +137,8 @@ export function renderBudgetVsActualChart(canvasId, rows, currency = 'EUR') {
     data: {
       labels: (rows || []).map((r) => r.label),
       datasets: [
-        { label: 'Budget', data: (rows || []).map((r) => r.budget), backgroundColor: colors.border, borderRadius: 4 },
-        { label: 'Réel', data: (rows || []).map((r) => r.actual), backgroundColor: colors.accent, borderRadius: 4 },
+        { label: t('Budget'), data: (rows || []).map((r) => r.budget), backgroundColor: colors.border, borderRadius: 4 },
+        { label: t('Réel'), data: (rows || []).map((r) => r.actual), backgroundColor: colors.accent, borderRadius: 4 },
       ],
     },
     options: {
@@ -165,7 +166,7 @@ export function renderIncomeFlowSankey(containerId, { income, flows, currency })
   if (!container) return;
   const positiveFlows = (flows || []).filter((f) => f.value > 0);
   if (!income || income <= 0 || !positiveFlows.length) {
-    container.innerHTML = '<div class="empty-state">Pas assez de données ce mois-ci pour afficher le flux.</div>';
+    container.innerHTML = `<div class="empty-state">${t('Pas assez de données ce mois-ci pour afficher le flux.')}</div>`;
     return;
   }
   const colors = baseColors();
@@ -197,11 +198,11 @@ export function renderIncomeFlowSankey(containerId, { income, flows, currency })
   container.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:100%;height:auto;display:block;" preserveAspectRatio="xMinYMin meet">
       <rect x="${leftX}" y="0" width="${leftW}" height="${height}" fill="${colors.accent}"/>
-      <text x="${leftX - 8}" y="${height / 2}" text-anchor="end" dominant-baseline="middle" font-size="12" font-weight="700" fill="${colors.text}">Revenus</text>
+      <text x="${leftX - 8}" y="${height / 2}" text-anchor="end" dominant-baseline="middle" font-size="12" font-weight="700" fill="${colors.text}">${t('Revenus')}</text>
       ${paths}
       ${labels}
     </svg>
-    <div style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:6px;">Revenus du mois : ${formatCurrency(income, currency)}</div>`;
+    <div style="text-align:center;font-size:12px;color:var(--text-muted);margin-top:6px;">${t('Revenus du mois : {amount}', { amount: formatCurrency(income, currency) })}</div>`;
 }
 
 /** Détruit tous les graphiques enregistrés (ex: avant changement de thème global). */

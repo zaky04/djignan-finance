@@ -1050,4 +1050,32 @@ const EN = {
   'Cela fait une semaine depuis votre dernière sauvegarde. Voulez-vous exporter une copie chiffrée de vos données maintenant ?':
     'It has been a week since your last backup. Would you like to export an encrypted copy of your data now?',
   'Exporter maintenant': 'Export now',
+
+  // ---------- Corrections transverses (lot 18) : utils.js (confirmDialog, sélecteur de devise) ----------
+  'Confirmation': 'Confirmation',
+  'Autre devise…': 'Other currency…',
+  'Code devise (ex: BRL)': 'Currency code (e.g. BRL)',
+  'Réel': 'Actual',
+
+  // ---------- Corrections transverses (lot 18, suite) : install-prompt.js, entièrement oublié ----------
+  "Installer l'application": 'Install the app',
+  'Installer': 'Install',
+  'Installer GeoFinance sur cet appareil': 'Install GeoFinance on this device',
+  "Accès direct depuis l'écran d'accueil et fonctionnement 100% hors-ligne.": 'Direct access from the home screen and 100% offline operation.',
+  "Installez GeoFinance sur l'écran d'accueil": 'Install GeoFinance on the home screen',
+  'Appuyez sur {icon} <strong>Partager</strong>, puis <strong>« Sur l\'écran d\'accueil »</strong>.':
+    'Tap {icon} <strong>Share</strong>, then <strong>"Add to Home Screen"</strong>.',
+
+  // ---------- Corrections transverses (lot 18, suite) : charts.js, diagramme de flux des revenus ----------
+  'Pas assez de données ce mois-ci pour afficher le flux.': 'Not enough data this month to display the flow.',
+  'Revenus': 'Income',
+  'Revenus du mois : {amount}': 'Income this month: {amount}',
+
+  // ---------- Corrections transverses (lot 18, suite) : app.js, toast de thème + écran d'erreur de démarrage ----------
+  'Thème : {mode}': 'Theme: {mode}',
+  'Automatique': 'Automatic',
+  'Clair': 'Light',
+  'Sombre': 'Dark',
+  "Une erreur a empêché le démarrage de l'application. Rechargez la page ; si le problème persiste, essayez de vider le cache du navigateur pour ce site.":
+    'An error prevented the app from starting. Reload the page; if the problem persists, try clearing this site\'s browser cache.',
 };

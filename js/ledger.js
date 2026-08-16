@@ -13,6 +13,10 @@
 
 import { STORES, dbGetAll, getSetting } from './db.js';
 import { convertAmount, currentMonthKey, localISODate } from './utils.js';
+// Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
+// plusieurs fonctions — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js/
+// reports-extras.js/search.js/backup.js.
+import { t as tr } from './i18n.js';
 
 async function ctx() {
   const [wallets, transactions, categories, budgets, investments, investmentEntries, debts, debtPayments, rates, rateHistory, baseCurrency] = await Promise.all([
@@ -249,7 +253,7 @@ export async function computeExpensesByCategory(monthKey = currentMonthKey()) {
     const key = cat?.id || 'none';
     const existing = totals.get(key);
     if (existing) existing.value += amt;
-    else totals.set(key, { label: cat?.name || 'Sans catégorie', value: amt, color: cat?.color || null });
+    else totals.set(key, { label: cat?.name || tr('Sans catégorie'), value: amt, color: cat?.color || null });
   }
   const sorted = [...totals.values()].sort((a, b) => b.value - a.value);
   if (sorted.length <= 8) return sorted;
@@ -277,7 +281,7 @@ export async function computeBudgetVsActual(monthKey = currentMonthKey()) {
 
   return monthBudgets.map((b) => ({
     categoryId: b.categoryId,
-    label: catName[b.categoryId] || 'Sans catégorie',
+    label: catName[b.categoryId] || tr('Sans catégorie'),
     budget: b.limit,
     actual: actualByCategory.get(b.categoryId) || 0,
   }));
