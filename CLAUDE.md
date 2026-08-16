@@ -1937,6 +1937,41 @@ d'installation neuve) :
 
 `CACHE_VERSION` : `v72` → `v73`.
 
+### 16 août 2026 (suite) — Graphique "Répartition des revenus du mois" illisible en production
+
+Signalé par l'auteur avec une capture d'écran du site en production (`zaky04.github.io/geofinance`) :
+le graphique en bas du tableau de bord ("Répartition des revenus du mois") s'affichait comme un
+amas de bandes colorées illisibles, sans rapport avec un diagramme de flux lisible. Pas un bug
+d'internationalisation — un défaut de conception préexistant dans `renderIncomeFlowSankey`
+(`charts.js`), révélé par des données réelles avec beaucoup de catégories de dépenses de valeurs très
+disparates (14 catégories visibles sur la capture de l'auteur).
+
+**Diagnostic confirmé par reproduction exacte** : ce graphique construit en réalité la répartition du
+revenu du mois entre chaque catégorie de DÉPENSE (pas les sources de revenus) plus l'épargne nette
+(`dashboard.js` : `flows = expensesByCategory.map(...)`, puis `flows.push({label: 'Épargne nette', ...})`).
+La hauteur de chaque bande était calculée strictement proportionnelle à sa valeur, sans plancher. Avec
+un jeu de test reproduisant fidèlement la capture (13 petites catégories + une "Épargne nette"
+dominante représentant ~88% du revenu), les bandes des 13 catégories se retrouvaient compressées dans
+23 px de hauteur cumulée — avec une police de 12 px, 8 étiquettes de texte se chevauchaient
+intégralement, exactement le résultat vu par l'auteur. `computeExpensesByCategory` (`ledger.js`)
+limite déjà à 7 catégories + "Autres" au-delà de 8, mais ça ne protège pas contre ce cas précis : une
+poignée de petites catégories à côté d'une valeur dominante (l'épargne nette, ou une grosse dépense
+isolée) suffit à réduire les autres bandes à quelques pixels.
+
+**Fix** : hauteur minimale (`MIN_ROW_H = 20`) imposée à chaque flux avant le calcul proportionnel — un
+flux ne descend jamais en dessous de cette hauteur, même si ça dépasse la hauteur "naturelle"
+(nombre de flux × 30px) ; les flux réellement dominants gardent leur proportion normale au-dessus de
+ce plancher. Le graphique grandit plutôt que de sacrifier la lisibilité — cohérent avec le `viewBox`
++ `height:auto` déjà en place, qui absorbe une hauteur variable sans rien casser côté mise en page.
+
+Testé : reproduction exacte du scénario de la capture (13 catégories disparates + épargne nette
+dominante) — tous les écarts verticaux entre étiquettes consécutives valent maintenant 20px minimum
+(vérifié par le calcul des positions `y` réelles du SVG rendu), plus aucun chevauchement possible.
+Hauteur totale du graphique passée de 420 px à ~631 px pour ce jeu de données — attendu et acceptable,
+le conteneur suit via `height:auto`.
+
+`CACHE_VERSION` : `v73` → `v74`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

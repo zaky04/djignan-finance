@@ -172,14 +172,25 @@ export function renderIncomeFlowSankey(containerId, { income, flows, currency })
   const colors = baseColors();
   const total = positiveFlows.reduce((s, f) => s + f.value, 0);
   const rowH = 30;
-  const height = Math.max(rowH, positiveFlows.length * rowH);
+  // Hauteur minimale par flux, sinon un flux dont la valeur est faible face aux autres (ex: une
+  // grosse "Épargne nette" à côté d'une dizaine de petites catégories de dépenses) reçoit une bande
+  // proportionnelle de quelques pixels à peine — largement trop fine pour son étiquette (police
+  // 12px), les libellés se chevauchent alors en un bloc illisible. Le graphique grandit plutôt que
+  // de sacrifier la lisibilité : chaque flux garde AU MOINS cette hauteur, même si ça dépasse la
+  // hauteur "naturelle" (nombre de flux × rowH) — les flux réellement dominants (au-dessus du
+  // plancher) gardent leur proportion normale.
+  const MIN_ROW_H = 20;
   const width = 640;
   const leftX = 58, leftW = 8, rightX = 500, rightW = 8;
   const midX = (leftX + leftW + rightX) / 2;
 
+  const baseHeight = Math.max(rowH, positiveFlows.length * rowH);
+  const rowHeights = positiveFlows.map((f) => Math.max(MIN_ROW_H, (f.value / total) * baseHeight));
+  const height = rowHeights.reduce((s, h) => s + h, 0);
+
   let y = 0;
-  const rights = positiveFlows.map((f) => {
-    const h = (f.value / total) * height;
+  const rights = positiveFlows.map((f, i) => {
+    const h = rowHeights[i];
     const row = { ...f, y, h };
     y += h;
     return row;
