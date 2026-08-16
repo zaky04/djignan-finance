@@ -2,7 +2,7 @@
 
 > Ce fichier sert de mémoire du projet pour toute personne (ou IA) qui reprend le développement.
 > À tenir à jour à chaque session de travail significative : ce qui a été fait, pourquoi, et ce qui reste ouvert.
-> Dernière mise à jour : **15 août 2026**.
+> Dernière mise à jour : **16 août 2026**.
 
 ## 1. C'est quoi ce projet
 
@@ -2309,12 +2309,93 @@ champ vidé ; bon code saisi en minuscules → accepté (confirme la normalisati
 après PIN configuré → écrans d'activation ET de langue tous deux sautés, va directement à l'écran de
 déverrouillage. Aucune erreur console.
 
-**Pas encore fait** : création réelle du dépôt `djignan-finance` sur GitHub, push de ce dépôt local
-dessus, et ajout de la bannière "nouvelle version disponible" dans l'ancien dépôt `geofinance` (sur une
-branche/état basé sur `b6fcf93`, le dernier commit poussé avant le rebranding — PAS sur l'état actuel
-qui contient déjà tout le renommage Djignan).
+Suite (voir entrée du 16 août ci-dessous) : le dépôt `djignan-finance` a bien été créé et poussé, la
+bannière ajoutée au dépôt `geofinance` (branche `free-migration-banner`, basée sur `b6fcf93` comme prévu).
 
 `CACHE_VERSION` : `v79` → `v80`.
+
+### 16 août 2026 (suite) — Migration guidée GeoFinance → Djignan (pont de sauvegarde, écran de restauration)
+
+Signalé par l'auteur : "la connexion Google pour restaurer les données ne marche pas" sur Djignan.
+Investigation en direct sur `https://zaky04.github.io/djignan-finance/` (Browser pane) : CSP et
+`firebase-config.js` confirmés intacts après le rebranding (seuls les commentaires d'en-tête avaient
+changé) ; clic réel sur "Se connecter avec Google" → navigation correcte vers un écran de connexion
+Google valide (`accounts.google.com`, client_id et `redirect_uri` corrects), aucune erreur CSP ni
+domaine non autorisé. **La connexion elle-même n'a jamais été cassée.**
+
+Le vrai problème, clarifié avec l'auteur après ce constat : sur PC, les données de GeoFinance
+apparaissent automatiquement dans Djignan sans la moindre action — pas une vraie restauration, mais le
+fait que les deux dépôts sont servis sous le même hôte GitHub Pages (`zaky04.github.io`, chemins
+différents seulement) et donc partagent la même IndexedDB (`geofinance-db`, volontairement conservé au
+rebranding, voir § 16 août plus haut) : le stockage navigateur est partitionné par **origine**, pas par
+chemin. **Sur iPhone, rien n'est partagé** : iOS donne à chaque PWA "Ajoutée à l'écran d'accueil" un bac
+à sable de stockage totalement isolé PAR APP, même si les deux pointent vers la même origine — limite de
+plateforme WebKit, aucun contournement possible côté code. C'est ce qui obligeait l'auteur à tout
+reconfigurer à la main sur mobile.
+
+Demande de l'auteur suite à cette explication : obliger une sauvegarde (locale prioritaire, ou cloud)
+avant de basculer, puis la restaurer automatiquement à l'installation de Djignan. **Nuance communiquée à
+l'auteur** : "tous les paramètres" ne peut pas inclure le code PIN par conception —
+`DEVICE_LOCAL_SETTING_KEYS` (`db.js`) exclut délibérément `pinHash`/`pinSalt`/les identifiants
+biométriques de tout export/import (voir le correctif de sécurité du 13 août : un fichier de sauvegarde
+ne doit jamais pouvoir poser un PIN sur un nouvel appareil). Un nouveau PIN reste donc toujours à créer
+sur Djignan après restauration — seul geste manuel qui subsiste, voulu.
+
+**Côté `djignan-finance` (ce dépôt, `main`)** — nouvel écran affiché après le choix de la langue, avant
+la création du PIN, sur une toute première installation (`showRestoreScreenIfNeeded()`, `app.js`,
+nouveau `#restore-screen` dans `index.html`, calqué sur `#activation-screen`/`#language-screen`) :
+- **Importer une sauvegarde locale** (prioritaire) — réutilise directement `importEncryptedBackup()`
+  (`backup.js`, déjà exporté), `merge: false` (installation neuve, rien à fusionner).
+- **Restaurer depuis le cloud (Google)** — réutilise `signInWithGoogle()`/`pullBackupFromCloud()`
+  (`firebase-sync.js`, déjà exportées). Gère le retour d'une redirection Google
+  (`signInWithRedirect`, mobile/PWA installée) : `boot()` repart de zéro après la navigation de retour,
+  retombe forcément sur cet écran (PIN toujours pas créé) — un flag `cloudRedirectPending` déjà existant
+  est détecté en tout début d'écran pour enchaîner directement sur la demande de mot de passe, sans
+  re-proposer les 3 choix depuis le début.
+- **Configurer un nouveau compte** — comportement actuel inchangé (onboarding normal).
+- Petit refactor de dédoublonnage en passant : `resolveCloudUser()` (nouvelle export,
+  `firebase-sync.js`) regroupe la séquence `ensureFirebase()` + `handlePendingRedirect()` +
+  `waitForAuthReady()`, déjà dupliquée 2 fois (`renderCloudBackupSection()`, `checkCloudStaleness()`) —
+  les deux l'utilisent maintenant, plus le nouvel écran.
+- `showLanguageChoiceScreen()` gagne une garde `!(await getSetting('language'))` : ce nouvel écran rend
+  le rechargement de `boot()` avant PIN réellement atteignable en pratique (retour de redirection
+  Google) — sans la garde, la langue aurait été redemandée à chaque retour.
+
+**Côté `geofinance` (branche `free-migration-banner`, dépôt `origin`, PAS de rebase sur `main`)** —
+`renderMigrationBanner()` (`app.js`) : le simple lien "La découvrir" devient un bouton "Sauvegarder puis
+découvrir Djignan" qui demande un mot de passe, appelle `exportEncryptedBackup()` (déjà exporté,
+`backup.js`), puis ouvre `djignan-finance` dans un nouvel onglet une fois l'export réellement terminé
+(jamais "à vide"). Lien discret "J'ai déjà une sauvegarde" pour qui utilise déjà la sauvegarde cloud —
+pas besoin de repasser par l'export local, juste se reconnecter avec le même compte Google sur Djignan.
+
+Testé de bout en bout dans le navigateur (Browser pane, IndexedDB/SW/caches vidés avant chaque scénario) :
+- **Import local** : sauvegarde chiffrée générée (`buildEncryptedPayload`, données de démo — 3
+  portefeuilles/19 transactions), IndexedDB videe pour simuler une installation neuve, fichier assigné à
+  l'`<input type="file">` via `DataTransfer` (le vrai sélecteur de fichier OS n'est pas pilotable par
+  l'automatisation). Mauvais mot de passe → message d'erreur affiché, ressaisie possible sans plantage ;
+  bon mot de passe → les 3 portefeuilles/19 transactions restaurés à l'identique, `pinHash` absent
+  (confirmé exclu comme prévu), écran passe correctement à la création du PIN ; PIN créé puis
+  déverrouillage réel → tableau de bord affiche les vraies données restaurées (patrimoine net 823 500 F
+  CFA, budget "Loisirs" à 86%, cohérent avec le jeu de données de démo documenté ailleurs dans ce
+  fichier).
+- **Cloud** : clic réel sur "Restaurer depuis le cloud" → navigation réelle vers `accounts.google.com`
+  confirmée (comme le test initial de diagnostic), aucune tentative de connexion réelle effectuée (hors
+  de portée d'une session automatisée). Retour simulé sur l'app (sans connexion complétée) → détecté
+  `cloudRedirectPending`, tente `resolveCloudUser()`, aucun utilisateur trouvé (normal, rien n'a été
+  complété) → repli propre sur l'écran de choix initial, langue non re-demandée (garde vérifiée), aucune
+  erreur console.
+- **Bannière GeoFinance** : clic sur "Sauvegarder puis découvrir Djignan" → formulaire de mot de passe,
+  export réellement déclenché (`lastBackupAt` mis à jour, confirmant `markBackupDone()` exécuté),
+  `window.open` appelé avec la bonne URL Djignan seulement après l'export terminé.
+- `test/ledger.test.html` : 24/24 assertions toujours vertes (aucun changement direct à `ledger.js`,
+  vérifié par habitude).
+
+Commits séparés sur chaque dépôt/branche (`main` pour `djignan-finance`, `free-migration-banner` pour
+`geofinance`), pas encore poussés — en attente de confirmation de l'auteur comme pour tout push cette
+session.
+
+`CACHE_VERSION` (`djignan-finance`, `main`) : `v80` → `v81`. `CACHE_VERSION` (`geofinance`,
+`free-migration-banner`) : `v78` → `v79`.
 
 ## 7. Pistes prioritaires non traitées
 
