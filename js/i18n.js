@@ -1102,4 +1102,11 @@ const EN = {
   'Connecté. Entrez le mot de passe de chiffrement de votre sauvegarde cloud.':
     'Signed in. Enter the encryption password for your cloud backup.',
   'Connexion à Google…': 'Connecting to Google…',
+
+  // ---------- Diagnostic du retour de redirection Google (signInWithRedirect, mobile/PWA) : rend
+  // visible ce qui vient de se passer au lieu d'un échec silencieux (voir CLAUDE.md) ----------
+  'Connecté à Google ({email}).': 'Signed in to Google ({email}).',
+  "La connexion à Google n'a pas abouti (aucun utilisateur retourné). Réessayez depuis Paramètres.":
+    "Google sign-in didn't complete (no user returned). Try again from Settings.",
+  'Échec de la connexion Google : {message}': 'Google sign-in failed: {message}',
 };

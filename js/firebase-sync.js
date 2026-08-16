@@ -128,6 +128,31 @@ export async function resolveCloudUser() {
   return waitForAuthReady(authMod);
 }
 
+/** À appeler dès que possible après le déverrouillage (onUnlocked(), app.js) : jusqu'ici, un retour
+    de signInWithRedirect() (mobile/PWA installée) n'était traité que passivement, quand l'utilisateur
+    pensait à rouvrir Paramètres — potentiellement bien après le retour réel, et l'éventuel échec de
+    getRedirectResult() (result vide, erreur Firebase) était avalé sans aucun signal visible : la
+    section Paramètres retombait juste sur "Se connecter avec Google" sans dire pourquoi. Ne charge le
+    SDK Firebase que si une redirection est réellement en attente (cloudRedirectPending) — jamais pour
+    un utilisateur qui n'a pas touché à cette fonctionnalité, même principe de chargement paresseux que
+    le reste de ce fichier. Résultat toujours rendu visible (succès, échec silencieux, ou erreur avec
+    son message réel) pour permettre un vrai diagnostic la prochaine fois que ça se reproduit. */
+export async function checkPendingCloudRedirect() {
+  if (!isFirebaseConfigured) return;
+  if (!(await getSetting('cloudRedirectPending', false))) return;
+  try {
+    const user = await resolveCloudUser();
+    if (user) {
+      await setSetting('cloudBackupWasSignedIn', true);
+      showToast(t('Connecté à Google ({email}).', { email: user.email || user.displayName || '' }));
+    } else {
+      showToast(t("La connexion à Google n'a pas abouti (aucun utilisateur retourné). Réessayez depuis Paramètres."));
+    }
+  } catch (err) {
+    showToast(t('Échec de la connexion Google : {message}', { message: err.message || String(err) }));
+  }
+}
+
 // Firestore refuse un document de plus de ~1 048 487 octets. Avec l'historique de transactions
 // et les justificatifs photo (convertis en data URL base64 dans le payload — voir
 // serializeReceiptsForExport() dans backup.js), la sauvegarde complète dépasse vite cette limite
