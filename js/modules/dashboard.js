@@ -234,7 +234,7 @@ export async function renderDashboard() {
     computeMonthSummary(monthKey),
     computeMonthSummary(monthKeyOffset(monthKey, -1)),
     computeExpensesByCategory(monthKey),
-    computeNetWorthHistory(6),
+    computeNetWorthHistory(12),
     computeBudgetVsActual(monthKey),
     computeMonthlyBudgetSummary(monthKey),
     computeEndOfMonthForecast(),

@@ -1078,4 +1078,11 @@ const EN = {
   // ---------- Correction (bug rapporté) : bouton de sélection de fichier stylé, remplace le bouton
   // natif de <input type="file"> dont le libellé suit la langue du navigateur, pas celle de la page ----------
   'Choisir un fichier': 'Choose file',
+
+  // ---------- Nouvelle section Graphiques (Rapports) : courbes de variation mensuelle,
+  // comparaison année sur année, épargne nette, tendance annuelle budget vs réel ----------
+  "Comparer à l'année précédente": 'Compare to previous year',
+  'Épargne nette mensuelle': 'Monthly net savings',
+  'Afficher en %': 'Show as %',
+  'Budget vs réel — tendance annuelle': 'Budget vs actual — yearly trend',
 };

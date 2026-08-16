@@ -4,11 +4,15 @@
    catégorie, budget vs réel) et export CSV des transactions.
    ========================================================================== */
 
-import { computeNetWorth, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeCategoryActuals } from '../ledger.js';
-import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, localISODate, showToast } from '../utils.js';
+import {
+  computeNetWorth, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeCategoryActuals,
+  computeMonthlyTypeHistory, getCategoriesByType, computeMonthlyNetSavingsHistory, computeMonthlyBudgetVsActualHistory, computeNetWorthHistoryForYear,
+} from '../ledger.js';
+import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, localISODate, showToast, escapeHtml } from '../utils.js';
 import { exportTransactionsCsv } from '../backup.js';
 import { getSetting } from '../db.js';
 import { healthScorePanelHtml, calendarPanelHtml, wireCalendarPanel } from './reports-extras.js';
+import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderMultiTrendChart, renderNetSavingsBarChart } from '../charts.js';
 import { t } from '../i18n.js';
 
 /** formatCurrency() insère des espaces insécables/fines (ex: séparateur de milliers en fr-FR) que
@@ -27,6 +31,150 @@ function profileHeaderLines(profile) {
 
 let reportMonthKey = currentMonthKey();
 let reportYear = parseInt(currentMonthKey().slice(0, 4), 10);
+
+// État des filtres de la section Graphiques — persiste entre les re-rendus de renderReports()
+// (navigation mois/année), même principe que reportMonthKey/reportYear ci-dessus.
+let repExpensesCategoryId = '';
+let repIncomeCategoryId = '';
+let repBudgetCategoryId = '';
+let repExpensesCompareYoY = false;
+let repIncomeCompareYoY = false;
+let repSavingsAsPercent = false;
+
+async function categoryOptionsHtml(type, selectedId) {
+  const cats = await getCategoriesByType(type);
+  return `<option value="">${t('Toutes catégories')}</option>` +
+    cats.map((c) => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+}
+
+/** Section "Graphiques" : les 3 graphiques déjà présents sur le tableau de bord (dépenses par
+    catégorie, valeur nette, budget vs réel — recalculés pour reportMonthKey/reportYear plutôt que
+    dupliqués visuellement) + les 2 courbes de variation mensuelle (dépenses/entrées, avec
+    comparaison à l'année précédente) + 2 nouvelles courbes (épargne nette mensuelle, budget vs
+    réel dans le temps). Tous les graphiques annuels partagent le sélecteur d'année du Bilan annuel
+    ci-dessus plutôt que d'avoir chacun leur propre navigation — évite de multiplier les contrôles
+    pour un réglage qui doit rester cohérent sur toute la page. */
+async function chartsSectionHtml() {
+  const [expenseCatOptions, incomeCatOptions, budgetCatOptions] = await Promise.all([
+    categoryOptionsHtml('expense', repExpensesCategoryId),
+    categoryOptionsHtml('income', repIncomeCategoryId),
+    categoryOptionsHtml('expense', repBudgetCategoryId),
+  ]);
+  return `
+    <div class="panel" style="margin-top:16px;">
+      <div class="panel-header"><h3>${t('Graphiques')}</h3></div>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h3>${t('Dépenses par catégorie')}</h3>
+          <div class="chart-canvas-wrap"><canvas id="rep-chart-expenses-category"></canvas></div>
+        </div>
+        <div class="chart-card chart-card-wide">
+          <h3>${t('Évolution de la valeur nette')}</h3>
+          <div class="chart-canvas-wrap"><canvas id="rep-chart-net-worth"></canvas></div>
+        </div>
+        <div class="chart-card chart-card-wide">
+          <h3>${t('Budget vs réel')}</h3>
+          <div class="chart-canvas-wrap"><canvas id="rep-chart-budget-vs-actual"></canvas></div>
+        </div>
+        <div class="chart-card chart-card-wide">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+            <h3 style="margin:0;">${t('Variation mensuelle des dépenses')}</h3>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <label style="display:flex;align-items:center;gap:4px;font-size:12.5px;font-weight:400;">
+                <input type="checkbox" id="rep-expenses-compare" ${repExpensesCompareYoY ? 'checked' : ''}> ${t("Comparer à l'année précédente")}
+              </label>
+              <select id="rep-expenses-category">${expenseCatOptions}</select>
+            </div>
+          </div>
+          <div class="chart-canvas-wrap"><canvas id="rep-chart-expenses-trend"></canvas></div>
+        </div>
+        <div class="chart-card chart-card-wide">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+            <h3 style="margin:0;">${t('Variation mensuelle des entrées')}</h3>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <label style="display:flex;align-items:center;gap:4px;font-size:12.5px;font-weight:400;">
+                <input type="checkbox" id="rep-income-compare" ${repIncomeCompareYoY ? 'checked' : ''}> ${t("Comparer à l'année précédente")}
+              </label>
+              <select id="rep-income-category">${incomeCatOptions}</select>
+            </div>
+          </div>
+          <div class="chart-canvas-wrap"><canvas id="rep-chart-income-trend"></canvas></div>
+        </div>
+        <div class="chart-card chart-card-wide">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+            <h3 style="margin:0;">${t('Épargne nette mensuelle')}</h3>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12.5px;font-weight:400;">
+              <input type="checkbox" id="rep-savings-percent" ${repSavingsAsPercent ? 'checked' : ''}> ${t('Afficher en %')}
+            </label>
+          </div>
+          <div class="chart-canvas-wrap"><canvas id="rep-chart-net-savings"></canvas></div>
+        </div>
+        <div class="chart-card chart-card-wide">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px;">
+            <h3 style="margin:0;">${t('Budget vs réel — tendance annuelle')}</h3>
+            <select id="rep-budget-category">${budgetCatOptions}</select>
+          </div>
+          <div class="chart-canvas-wrap"><canvas id="rep-chart-budget-trend"></canvas></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function refreshExpensesTrendChart() {
+  const { points, currency } = await computeMonthlyTypeHistory(reportYear, 'expense', repExpensesCategoryId || null);
+  const series = [{ label: String(reportYear), points }];
+  if (repExpensesCompareYoY) {
+    const { points: prevPoints } = await computeMonthlyTypeHistory(reportYear - 1, 'expense', repExpensesCategoryId || null);
+    series.push({ label: String(reportYear - 1), points: prevPoints, dashed: true });
+  }
+  renderMultiTrendChart('rep-chart-expenses-trend', series, currency);
+}
+
+async function refreshIncomeTrendChart() {
+  const { points, currency } = await computeMonthlyTypeHistory(reportYear, 'income', repIncomeCategoryId || null);
+  const series = [{ label: String(reportYear), points }];
+  if (repIncomeCompareYoY) {
+    const { points: prevPoints } = await computeMonthlyTypeHistory(reportYear - 1, 'income', repIncomeCategoryId || null);
+    series.push({ label: String(reportYear - 1), points: prevPoints, dashed: true });
+  }
+  renderMultiTrendChart('rep-chart-income-trend', series, currency);
+}
+
+async function refreshNetSavingsChart() {
+  const { points, currency } = await computeMonthlyNetSavingsHistory(reportYear);
+  const chartPoints = points.map((p) => ({ label: p.label, value: repSavingsAsPercent ? p.rate : p.net }));
+  renderNetSavingsBarChart('rep-chart-net-savings', chartPoints, currency, repSavingsAsPercent);
+}
+
+async function refreshBudgetTrendChart() {
+  const { points, currency } = await computeMonthlyBudgetVsActualHistory(reportYear, repBudgetCategoryId || null);
+  const series = [
+    { label: t('Budget'), points: points.map((p) => ({ label: p.label, value: p.budget })) },
+    { label: t('Réel'), points: points.map((p) => ({ label: p.label, value: p.actual })), dashed: true },
+  ];
+  renderMultiTrendChart('rep-chart-budget-trend', series, currency);
+}
+
+async function renderChartsSection(container) {
+  const [{ total, currency }, expensesByCategory, budgetVsActual, netWorthHistory] = await Promise.all([
+    computeNetWorth(), computeExpensesByCategory(reportMonthKey), computeBudgetVsActual(reportMonthKey), computeNetWorthHistoryForYear(reportYear),
+  ]);
+  renderExpensesByCategoryChart('rep-chart-expenses-category', expensesByCategory, currency);
+  renderNetWorthTrendChart('rep-chart-net-worth', netWorthHistory, currency, t('Valeur nette'));
+  renderBudgetVsActualChart('rep-chart-budget-vs-actual', budgetVsActual, currency);
+
+  await refreshExpensesTrendChart();
+  await refreshIncomeTrendChart();
+  await refreshNetSavingsChart();
+  await refreshBudgetTrendChart();
+
+  container.querySelector('#rep-expenses-category').onchange = (e) => { repExpensesCategoryId = e.target.value; refreshExpensesTrendChart(); };
+  container.querySelector('#rep-expenses-compare').onchange = (e) => { repExpensesCompareYoY = e.target.checked; refreshExpensesTrendChart(); };
+  container.querySelector('#rep-income-category').onchange = (e) => { repIncomeCategoryId = e.target.value; refreshIncomeTrendChart(); };
+  container.querySelector('#rep-income-compare').onchange = (e) => { repIncomeCompareYoY = e.target.checked; refreshIncomeTrendChart(); };
+  container.querySelector('#rep-savings-percent').onchange = (e) => { repSavingsAsPercent = e.target.checked; refreshNetSavingsChart(); };
+  container.querySelector('#rep-budget-category').onchange = (e) => { repBudgetCategoryId = e.target.value; refreshBudgetTrendChart(); };
+}
 
 async function generatePdfReport() {
   if (!window.jspdf) { showToast(t("La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant).")); return; }
@@ -202,10 +350,12 @@ export async function renderReports() {
       </div>
       <button type="button" class="btn btn-primary" id="rep-annual-pdf-btn">${t('Générer le bilan annuel PDF')}</button>
     </div>
+    ${await chartsSectionHtml()}
     ${await healthScorePanelHtml(reportMonthKey)}
     ${await calendarPanelHtml(reportMonthKey)}`;
 
   wireCalendarPanel(container, reportMonthKey);
+  await renderChartsSection(container);
 
   container.querySelector('#rep-prev-month').onclick = () => { reportMonthKey = monthKeyOffset(reportMonthKey, -1); renderReports(); };
   container.querySelector('#rep-next-month').onclick = () => { reportMonthKey = monthKeyOffset(reportMonthKey, 1); renderReports(); };

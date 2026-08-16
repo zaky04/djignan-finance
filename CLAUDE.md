@@ -2023,6 +2023,73 @@ manuellement pour valider la variation, les données de démo ne couvrant que le
 
 `CACHE_VERSION` : `v74` → `v75`.
 
+### 16 août 2026 (suite) — Analyse des graphiques + nouvelle section "Graphiques" sur Rapports
+
+Suite à une demande de l'auteur d'analyser l'utilité de tous les graphiques du tableau de bord et de
+proposer des améliorations. Constat : aucune vraie redondance entre les 5 graphiques existants
+(chacun répond à une question différente — composition du mois / trajectoire du patrimoine /
+discipline budgétaire du mois / tendance annuelle dépenses / tendance annuelle revenus), mais un vrai
+trou : rien ne combine visuellement revenus et dépenses dans le temps pour montrer l'épargne
+résultante. Proposé et validé avec l'auteur : garder le tableau de bord tel quel (seule exception :
+étendre "Évolution de la valeur nette" de 6 à 12 mois glissants) et construire une section
+"Graphiques" complète sur la page **Rapports**, réunissant tous les graphiques déjà présents (recalculés
+sur `reportMonthKey`/`reportYear` plutôt que dupliqués visuellement) **plus** 4 nouveautés.
+
+**Dashboard (changement minimal)** : `computeNetWorthHistory(6)` → `computeNetWorthHistory(12)`
+(`dashboard.js`) — un seul appel changé, pas de nouvelle navigation ajoutée sur cette page.
+
+**Nouvelles fonctions `ledger.js`** :
+- `computeNetWorthHistoryForYear(year)` — variante calendaire (Jan-Déc) de `computeNetWorthHistory()`
+  (qui est glissante), pour partager le sélecteur d'année de Rapports plutôt que d'avoir sa propre
+  navigation.
+- `computeMonthlyNetSavingsHistory(year)` — épargne nette (revenus - dépenses) ET taux d'épargne (%)
+  associé, mois par mois, en un seul appel (les deux vues du même graphique, bascule côté UI).
+- `computeMonthlyBudgetVsActualHistory(year, categoryId)` — équivalent annuel de
+  `computeBudgetVsActual()` (qui ne couvre qu'un mois) ; même convention que
+  `computeMonthlyBudgetSummary()` pour "toutes catégories" (seules les catégories budgétées ce
+  mois-là entrent dans le total agrégé).
+
+**Nouvelles fonctions `charts.js`** :
+- `renderMultiTrendChart(canvasId, series, currency)` — généralise `renderNetWorthTrendChart()` à
+  plusieurs séries (ex: année courante en trait plein + année précédente en pointillé). Laissée
+  comme fonction séparée exprès : ne touche à aucun appel existant (dashboard, dettes,
+  investissements) qui n'a besoin que d'une seule série. Le remplissage sous la courbe ne s'active
+  que si une seule série est affichée — avec 2 séries, une zone remplie sous une seule des deux
+  suggérerait à tort une signification.
+- `renderNetSavingsBarChart(canvasId, points, currency, asPercent)` — barres vertes si le mois est
+  positif, rouges sinon ; `asPercent` bascule l'affichage entre montant et taux d'épargne.
+
+**Section "Graphiques" (`reports.js`, nouvelle, sous "Bilan annuel")** — 7 graphiques : les 3 déjà
+présents sur le tableau de bord (dépenses par catégorie, valeur nette, budget vs réel) + 2 courbes de
+variation mensuelle (dépenses/entrées, réutilisant `computeMonthlyTypeHistory()` du lot précédent,
+chacune avec une case "Comparer à l'année précédente" qui superpose l'année N-1 en pointillé) + 2
+nouvelles (épargne nette mensuelle avec bascule €/%, budget vs réel en tendance annuelle avec filtre
+catégorie). Tous les graphiques annuels partagent le sélecteur d'année déjà présent pour le "Bilan
+annuel" (`reportYear`, boutons `#rep-prev-year`/`#rep-next-year`) plutôt que d'avoir chacun leur
+propre navigation — un seul réglage d'année cohérent sur toute la page. Filtres de catégorie/cases à
+cocher en état module (comme `reportYear`), re-générés à chaque `renderReports()` (le conteneur est
+entièrement reconstruit à chaque navigation mois/année, donc pas de risque de doublons
+d'écouteurs — même convention que le reste du fichier).
+
+~4 nouvelles entrées de dictionnaire (`"Comparer à l'année précédente"`, `'Épargne nette
+mensuelle'`, `'Afficher en %'`, `'Budget vs réel — tendance annuelle'`) ; `'Graphiques'`, `'Budget'`,
+`'Réel'`, `'Toutes catégories'` déjà existantes, réutilisées.
+
+Testé FR→EN de bout en bout avec des transactions et budgets répartis sur 2 années (année courante +
+année précédente à 60% des montants, pour valider la comparaison) : les 7 graphiques s'affichent avec
+les bons titres et les bonnes données ; comparaison année sur année vérifiée par inspection directe
+des datasets Chart.js (série pleine vs pointillée, valeurs N-1 correctement à 60% de N) ; filtre de
+catégorie vérifié à la fois seul et combiné à la comparaison année sur année ; bascule €/% de l'épargne
+nette vérifiée sur des valeurs positives (ratio cohérent avant/après changement d'année, confirmant le
+calcul) et sur un cas synthétique négatif (barre rouge confirmée) ; navigation d'année confirmée
+propager le changement à TOUS les graphiques annuels simultanément (dépenses, entrées, épargne nette),
+y compris le filtre de catégorie déjà sélectionné qui persiste correctement à travers le changement
+d'année ; extension du tableau de bord à 12 mois glissants confirmée (`sept. 25` → `août 26`) ; anglais
+vérifié sur les 7 titres, les 2 cases à cocher et la première option des filtres de catégorie. Aucune
+erreur console sur l'ensemble du test.
+
+`CACHE_VERSION` : `v75` → `v76`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

@@ -124,6 +124,95 @@ export function renderNetWorthTrendChart(canvasId, points, currency = 'EUR', lab
   registry.set(canvasId, chart);
 }
 
+/** Courbe multi-séries (ex: comparaison année N vs N-1, ou budget vs réel dans le temps).
+    series = [{label, points: [{label, value}], dashed}] — toutes les séries partagent le même axe
+    x (labels pris sur la première série). Généralise renderNetWorthTrendChart() à plusieurs
+    séries ; laissé comme fonction séparée pour ne rien changer aux appels existants (dashboard,
+    dettes, investissements) qui n'ont besoin que d'une seule série. */
+export function renderMultiTrendChart(canvasId, series, currency = 'EUR') {
+  if (!ensureChartLib()) return;
+  destroy(canvasId);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const colors = baseColors();
+  const palette = [colors.accent, colors.muted, ...PALETTE];
+
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: (series[0]?.points || []).map((p) => p.label),
+      datasets: (series || []).map((s, i) => ({
+        label: s.label,
+        data: s.points.map((p) => p.value),
+        borderColor: palette[i % palette.length],
+        backgroundColor: `${palette[i % palette.length]}22`,
+        borderDash: s.dashed ? [6, 4] : [],
+        // Remplissage sous la courbe seulement s'il n'y a qu'une seule série — avec 2 séries
+        // (comparaison année N/N-1, ou budget vs réel), une zone remplie sous l'une des deux
+        // courbes seulement suggérerait à tort une signification particulière à cette aire.
+        fill: series.length === 1,
+        tension: 0.35,
+        pointRadius: 3,
+        pointBackgroundColor: palette[i % palette.length],
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: series.length > 1, position: 'bottom', labels: { color: colors.muted, boxWidth: 10, font: { size: 11 } } },
+        tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${formatCurrency(ctx.parsed.y, currency)}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: colors.muted, font: { size: 11 } } },
+        y: {
+          grid: { color: colors.border },
+          ticks: { color: colors.muted, font: { size: 11 }, callback: (v) => formatCurrency(v, currency) },
+        },
+      },
+    },
+  });
+  registry.set(canvasId, chart);
+}
+
+/** Barres épargne nette mensuelle : vert si positif, rouge si négatif. points = [{label, value}].
+    asPercent : les valeurs sont déjà des pourcentages (pas de formatCurrency, suffixe "%"). */
+export function renderNetSavingsBarChart(canvasId, points, currency = 'EUR', asPercent = false) {
+  if (!ensureChartLib()) return;
+  destroy(canvasId);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const colors = baseColors();
+
+  const chart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: (points || []).map((p) => p.label),
+      datasets: [{
+        data: (points || []).map((p) => p.value),
+        backgroundColor: (points || []).map((p) => (p.value >= 0 ? colors.pos : colors.neg)),
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => ` ${asPercent ? ctx.parsed.y + '%' : formatCurrency(ctx.parsed.y, currency)}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: colors.muted, font: { size: 11 } } },
+        y: {
+          grid: { color: colors.border },
+          ticks: { color: colors.muted, font: { size: 11 }, callback: (v) => (asPercent ? `${v}%` : formatCurrency(v, currency)) },
+        },
+      },
+    },
+  });
+  registry.set(canvasId, chart);
+}
+
 /** Barres groupées : budget vs réel par catégorie. rows = [{label, budget, actual}] */
 export function renderBudgetVsActualChart(canvasId, rows, currency = 'EUR') {
   if (!ensureChartLib()) return;

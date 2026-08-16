@@ -165,6 +165,23 @@ export async function computeNetWorthHistory(months = 6) {
   return points;
 }
 
+/** Historique du patrimoine net, fin de chaque mois de l'ANNÉE donnée (Jan-Déc) — variante
+    calendaire de computeNetWorthHistory() (qui est glissante sur les N derniers mois), pour
+    partager le même sélecteur d'année que les autres courbes de la page Rapports. Pour l'année en
+    cours, les mois futurs affichent simplement le patrimoine actuel (aucune transaction future ne
+    peut exister) plutôt qu'une valeur artificiellement nulle. */
+export async function computeNetWorthHistoryForYear(year) {
+  const data = await ctx();
+  const points = [];
+  for (let m = 0; m < 12; m++) {
+    const d = new Date(year, m + 1, 0); // dernier jour du mois
+    const cutoff = localISODate(d);
+    const { total } = netWorthAt(cutoff, data);
+    points.push({ label: new Intl.DateTimeFormat(intlLocale(), { month: 'short', year: '2-digit' }).format(d), value: Math.round(total * 100) / 100 });
+  }
+  return points;
+}
+
 /** Historique de la valeur totale des investissements sur N mois (fin de chaque mois). */
 export async function computeInvestmentValueHistory(months = 6) {
   const { investments, investmentEntries, rates, rateHistory, baseCurrency } = await ctx();
@@ -291,6 +308,57 @@ export async function computeMonthlyTypeHistory(year, type = 'expense', category
 export async function getCategoriesByType(type) {
   const { categories } = await ctx();
   return categories.filter((c) => c.type === type).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Épargne nette mensuelle (revenus - dépenses) sur une année, avec le taux d'épargne (%) associé
+    à chaque mois (0% si aucun revenu ce mois-là, plutôt qu'une division par zéro). */
+export async function computeMonthlyNetSavingsHistory(year) {
+  const [{ points: incomePoints, currency }, { points: expensePoints }] = await Promise.all([
+    computeMonthlyTypeHistory(year, 'income', null),
+    computeMonthlyTypeHistory(year, 'expense', null),
+  ]);
+  const points = incomePoints.map((p, i) => {
+    const income = p.value;
+    const expenses = expensePoints[i].value;
+    const net = Math.round((income - expenses) * 100) / 100;
+    const rate = income > 0 ? Math.round((net / income) * 1000) / 10 : 0;
+    return { label: p.label, net, rate };
+  });
+  return { points, currency };
+}
+
+/** Historique mensuel (12 mois d'une année) budget vs réel — total sur les catégories budgétées ce
+    mois-là, ou une seule catégorie si categoryId est fourni. Complément annuel à
+    computeBudgetVsActual() qui ne couvre qu'un seul mois à la fois. Même convention que
+    computeMonthlyBudgetSummary() pour "toutes catégories" : seules les catégories ayant un budget
+    posé ce mois-là entrent dans le total (comparer à des dépenses hors budget n'aurait pas de sens). */
+export async function computeMonthlyBudgetVsActualHistory(year, categoryId = null) {
+  const { wallets, transactions, budgets, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const budgetTotals = new Array(12).fill(0);
+  const actualTotals = new Array(12).fill(0);
+
+  for (let m = 0; m < 12; m++) {
+    const monthKey = `${year}-${String(m + 1).padStart(2, '0')}`;
+    const monthBudgets = budgets.filter((b) => b.month === monthKey && (!categoryId || b.categoryId === categoryId));
+    budgetTotals[m] = monthBudgets.reduce((s, b) => s + (b.limit || 0), 0);
+    const budgetedCategoryIds = new Set(monthBudgets.map((b) => b.categoryId));
+    for (const t of transactions) {
+      if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
+      if (t.debtId) continue;
+      if (categoryId) { if (t.categoryId !== categoryId) continue; }
+      else if (!budgetedCategoryIds.has(t.categoryId)) continue;
+      const cur = walletCurrency[t.walletId] || baseCurrency;
+      actualTotals[m] += toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
+    }
+  }
+
+  const points = Array.from({ length: 12 }, (_, i) => ({
+    label: new Intl.DateTimeFormat(intlLocale(), { month: 'short', year: '2-digit' }).format(new Date(year, i, 1)),
+    budget: Math.round(budgetTotals[i] * 100) / 100,
+    actual: Math.round(actualTotals[i] * 100) / 100,
+  }));
+  return { points, currency: baseCurrency };
 }
 
 /** Budget vs réel du mois, par catégorie budgétée. */
