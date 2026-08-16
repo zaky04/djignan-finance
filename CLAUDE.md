@@ -1695,6 +1695,47 @@ un appareil où les notifications sont autorisées.
 
 `CACHE_VERSION` : `v67` → `v68`.
 
+### 16 août 2026 — Internationalisation FR/EN (lot 17/N : sauvegarde, trou comblé)
+
+Troisième trou comblé de l'audit : `backup.js` — messages d'erreur (sauvegarde chiffrée invalide, mot
+de passe incorrect, CSV vide, portefeuille introuvable, navigateur non compatible), export CSV (en-tête
++ valeurs "Oui"/"Non" + suffixe de nom de fichier), toast de sauvegarde automatique, et surtout la
+**modale de rappel hebdomadaire** (`tpl-modal-backup-reminder` dans `index.html`) qui n'avait jamais
+reçu d'attributs `data-i18n` — mode normal et mode urgent (au-delà de 3 reports), plus le formulaire
+d'export chiffré inline (mot de passe / confirmation / bouton) qu'elle affiche. Collision `t`/variable
+trouvée (transactions nommées `t` dans plusieurs fonctions) — import aliasé `t as tr`, comme
+dashboard.js/transactions.js/debts.js/tools.js/reports-extras.js/search.js.
+
+Détection de format CSV rendue bilingue : `GEOFINANCE_CSV_HEADER_FR` (renommé depuis
+`GEOFINANCE_CSV_HEADER`) sert toujours de clé i18n pour l'en-tête exporté, mais `analyzeTransactionsCsv`
+compare désormais l'en-tête lu aux deux variantes (FR canonique et EN traduite) au lieu d'une seule —
+même principe que `RECURRING_NOTE_PREFIXES` (ledger.js, lot 3) et `DEBT_CATEGORY_NAME_VARIANTS`
+(debts.js, lot 6) : un CSV exporté par cette app en anglais doit se réimporter correctement. Idem pour
+la colonne "Pointée/Reconciled" : `importGeoFinanceCsvRows` accepte désormais `['oui', 'yes']` au lieu
+de `.startsWith('oui')` seul. Le gabarit `tpl-modal-backup-reminder` étant un `<template>` (donc inerte
+tant que non cloné), `showBackupReminderModal()` relance `applyStaticTranslations()` juste après
+l'insertion du clone — même pattern que `openQuickAdd()` (transactions.js, lot 2).
+
+**Bug pré-existant trouvé et corrigé en cours de route** (pas un bug d'i18n, effet de bord de la
+réécriture de la détection de format) : `analyzeTransactionsCsv()` retournait `rows` sans que cette
+variable soit définie — `const rows = lines.slice(1).map(...)` avait été perdue pendant la réécriture.
+Repéré immédiatement au test (import CSV plantait avec `ReferenceError: rows is not defined`), corrigé
+avant commit.
+
+~24 nouvelles entrées de dictionnaire, 0 doublon (862 clés au total). Réutilise `'Pointée'` →
+`'Reconciled'` et `'Sauvegarde chiffrée exportée.'` → `'Encrypted backup exported.'`, déjà posées par
+des lots précédents.
+
+Testé FR→EN→FR de bout en bout via appels directs aux fonctions exportées de `backup.js` (SW/caches
+vidés avant chaque test) : `analyzeTransactionsCsv` avec un CSV d'en-tête français et un CSV d'en-tête
+anglais, tous deux correctement détectés comme format `geofinance` ; message d'erreur CSV vide ;
+message d'erreur `decryptPayload` sur un payload invalide ; modale de rappel en mode normal et en mode
+urgent (bouton "Plus tard" bien absent, titre et message d'alerte traduits) ; formulaire d'export
+chiffré inline (paragraphe, libellés, bouton) et son toast de mots de passe non correspondants. Aucune
+erreur console sur l'ensemble du test.
+
+`CACHE_VERSION` : `v68` → `v69`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

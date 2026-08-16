@@ -1024,4 +1024,30 @@ const EN = {
   '« {label} » est à {pct}% de sa limite mensuelle.': '"{label}" is at {pct}% of its monthly limit.',
   'Résumé de la semaine': 'Weekly summary',
   '{expenses} dépensé, {income} reçu · épargne nette {netSavings}.': '{expenses} spent, {income} received · net savings {netSavings}.',
+
+  // ---------- Sauvegarde / import CSV (backup.js + gabarit tpl-modal-backup-reminder) ----------
+  "Ce n'est pas une sauvegarde chiffrée GeoFinance valide.": 'This is not a valid encrypted GeoFinance backup.',
+  'Mot de passe incorrect ou sauvegarde corrompue.': 'Incorrect password or corrupted backup.',
+  'Vers portefeuille': 'To wallet',
+  'Note': 'Note',
+  'Oui': 'Yes',
+  'Non': 'No',
+  'historique-complet': 'full-history',
+  'Fichier CSV vide.': 'Empty CSV file.',
+  'Portefeuille introuvable.': 'Wallet not found.',
+  'Votre navigateur ne permet pas cette fonctionnalité (Chrome/Edge sur ordinateur uniquement).': 'Your browser does not support this feature (Chrome/Edge on desktop only).',
+  'Sauvegarde automatique effectuée.': 'Automatic backup completed.',
+  'Sauvegarde en retard ⚠': 'Backup overdue ⚠',
+  "Vous avez repoussé ce rappel plusieurs fois. Vos données ne vivent que sur cet appareil : sans export, un changement de téléphone, une réinstallation ou un nettoyage du cache les effacerait définitivement. Exportez-les maintenant.":
+    "You have postponed this reminder several times. Your data only lives on this device: without an export, a phone change, a reinstall, or a cache cleanup would permanently erase it. Export it now.",
+  "Choisissez un mot de passe pour chiffrer votre sauvegarde avant de l'envoyer vers votre stockage distant (Drive, etc.). Conservez-le précieusement : sans lui, la sauvegarde ne pourra pas être restaurée.":
+    'Choose a password to encrypt your backup before sending it to your remote storage (Drive, etc.). Keep it safe: without it, the backup cannot be restored.',
+  'Mot de passe': 'Password',
+  'Confirmer le mot de passe': 'Confirm password',
+  'Chiffrer et exporter': 'Encrypt and export',
+  'Les mots de passe ne correspondent pas.': "The passwords don't match.",
+  'Sauvegarde hebdomadaire': 'Weekly backup',
+  'Cela fait une semaine depuis votre dernière sauvegarde. Voulez-vous exporter une copie chiffrée de vos données maintenant ?':
+    'It has been a week since your last backup. Would you like to export an encrypted copy of your data now?',
+  'Exporter maintenant': 'Export now',
 };

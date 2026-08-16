@@ -8,6 +8,10 @@ import { STORES, dbGetAll, dbAdd, dbBulkPut, exportAllData, importAllData, getSe
 import { getEnrichedTransactions, guessCategoryId } from './ledger.js';
 import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast, safeNumber } from './utils.js';
 import { notifyDataChanged } from './state.js';
+// Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
+// plusieurs fonctions — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js/
+// reports-extras.js/search.js.
+import { t as tr, applyStaticTranslations } from './i18n.js';
 
 function bufToBase64(buf) {
   const bytes = new Uint8Array(buf);
@@ -111,13 +115,13 @@ export async function buildEncryptedPayload(passphrase) {
 }
 
 export async function decryptPayload(payload, passphrase) {
-  if (!payload?.geofinanceEncryptedBackup) throw new Error("Ce n'est pas une sauvegarde chiffrée GeoFinance valide.");
+  if (!payload?.geofinanceEncryptedBackup) throw new Error(tr("Ce n'est pas une sauvegarde chiffrée GeoFinance valide."));
   const key = await deriveAesKey(passphrase, base64ToBuf(payload.salt));
   let plainBuf;
   try {
     plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBuf(payload.iv) }, key, base64ToBuf(payload.ciphertext));
   } catch {
-    throw new Error('Mot de passe incorrect ou sauvegarde corrompue.');
+    throw new Error(tr('Mot de passe incorrect ou sauvegarde corrompue.'));
   }
   return JSON.parse(new TextDecoder().decode(plainBuf));
 }
@@ -151,7 +155,7 @@ function csvEscape(value) {
 /** Exporte les transactions en CSV. Sans monthKey : historique complet. */
 export async function exportTransactionsCsv(monthKey = null) {
   const rows = await getEnrichedTransactions(monthKey ? { monthKey } : {});
-  const header = ['Date', 'Type', 'Portefeuille', 'Vers portefeuille', 'Catégorie', 'Montant', 'Devise', 'Note', 'Pointée'];
+  const header = GEOFINANCE_CSV_HEADER_FR.map(tr);
   const lines = [header.join(';')];
   for (const t of rows) {
     // csvEscape() appliqué une seule fois, via le .map() final : l'appeler aussi individuellement
@@ -160,10 +164,10 @@ export async function exportTransactionsCsv(monthKey = null) {
     // guillemets littéraux au lieu du nom d'origine).
     lines.push([
       t.date, t.type, t.wallet?.name || '', t.targetWallet?.name || '',
-      t.category?.name || '', t.amount, t.wallet?.currency || '', t.note || '', t.reconciled ? 'Oui' : 'Non',
+      t.category?.name || '', t.amount, t.wallet?.currency || '', t.note || '', t.reconciled ? tr('Oui') : tr('Non'),
     ].map(csvEscape).join(';'));
   }
-  const suffix = monthKey || 'historique-complet';
+  const suffix = monthKey || tr('historique-complet');
   downloadFile(`geofinance-transactions-${suffix}.csv`, '﻿' + lines.join('\n'), 'text/csv;charset=utf-8');
 }
 
@@ -183,7 +187,13 @@ function parseCsvLine(line, delimiter = ';') {
   return out;
 }
 
-const GEOFINANCE_CSV_HEADER = ['Date', 'Type', 'Portefeuille', 'Vers portefeuille', 'Catégorie', 'Montant', 'Devise', 'Note', 'Pointée'];
+// Nom canonique (français) de chaque colonne — sert à la fois de clé i18n pour l'en-tête exporté
+// (tr(...) à l'export, voir exportTransactionsCsv) et de référence pour la détection du format à
+// l'import (analyzeTransactionsCsv) : un CSV exporté par cette app en anglais doit être reconnu au
+// re-import tout comme un export fait en français, donc la détection compare aux DEUX variantes
+// (FR canonique et EN traduite), jamais à une seule — même principe que RECURRING_NOTE_PREFIXES
+// (ledger.js) et DEBT_CATEGORY_NAME_VARIANTS (debts.js).
+const GEOFINANCE_CSV_HEADER_FR = ['Date', 'Type', 'Portefeuille', 'Vers portefeuille', 'Catégorie', 'Montant', 'Devise', 'Note', 'Pointée'];
 
 function detectDelimiter(headerLine) {
   let best = ';', bestCount = 0;
@@ -200,12 +210,13 @@ function detectDelimiter(headerLine) {
 export async function analyzeTransactionsCsv(file) {
   const text = await readFileAsText(file);
   const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim().length);
-  if (lines.length < 2) throw new Error('Fichier CSV vide.');
+  if (lines.length < 2) throw new Error(tr('Fichier CSV vide.'));
   const delimiter = detectDelimiter(lines[0]);
   const headerCells = parseCsvLine(lines[0], delimiter).map((h) => h.trim());
   const rows = lines.slice(1).map((l) => parseCsvLine(l, delimiter));
-  const isGeoFinanceFormat = headerCells.length === GEOFINANCE_CSV_HEADER.length
-    && headerCells.every((h, i) => h.toLowerCase() === GEOFINANCE_CSV_HEADER[i].toLowerCase());
+  const headerFrEn = GEOFINANCE_CSV_HEADER_FR.map((h) => [h.toLowerCase(), tr(h).toLowerCase()]);
+  const isGeoFinanceFormat = headerCells.length === headerFrEn.length
+    && headerCells.every((h, i) => headerFrEn[i].includes(h.toLowerCase()));
   return { format: isGeoFinanceFormat ? 'geofinance' : 'generic', headerCells, rows, delimiter };
 }
 
@@ -262,7 +273,10 @@ export async function importGeoFinanceCsvRows(rows) {
     const tx = {
       id: uuid(), type, walletId: wallet.id, targetWalletId: targetWallet?.id || null,
       categoryId: category?.id || null, amount: safeNumber(parseFloat(amountStr)), date: date || todayISO(),
-      note: note || '', reconciled: (reconciledStr || '').toLowerCase().startsWith('oui'),
+      // Accepte "oui" (FR) et "yes" (EN, tr('Oui') en mode anglais) : un CSV exporté par cette app
+      // dans l'une ou l'autre langue doit se réimporter correctement, voir GEOFINANCE_CSV_HEADER_FR
+      // ci-dessus pour le même principe appliqué à l'en-tête.
+      note: note || '', reconciled: ['oui', 'yes'].includes((reconciledStr || '').toLowerCase()),
       createdAt: new Date().toISOString(),
     };
     if (isDuplicateTransaction(existingTransactions, tx)) { skipped++; continue; }
@@ -311,7 +325,7 @@ function parseFlexibleDate(raw) {
 export async function importGenericCsvRows(rows, mapping) {
   const wallets = await dbGetAll(STORES.WALLETS);
   const wallet = wallets.find((w) => w.id === mapping.walletId);
-  if (!wallet) throw new Error('Portefeuille introuvable.');
+  if (!wallet) throw new Error(tr('Portefeuille introuvable.'));
 
   const allTransactions = await dbGetAll(STORES.TRANSACTIONS);
 
@@ -361,7 +375,7 @@ export function isFileSystemAccessSupported() {
 }
 
 export async function chooseAutoBackupDirectory() {
-  if (!isFileSystemAccessSupported()) throw new Error("Votre navigateur ne permet pas cette fonctionnalité (Chrome/Edge sur ordinateur uniquement).");
+  if (!isFileSystemAccessSupported()) throw new Error(tr("Votre navigateur ne permet pas cette fonctionnalité (Chrome/Edge sur ordinateur uniquement)."));
   const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
   await setSetting('autoBackupDirHandle', handle);
   return handle;
@@ -428,7 +442,7 @@ export async function checkWeeklyBackupReminder() {
   const sevenDaysMs = 7 * 24 * 3600 * 1000;
   if (now - lastMs < sevenDaysMs) return;
 
-  if (await runAutoBackupIfConfigured()) { showToast('Sauvegarde automatique effectuée.'); return; }
+  if (await runAutoBackupIfConfigured()) { showToast(tr('Sauvegarde automatique effectuée.')); return; }
 
   showBackupReminderModal(urgent);
 }
@@ -438,11 +452,16 @@ function showBackupReminderModal(urgent = false) {
   const tpl = document.getElementById('tpl-modal-backup-reminder');
   const root = document.getElementById('modal-root');
   root.appendChild(tpl.content.cloneNode(true));
+  // Le contenu d'un <template> n'est pas dans le document tant qu'il n'est pas cloné — les
+  // attributs data-i18n dessus n'ont donc jamais été traduits par le passage unique
+  // d'applyStaticTranslations() au démarrage (app.js). On le relance ici, sur le clone qui vient
+  // d'être inséré dans le vrai document — même pattern que openQuickAdd() (transactions.js).
+  applyStaticTranslations();
   const backdrop = root.querySelector('.modal-backdrop[data-modal="backup-reminder"]');
 
   if (urgent) {
-    backdrop.querySelector('#backup-title').textContent = 'Sauvegarde en retard ⚠';
-    backdrop.querySelector('.modal-body > p').textContent = "Vous avez repoussé ce rappel plusieurs fois. Vos données ne vivent que sur cet appareil : sans export, un changement de téléphone, une réinstallation ou un nettoyage du cache les effacerait définitivement. Exportez-les maintenant.";
+    backdrop.querySelector('#backup-title').textContent = tr('Sauvegarde en retard ⚠');
+    backdrop.querySelector('.modal-body > p').textContent = tr("Vous avez repoussé ce rappel plusieurs fois. Vos données ne vivent que sur cet appareil : sans export, un changement de téléphone, une réinstallation ou un nettoyage du cache les effacerait définitivement. Exportez-les maintenant.");
     backdrop.querySelector('#backup-later-btn').remove();
   }
 
@@ -462,17 +481,17 @@ function showBackupReminderModal(urgent = false) {
     const body = backdrop.querySelector('.modal-body');
     body.innerHTML = `
       <form id="encrypted-export-form">
-        <p style="margin:0 0 12px;font-size:13px;color:var(--text-muted);">Choisissez un mot de passe pour chiffrer votre sauvegarde avant de l'envoyer vers votre stockage distant (Drive, etc.). Conservez-le précieusement : sans lui, la sauvegarde ne pourra pas être restaurée.</p>
-        <div class="form-row"><label>Mot de passe</label><input type="password" name="passphrase" required minlength="6" autofocus></div>
-        <div class="form-row"><label>Confirmer le mot de passe</label><input type="password" name="passphraseConfirm" required minlength="6"></div>
-        <button type="submit" class="btn btn-primary btn-block">Chiffrer et exporter</button>
+        <p style="margin:0 0 12px;font-size:13px;color:var(--text-muted);">${tr("Choisissez un mot de passe pour chiffrer votre sauvegarde avant de l'envoyer vers votre stockage distant (Drive, etc.). Conservez-le précieusement : sans lui, la sauvegarde ne pourra pas être restaurée.")}</p>
+        <div class="form-row"><label>${tr('Mot de passe')}</label><input type="password" name="passphrase" required minlength="6" autofocus></div>
+        <div class="form-row"><label>${tr('Confirmer le mot de passe')}</label><input type="password" name="passphraseConfirm" required minlength="6"></div>
+        <button type="submit" class="btn btn-primary btn-block">${tr('Chiffrer et exporter')}</button>
       </form>`;
     body.querySelector('#encrypted-export-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      if (fd.get('passphrase') !== fd.get('passphraseConfirm')) { showToast('Les mots de passe ne correspondent pas.'); return; }
+      if (fd.get('passphrase') !== fd.get('passphraseConfirm')) { showToast(tr('Les mots de passe ne correspondent pas.')); return; }
       await exportEncryptedBackup(fd.get('passphrase'));
-      showToast('Sauvegarde chiffrée exportée.');
+      showToast(tr('Sauvegarde chiffrée exportée.'));
       close();
     });
   });
