@@ -36,6 +36,23 @@
 <!-- ============================================================ -->
 <!-- LOCK SCREEN : setup PIN (1er lancement) / déverrouillage      -->
 <!-- ============================================================ -->
+<!-- Choix de la langue : affiché une seule fois, avant même l'écran de création du code PIN, sur
+     une toute première installation uniquement (voir showLanguageChoiceScreen(), app.js). Les
+     libellés ne sont volontairement pas passés par data-i18n : chaque langue s'auto-désigne dans
+     sa propre écriture, aucune traduction n'a de sens ici. -->
+<div id="language-screen" class="lock-screen" hidden>
+  <div class="lock-card">
+    <div class="lock-logo" aria-hidden="true">
+      <svg viewBox="0 0 48 48" width="40" height="40"><path fill="currentColor" d="M24 2c8 6 16 8 16 8v14c0 12-8 19-16 22C16 43 8 36 8 24V10s8-2 16-8Z" opacity=".15"/><path fill="currentColor" d="M24 6c6.4 4.8 12.8 6.4 12.8 6.4V24c0 9.6-6.4 15.2-12.8 17.6C17.6 39.2 11.2 33.6 11.2 24V12.4S17.6 10.8 24 6Z"/><path fill="#fff" d="M22 26.5l-4.5-4.5-2.1 2.1L22 30.7l12.6-12.6-2.1-2.1z"/></svg>
+    </div>
+    <h1 class="lock-title">Choisissez votre langue / Choose your language</h1>
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:280px;margin-top:18px;">
+      <button type="button" class="btn btn-primary btn-block" id="language-choice-fr">Français</button>
+      <button type="button" class="btn btn-primary btn-block" id="language-choice-en">English</button>
+    </div>
+  </div>
+</div>
+
 <div id="lock-screen" class="lock-screen" data-mode="setup">
   <div class="lock-card">
     <div class="lock-logo" aria-hidden="true">

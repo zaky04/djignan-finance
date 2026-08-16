@@ -1890,6 +1890,53 @@ Reste du bilan de vérification, **rien d'autre trouvé** :
 
 `CACHE_VERSION` : `v71` → `v72`.
 
+### 16 août 2026 (suite) — Choix de la langue en tout premier, avant même la création du code PIN
+
+Demande explicite de l'auteur : la langue devait pouvoir être choisie dès l'installation, pas
+seulement découverte plus tard dans Paramètres. Avant ce lot, l'appli démarrait toujours en français
+par défaut (`getSetting('language', 'fr')`, aucune détection de la langue du navigateur) — un
+utilisateur anglophone voyait tout le premier lancement (écran de création du PIN inclus) en français
+sans le savoir, jusqu'à trouver lui-même le sélecteur dans Paramètres.
+
+**Nouveau : écran de choix de langue affiché avant l'écran de création du PIN**, sur une toute première
+installation uniquement (même garde que `maybeShowOnboarding()` : `!isPinConfigured()` — un PIN déjà
+configuré signifie que ce n'est pas une première installation ; jamais réaffiché à un utilisateur
+existant après coup).
+
+- `index.html` : nouveau `<div id="language-screen" class="lock-screen" hidden>` juste avant
+  `#lock-screen`, réutilisant les classes `.lock-screen`/`.lock-card`/`.lock-logo` pour un rendu visuel
+  identique. Deux boutons `#language-choice-fr` ("Français") / `#language-choice-en` ("English").
+  Volontairement **sans** `data-i18n` sur ce libellé ni sur les boutons : chaque langue s'auto-désigne
+  dans sa propre écriture, choisir l'une des deux langues pour traduire l'écran de CHOIX de la langue
+  n'aurait pas de sens.
+- `js/app.js` : nouvelle fonction `showLanguageChoiceScreen()`, appelée dans `boot()` juste après
+  `initI18n()` et avant `seedDefaultsIfNeeded()` (l'ordre est important : les catégories par défaut
+  doivent être créées APRÈS que la langue soit connue, sinon elles seraient semées dans la mauvaise
+  langue). Masque `#lock-screen`, affiche `#language-screen`, attend un clic sur l'un des deux boutons,
+  enregistre la langue (`setSetting('language', lang)`), rappelle `initI18n()` (retraduit tout le
+  châssis statique déjà présent dans le DOM, y compris l'écran de PIN caché en dessous) — **sans
+  recharger la page**, contrairement à `setLanguage()` (Paramètres) qui fait un rechargement complet.
+
+Testé de bout en bout, base de données entièrement vidée avant chaque scénario (simulateur
+d'installation neuve) :
+- Écran de langue bien affiché en tout premier (avant le PIN), les deux seuls boutons interactifs à ce
+  stade sont "Français"/"English" (confirmé via l'arbre d'accessibilité).
+- Clic "English" → écran de langue disparaît, écran de PIN apparaît directement en anglais ("Create
+  your PIN code" / "Choose a 4-6 digit code..."), châssis latéral (menu) confirmé entièrement en
+  anglais (Dashboard, Wallets, Transactions, Budgets, Savings, Investments, Debts & receivables, Tools,
+  Reports, Shared expenses, Managed accounts) sans recharger la page.
+- Rejoué en français ("Français") : écran de PIN bien en français, catégories par défaut vérifiées
+  semées en français (Transport, Logement, Alimentation, Salaire…).
+- Rejoué en anglais avec les catégories par défaut vérifiées semées directement en anglais (Housing,
+  Food, Salary, Leisure…) — confirme que `seedDefaultsIfNeeded()` s'exécute bien après la résolution du
+  choix de langue.
+- **Non-régression** : un PIN configuré au préalable (simulateur d'installation existante) fait
+  sauter entièrement l'écran de choix de langue, passage direct à l'écran de déverrouillage — un
+  utilisateur existant n'est jamais interrompu par ce nouvel écran.
+- Aucune erreur console sur l'ensemble des scénarios.
+
+`CACHE_VERSION` : `v72` → `v73`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

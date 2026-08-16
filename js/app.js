@@ -6,7 +6,7 @@
    ========================================================================== */
 
 import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAULT_CATEGORIES } from './db.js';
-import { initLockScreen, isBiometricAvailable, registerBiometric } from './auth.js';
+import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigured } from './auth.js';
 import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder } from './backup.js';
@@ -465,6 +465,30 @@ async function renderDemoModeBanner() {
   });
 }
 
+/** Affiché une seule fois, avant même l'écran de création du code PIN, sur une toute première
+    installation uniquement (même garde que maybeShowOnboarding() : un PIN déjà configuré signifie
+    que ce n'est pas une première installation, on ne redemande jamais après coup à un utilisateur
+    existant). Résout une fois la langue choisie ; initI18n() est rappelé immédiatement pour que
+    seedDefaultsIfNeeded() (juste après, dans boot()) crée les catégories par défaut dans la bonne
+    langue — pas de rechargement de page, contrairement à setLanguage() (Paramètres). */
+function showLanguageChoiceScreen() {
+  return new Promise((resolve) => {
+    const screen = document.getElementById('language-screen');
+    const lockScreen = document.getElementById('lock-screen');
+    lockScreen.hidden = true;
+    screen.hidden = false;
+    async function choose(lang) {
+      await setSetting('language', lang);
+      await initI18n();
+      screen.hidden = true;
+      lockScreen.hidden = false;
+      resolve();
+    }
+    document.getElementById('language-choice-fr').addEventListener('click', () => choose('fr'), { once: true });
+    document.getElementById('language-choice-en').addEventListener('click', () => choose('en'), { once: true });
+  });
+}
+
 async function onUnlocked() {
   document.getElementById('lock-screen').hidden = true;
   document.getElementById('app').hidden = false;
@@ -499,6 +523,10 @@ async function onUnlocked() {
     // haut, bas de page mobile) et prépare t() pour tous les rendus JS qui suivent — sans ça, un
     // utilisateur en anglais verrait un flash de français le temps que le reste du boot s'exécute.
     await initI18n();
+
+    // Choix de la langue, avant même la création du code PIN, sur une toute première installation
+    // (jamais pour une install existante — voir la garde dans showLanguageChoiceScreen()).
+    if (!(await isPinConfigured())) await showLanguageChoiceScreen();
 
     await seedDefaultsIfNeeded();
     await migrateDebtTransactionCategories();
