@@ -2623,6 +2623,43 @@ niveau de confidentialité que `googleClientId` existant (voir le commentaire d�
 
 `CACHE_VERSION` : `v87` → `v88`.
 
+**Suite, une fois les deux clients créés par l'auteur** — deux points supplémentaires découverts en
+finalisant :
+
+1. **Piège Google Cloud Console non documenté ailleurs** : un client de type "Android" refuse par
+   défaut la redirection par schéma d'URI personnalisé (`invalid_request` / "Custom URI scheme is
+   not enabled for your Android client"), confirmé en chargeant l'URL d'autorisation réelle dans un
+   navigateur. Il faut explicitement cocher **"Paramètres avancés" → "Schéma d'URI personnalisé" →
+   "Activer le schéma d'URI personnalisé"** sur la page du client Android dans Google Cloud Console
+   (Google déconseille ce mode pour les nouveaux clients Android, poussant vers les App Links
+   vérifiés — mais l'active quand même si explicitement demandé). Sans ça, aucune version du code
+   ne peut faire fonctionner ce flux.
+2. **Piège local, propre à ce projet** : après avoir modifié `firebase-sync.js`/`firebase-config.js`
+   pour ce correctif, un premier test réel (via le port de debug WebView2) est retombé sur l'ancien
+   flux GSI cassé (`popup_failed_to_open`) au lieu du nouveau flux desktop — pas un bug du nouveau
+   code, mais `sw.js` n'avait pas été resynchronisé dans le dossier `dist/` du projet Tauri (seuls
+   `index.html`/`firebase-sync.js`/`firebase-config.js` l'avaient été) : le Service Worker
+   cache-first embarqué servait donc encore l'ancien `firebase-sync.js` depuis le premier lancement
+   de test. Après synchronisation de `sw.js` (donc du nouveau `CACHE_VERSION`) et remise à zéro du
+   profil WebView2 (`%LOCALAPPDATA%\com.zaky04.djignanfinance`, supprimé entièrement — équivalent du
+   "vider le cache" habituel en local, voir §3.1), le flux desktop s'est déclenché correctement.
+   **À retenir pour tout futur correctif sur ces builds natifs** : les TROIS fichiers
+   (`index.html`, tout `.js` modifié, ET `sw.js`) doivent être resynchronisés ensemble dans
+   `dist`/`www` avant chaque rebuild — oublier `sw.js` seul ne fait rien planter à la compilation,
+   juste servir silencieusement une version obsolète au runtime.
+
+**Vérifié de bout en bout côté Windows avec les vrais clients** (toujours sans compléter de
+connexion réelle, interdite dans cette session — voir limite déjà documentée le 15 août) :
+`signInWithGoogle()` déclenché via le port de debug WebView2 → `start_oauth_loopback` exécuté avec
+succès (port assigné confirmé en LISTEN via `Get-NetTCPConnection`) → promesse de connexion restée
+correctement en attente (pas d'erreur immédiate, contrairement au tout premier test avec les IDs
+`REPLACE_ME`) → URL d'autorisation avec le vrai `googleDesktopClientId` déjà confirmée acceptée par
+Google (écran de connexion normal, aucune erreur) lors du test de validation des deux clients.
+Round-trip Android (Custom Tabs → redirection → échange du code) non testable sans appareil/émulateur
+connecté à cette session — à confirmer par l'auteur.
+
+`CACHE_VERSION` : `v88` → `v89` (mise à jour des deux ID client réels dans `firebase-config.js`).
+
 ## 10. Exécutables installables multi-plateformes
 
 ### 17 août 2026 — Windows : premier build réel (Tauri)

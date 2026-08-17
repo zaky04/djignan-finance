@@ -53,5 +53,5 @@ export const googleClientId = '868830301244-a57es0a6hebp31s5ppnp2d14p7nfk49h.app
       SHA-1 du certificat de signature de l'APK (voir CLAUDE.md pour l'empreinte exacte — change si
       le keystore est régénéré). Pas d'URI de redirection à déclarer non plus : Google autorise par
       défaut le schéma `<packageId>:/oauth2redirect` pour un client de ce type. */
-export const googleDesktopClientId = 'REPLACE_ME.apps.googleusercontent.com';
-export const googleAndroidClientId = 'REPLACE_ME.apps.googleusercontent.com';
+export const googleDesktopClientId = '868830301244-qglksdrebs4nctmi983ug0hd73if35ko.apps.googleusercontent.com';
+export const googleAndroidClientId = '868830301244-4rueqek4atht12msl30ea767o9adliil.apps.googleusercontent.com';
