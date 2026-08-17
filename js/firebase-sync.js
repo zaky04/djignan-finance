@@ -19,7 +19,7 @@
    les justificatifs photo en base64 dépassent vite cette limite en usage réel.
    ========================================================================== */
 
-import { firebaseConfig, isFirebaseConfigured, googleClientId } from './firebase-config.js';
+import { firebaseConfig, isFirebaseConfigured, googleClientId, googleDesktopClientId, googleAndroidClientId } from './firebase-config.js';
 import { buildEncryptedPayload, decryptPayload, deserializeReceiptsForImport, markBackupDone } from './backup.js';
 import { importAllData, getSetting, setSetting } from './db.js';
 import { openModal, showToast, confirmDialog, formatDate } from './utils.js';
@@ -117,6 +117,165 @@ async function ensureTokenClient() {
   return tokenClient;
 }
 
+/* ==========================================================================
+   17 août 2026 — Connexion Google sur les builds natifs (APK Capacitor, exécutable
+   Windows Tauri) : le mécanisme Google Identity Services ci-dessus NE FONCTIONNE PAS
+   dans ces contextes. Diagnostic confirmé par test direct : sur Android, une requête
+   vers accounts.google.com/gsi/client avec un User-Agent de WebView Android (contenant
+   "; wv") reçoit une réponse HTTP 403 — Google bloque activement toute requête OAuth
+   émise depuis une WebView embarquée (politique anti-hameçonnage documentée, pas un
+   bug corrigible côté app). Sur Windows/WebView2, le script se charge, mais l'origine
+   de la page (http://tauri.localhost) n'est de toute façon pas une origine autorisée
+   pour googleClientId (type "Web").
+
+   Solution : flux "autorisation par code + PKCE" ouvert dans le VRAI navigateur du
+   système (RFC 8252, recommandation officielle de Google pour les apps natives/de
+   bureau), jamais dans la WebView de l'app :
+   - Windows (Tauri) : navigateur système ouvert via la commande Rust open_external
+     (voir src-tauri/src/lib.rs), redirection captée par un petit serveur HTTP local
+     (127.0.0.1:<port aléatoire>, RFC 8252 §7.3) qui émet l'événement "oauth-callback".
+   - Android (Capacitor) : Chrome ouvert en Custom Tabs via @capacitor/browser (PAS une
+     WebView — Custom Tabs utilise le vrai processus Chrome, non détecté par Google
+     comme une WebView embarquée), redirection captée via un schéma d'URL personnalisé
+     (com.zaky04.djignanfinance:/oauth2redirect) et l'événement appUrlOpen de
+     @capacitor/app.
+   Les deux utilisent PKCE (pas de client secret à embarquer — client public, comme
+   googleClientId) et échangent le code via oauth2.googleapis.com/token (CSP : voir
+   connect-src dans index.html). Résultat final identique au flux GSI : un
+   access_token/id_token échangé contre une session Firebase via signInWithCredential. */
+
+function isTauriDesktop() {
+  return typeof window !== 'undefined' && !!window.__TAURI__;
+}
+
+function isCapacitorNative() {
+  return typeof window !== 'undefined' && !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+}
+
+function base64UrlEncode(bytes) {
+  let str = '';
+  for (const b of bytes) str += String.fromCharCode(b);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function generateCodeVerifier() {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return base64UrlEncode(array);
+}
+
+async function pkceChallenge(verifier) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return base64UrlEncode(new Uint8Array(digest));
+}
+
+async function exchangeAuthorizationCode({ clientId, code, redirectUri, codeVerifier }) {
+  const resp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      grant_type: 'authorization_code',
+      code_verifier: codeVerifier,
+    }),
+  });
+  if (!resp.ok) throw new Error(t("Échec de l'échange du code d'autorisation Google."));
+  return resp.json();
+}
+
+async function finishNativeSignIn(tokens) {
+  const { authMod } = await ensureFirebase();
+  const credential = authMod.GoogleAuthProvider.credential(tokens.id_token || null, tokens.access_token);
+  const result = await authMod.signInWithCredential(firebaseAuth, credential);
+  return result.user;
+}
+
+// { resolve, reject } de l'appel de connexion native en cours (desktop ou Android) — même principe
+// que pendingSignIn ci-dessus pour le flux GSI, un seul flux natif à la fois.
+let pendingNativeCallback = null;
+
+async function signInWithGoogleDesktop() {
+  const { core, event } = window.__TAURI__;
+  const port = await core.invoke('start_oauth_loopback');
+  const redirectUri = `http://127.0.0.1:${port}`;
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = await pkceChallenge(codeVerifier);
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', googleDesktopClientId);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', 'email profile');
+  authUrl.searchParams.set('code_challenge', codeChallenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+  authUrl.searchParams.set('prompt', 'consent');
+
+  const codePromise = new Promise((resolve, reject) => { pendingNativeCallback = { resolve, reject }; });
+  // Enregistré AVANT d'ouvrir le navigateur : sinon l'événement pourrait arriver (l'utilisateur va
+  // vite) avant que ce listener n'existe côté frontend, et serait perdu silencieusement.
+  const unlisten = await event.listen('oauth-callback', (evt) => {
+    const pending = pendingNativeCallback;
+    pendingNativeCallback = null;
+    if (!pending) return;
+    const { code, error } = evt.payload;
+    if (error) pending.reject(new Error(error));
+    else if (code) pending.resolve(code);
+    else pending.reject(new Error(t('Connexion annulée.')));
+  });
+
+  try {
+    await core.invoke('open_external', { url: authUrl.toString() });
+    const code = await codePromise;
+    const tokens = await exchangeAuthorizationCode({ clientId: googleDesktopClientId, code, redirectUri, codeVerifier });
+    return await finishNativeSignIn(tokens);
+  } finally {
+    unlisten();
+  }
+}
+
+const ANDROID_REDIRECT_URI = 'com.zaky04.djignanfinance:/oauth2redirect';
+
+async function signInWithGoogleAndroid() {
+  const { Browser, App } = window.Capacitor.Plugins;
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = await pkceChallenge(codeVerifier);
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', googleAndroidClientId);
+  authUrl.searchParams.set('redirect_uri', ANDROID_REDIRECT_URI);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('scope', 'email profile');
+  authUrl.searchParams.set('code_challenge', codeChallenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+
+  const codePromise = new Promise((resolve, reject) => { pendingNativeCallback = { resolve, reject }; });
+  const listenerHandle = await App.addListener('appUrlOpen', (data) => {
+    if (!data.url || !data.url.startsWith(ANDROID_REDIRECT_URI)) return; // autre deep link, pas le nôtre
+    const pending = pendingNativeCallback;
+    pendingNativeCallback = null;
+    if (!pending) return;
+    const queryStart = data.url.indexOf('?');
+    const params = new URLSearchParams(queryStart >= 0 ? data.url.slice(queryStart + 1) : '');
+    const code = params.get('code');
+    const error = params.get('error');
+    if (error) pending.reject(new Error(error));
+    else if (code) pending.resolve(code);
+    else pending.reject(new Error(t('Connexion annulée.')));
+  });
+
+  try {
+    await Browser.open({ url: authUrl.toString() });
+    const code = await codePromise;
+    await Browser.close().catch(() => {});
+    const tokens = await exchangeAuthorizationCode({ clientId: googleAndroidClientId, code, redirectUri: ANDROID_REDIRECT_URI, codeVerifier });
+    return await finishNativeSignIn(tokens);
+  } finally {
+    listenerHandle.remove();
+  }
+}
+
 // À ajuster si une version plus récente est disponible au moment du déploiement
 // (voir firebase.google.com/docs/web/setup) — sans build, la version est figée ici.
 const SDK_VERSION = '12.17.1';
@@ -164,6 +323,8 @@ function waitForAuthReady(authMod) {
     voir warmUpGoogleSignIn(), qui prépare tokenClient à l'avance pour que requestAccessToken() reste
     dans le même geste utilisateur que le clic. */
 export async function signInWithGoogle() {
+  if (isTauriDesktop()) return signInWithGoogleDesktop();
+  if (isCapacitorNative()) return signInWithGoogleAndroid();
   const client = await ensureTokenClient(); // déjà mémoïsé si warmUpGoogleSignIn() a tourné avant
   return new Promise((resolve, reject) => {
     pendingSignIn = { resolve, reject };
@@ -181,7 +342,12 @@ export async function signInWithGoogle() {
     popup se ferait bloquer (déjà rencontré avec l'ancien mécanisme signInWithPopup de Firebase). */
 export function warmUpGoogleSignIn() {
   ensureFirebase().catch(() => {});
-  ensureTokenClient().catch(() => {});
+  // Le préchargement GSI ne sert (et ne fonctionne) que pour le flux web normal — inutile de
+  // charger accounts.google.com/gsi/client sur les builds natifs (échouerait de toute façon sur
+  // Android, voir commentaire plus haut) puisqu'ils utilisent un chemin de connexion différent.
+  if (!isTauriDesktop() && !isCapacitorNative()) {
+    ensureTokenClient().catch(() => {});
+  }
 }
 
 export async function signOutGoogle() {

@@ -37,3 +37,21 @@ export const isFirebaseConfigured = Object.values(firebaseConfig).every((v) => v
     `https://zaky04.github.io` dans ses "Authorized JavaScript origins" (Google Cloud Console >
     Identifiants > ce client) pour que Google Identity Services accepte les appels depuis ce site. */
 export const googleClientId = '868830301244-a57es0a6hebp31s5ppnp2d14p7nfk49h.apps.googleusercontent.com';
+
+/** Clients OAuth dédiés aux builds natifs (APK Capacitor, exécutable Windows Tauri) — voir
+    CLAUDE.md, section empaquetage : Google bloque activement les requêtes OAuth émises depuis une
+    WebView embarquée (Android : HTTP 403 sur accounts.google.com/gsi/client dès que le User-Agent
+    contient "; wv" ; confirmé par test direct). `googleClientId` ci-dessus (type "Web") ne peut donc
+    pas servir dans ces contextes. Ces deux clients utilisent le flux "autorisation par code + PKCE"
+    ouvert dans le VRAI navigateur du système (pas la WebView de l'app), conformément à la
+    recommandation de Google pour les apps natives/de bureau (RFC 8252). Pas de client secret : ce
+    sont des clients publics (PKCE), la valeur ci-dessous n'est pas plus sensible que googleClientId.
+    - `googleDesktopClientId` : Google Cloud Console > Identifiants > + Créer des identifiants >
+      ID client OAuth > type "Application de bureau". Aucune URI de redirection à déclarer (le flux
+      loopback 127.0.0.1:<port aléatoire> est autorisé nativement pour ce type de client).
+    - `googleAndroidClientId` : type "Android", nom du package `com.zaky04.djignanfinance`, empreinte
+      SHA-1 du certificat de signature de l'APK (voir CLAUDE.md pour l'empreinte exacte — change si
+      le keystore est régénéré). Pas d'URI de redirection à déclarer non plus : Google autorise par
+      défaut le schéma `<packageId>:/oauth2redirect` pour un client de ce type. */
+export const googleDesktopClientId = 'REPLACE_ME.apps.googleusercontent.com';
+export const googleAndroidClientId = 'REPLACE_ME.apps.googleusercontent.com';

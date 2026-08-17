@@ -2538,6 +2538,91 @@ nouveau keystore de signature dédié — voir plus bas).
 politique que pour GeoFinance — jamais committé, secret nécessaire à toute mise à jour future signée
 sous le même `packageId`).
 
+### 17 août 2026 (suite) — Connexion Google cassée sur les deux builds natifs, corrigée (flux navigateur système + PKCE)
+
+Signalé par l'utilisateur après avoir testé les deux premiers builds : "la connexion google est
+cassee sur les builds". Diagnostic mené par test direct (jamais de supposition non vérifiée, voir
+la même exigence posée par l'auteur le 16 août pour la connexion Google web) :
+
+- **Android** : requête vers `accounts.google.com/gsi/client` avec le User-Agent exact d'une WebView
+  Android (contient `; wv`) → **HTTP 403**, confirmé par `curl` direct. Google bloque
+  délibérément toute requête OAuth émise depuis une WebView embarquée (politique anti-hameçonnage
+  documentée par Google elle-même) — s'applique à *n'importe quelle* app Capacitor/Cordova utilisant
+  ce mécanisme, pas un bug corrigible côté app.
+- **Windows** : reproduction en direct via le protocole CDP (port de debug WebView2,
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>`) montre que le script GSI
+  se charge en fait normalement (`window.google` bien peuplé) — donc pas le même blocage qu'Android.
+  Cause réelle : l'origine de la page (`http://tauri.localhost`, propre à Tauri) n'est de toute façon
+  pas une origine autorisée pour `googleClientId` (type "Web", limité à `https://zaky04.github.io`).
+
+**Fix retenu, identique en esprit sur les deux plateformes** : flux OAuth "autorisation par code +
+PKCE" ouvert dans le **vrai navigateur du système** (jamais la WebView de l'app), conformément à la
+RFC 8252 (recommandation officielle de Google pour les apps natives/de bureau). Toute la logique
+partagée (PKCE, échange du code) vit dans `firebase-sync.js` ; `signInWithGoogle()` détecte la
+plateforme (`window.__TAURI__` / `Capacitor.isNativePlatform()`) et bascule vers le bon flux — le
+flux GSI existant (16 août) reste inchangé et continue de servir la PWA web normale.
+
+**Windows (Tauri)** — redirection en boucle locale (`127.0.0.1:<port aléatoire>`, RFC 8252 §7.3) :
+- `src-tauri/src/lib.rs` : nouvelle commande `start_oauth_loopback` — ouvre un `TcpListener` sur
+  `127.0.0.1:0` (port libre attribué par l'OS), renvoie le port au frontend, puis dans un thread
+  séparé attend UNE requête HTTP (celle de la redirection Google), en extrait `code`/`error` de la
+  query string (parsing minimal fait à la main, pas de dépendance HTTP serveur complète — un seul
+  usage, pas besoin d'un framework), répond avec une page HTML de confirmation, puis émet
+  l'événement Tauri `oauth-callback` vers le frontend. Nouvelle commande `open_external` (crate
+  `open`) pour ouvrir l'URL d'autorisation dans le navigateur par défaut — jamais dans la WebView de
+  l'app.
+- `tauri.conf.json` : `app.withGlobalTauri: true` ajouté — nécessaire pour que le frontend (JS
+  vanilla, sans bundler ni `@tauri-apps/api` en dépendance npm) puisse appeler `invoke`/`event.listen`
+  via le global `window.__TAURI__` injecté par Tauri, plutôt que d'importer le paquet npm de l'API
+  (aurait exigé une étape de build que ce projet n'a pas, voir §3).
+- **Vérifié de bout en bout, mécanique complète, sans le vrai client OAuth** (celui-ci reste
+  `REPLACE_ME`, voir plus bas) : via le port de debug WebView2 (CDP), appel direct de
+  `start_oauth_loopback` → port obtenu (ex: 45536) → requête HTTP simulée
+  (`http://127.0.0.1:<port>/?code=FAKE_TEST_CODE_123`) → réponse HTTP 200 avec la page de
+  confirmation → événement `oauth-callback` bien reçu côté JS avec `{code: 'FAKE_TEST_CODE_123',
+  error: null}`. Toute la chaîne Rust → HTTP → événement Tauri → JS fonctionne ; seule l'étape
+  Google elle-même (client OAuth réel) reste à tester par l'auteur une fois le client créé (voir
+  ci-dessous — nécessite une action Google Cloud Console que je ne peux pas faire à sa place).
+
+**Android (Capacitor)** — Custom Tabs + schéma d'URL personnalisé :
+- `npm install @capacitor/browser @capacitor/app` + `npx cap sync android` (2 nouveaux plugins
+  détectés et enregistrés automatiquement par Capacitor — pas de câblage JS supplémentaire requis
+  côté app : `window.Capacitor.Plugins.Browser`/`.App` sont exposés directement par le pont
+  générique de Capacitor, sans avoir à vendoriser le JS des paquets npm).
+- `AndroidManifest.xml` : nouvel `<intent-filter>` sur `MainActivity` (déjà `launchMode="singleTask"`,
+  essentiel : garantit que la redirection réutilise l'instance déjà ouverte au lieu d'en relancer
+  une nouvelle) avec `<data android:scheme="com.zaky04.djignanfinance" />` — capte la redirection
+  `com.zaky04.djignanfinance:/oauth2redirect?code=...` renvoyée par Google après consentement.
+- `firebase-sync.js` : `Browser.open()` (Custom Tabs, **pas** la WebView — c'est précisément ce qui
+  évite le blocage HTTP 403 puisque Custom Tabs utilise le vrai processus Chrome) pour l'étape de
+  consentement, `App.addListener('appUrlOpen', ...)` pour capter le retour, extraction manuelle de
+  `code`/`error` de la query string (`new URL()` évité ici : comportement pas garanti fiable sur un
+  schéma personnalisé non "spécial" selon la spec URL — parsing par `indexOf('?')` +
+  `URLSearchParams` à la place).
+- **Testé uniquement à la compilation** (`gradlew assembleRelease` → succès, signature vérifiée) —
+  contrairement au flux Windows, impossible de simuler un Custom Tab + deep link retour sans un
+  vrai appareil/émulateur Android connecté. Round-trip complet à confirmer par l'auteur.
+
+**`index.html`** : CSP `connect-src` += `https://oauth2.googleapis.com` (échange du code
+d'autorisation contre les jetons, `fetch()` direct depuis le JS de l'app — gouverné par
+`connect-src`, pas `script-src`).
+
+**`js/firebase-config.js`** : deux nouveaux exports, `googleDesktopClientId`/`googleAndroidClientId`,
+tous deux `REPLACE_ME.apps.googleusercontent.com` en attendant que l'auteur crée les clients
+correspondants dans Google Cloud Console (projet `geofinance-backup`) :
+- Type **"Application de bureau"** pour Windows — aucune URI de redirection à déclarer (le flux
+  loopback est autorisé nativement pour ce type de client, n'importe quel port).
+- Type **"Android"** pour l'APK — nom du package `com.zaky04.djignanfinance`, empreinte SHA-1
+  `9E:0E:35:CA:6B:A4:42:74:FC:88:48:A7:1D:20:0F:87:BD:E6:A5:6F` (celle du nouveau keystore Capacitor,
+  §9 ci-dessus — à regénérer si le keystore change un jour). Aucune URI de redirection à déclarer
+  non plus (schéma `<packageId>:/oauth2redirect` autorisé par défaut pour ce type de client).
+
+Ces deux nouveaux clients sont des clients **publics** (flux PKCE, pas de client secret) — même
+niveau de confidentialité que `googleClientId` existant (voir le commentaire déjà en place dans
+`firebase-config.js`).
+
+`CACHE_VERSION` : `v87` → `v88`.
+
 ## 10. Exécutables installables multi-plateformes
 
 ### 17 août 2026 — Windows : premier build réel (Tauri)
