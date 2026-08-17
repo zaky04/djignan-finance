@@ -2486,7 +2486,114 @@ committés dans ce dépôt — un keystore est un secret, sa perte empêcherait 
 signée de la même app). **À sauvegarder par l'utilisateur dans un endroit sûr, durablement** —
 nécessaire pour toute regénération future de l'APK sous le même `packageId`.
 
-## 10. Exécutables installables multi-plateformes (pistes pour plus tard)
+### 17 août 2026 — APK remplacé par une version 100% autonome (Capacitor)
+
+L'auteur a explicitement rejeté la logique de la TWA décrite ci-dessus : *"je veux que ce soit des
+applications autonomes pas des coquilles qui vont aller chercher sur le repo git"*. L'APK
+`com.zaky04.geofinance` (§ ci-dessus) reste tel quel dans son historique (documentation de ce qui a
+été fait à l'époque), mais **n'est plus le modèle suivi pour Djignan** — remplacé par un APK
+construit avec **Capacitor**, qui embarque réellement tous les fichiers (`index.html`, `css/`, `js/`,
+`vendor/`, `icons/`, `sw.js`) dans l'archive elle-même. Le WebView Android les charge en local
+(`https://localhost`, scheme interne de Capacitor) — confirmé par inspection directe de l'APK signé
+(`unzip -l`) : les fichiers de l'app sont bien sous `assets/public/`, et `capacitor.config.json`
+embarqué ne contient aucune `server.url`. IndexedDB fonctionne normalement dans ce contexte (stockage
+local à l'app, isolé par `packageId` — pas de différence de comportement avec la PWA web pour
+`db.js`).
+
+**packageId** : `com.zaky04.djignanfinance` (distinct de `com.zaky04.geofinance`, nouvelle app,
+nouveau keystore de signature dédié — voir plus bas).
+
+**Reproduire/mettre à jour l'APK** (le projet Capacitor vit hors du dépôt, comme la TWA avant lui) :
+1. `npm init -y && npm install @capacitor/core @capacitor/cli @capacitor/android`
+2. `npx cap init "Djignan Financial System" com.zaky04.djignanfinance --web-dir=www`, puis copier les
+   fichiers statiques du dépôt (`index.html`, `manifest.json`, `sw.js`, `css/`, `js/`, `vendor/`,
+   `icons/` — pas `CLAUDE.md`/`test/`/`serve.ps1`) dans `www/`.
+3. `npx cap add android` — copie automatiquement `www/` vers
+   `android/app/src/main/assets/public`.
+4. Icônes : `npx @capacitor/assets generate --android` depuis un `assets/icon.png` (source
+   `icons/icon-512.png`) — nécessite `sharp` en dépendance native, qui déclenche un avertissement
+   `npm` sur les scripts d'installation non approuvés (`npm approve-scripts`) : légitime ici (lib
+   d'image bien connue), mais à vérifier au cas par cas si le même avertissement apparaît pour un
+   autre paquet un jour.
+5. **Piège JDK, différent de celui documenté pour Bubblewrap** : Capacitor génère un
+   `capacitor.build.gradle` qui exige **Java 21** (`sourceCompatibility`/`targetCompatibility
+   JavaVersion.VERSION_21`), pas 17 — inverse exact de la contrainte Bubblewrap ci-dessus. Utiliser le
+   JBR fourni avec Android Studio (`C:\Program Files\Android\Android Studio\jbr`, déjà en JDK 21)
+   comme `JAVA_HOME` pour ce build précis. Ce fichier `capacitor.build.gradle` est régénéré à chaque
+   `npx cap sync`, ne pas essayer de le patcher à la main.
+6. Build : `.\gradlew.bat assembleRelease --no-daemon` **directement depuis PowerShell** (même
+   contournement que pour Bubblewrap — `gradlew.bat` invoqué depuis un sous-processus Node via
+   Git Bash/MSYS échoue) → `android\app\build\outputs\apk\release\app-release-unsigned.apk`.
+7. Keystore dédié généré via `keytool -genkeypair` (RSA 2048, validité 10000 jours, alias `djignan`) —
+   **différent de celui de GeoFinance**, une app = un keystore, cohérent avec l'usage de deux
+   `packageId` distincts.
+8. Signature manuelle (`build-tools 36.1.0`) : `zipalign -v -p 4` puis `apksigner sign` — même
+   séquence que pour l'APK GeoFinance.
+
+**Vérifié avant livraison** : `unzip -l` sur l'APK signé confirme la présence de
+`assets/public/index.html`/`manifest.json`/`sw.js` (donc bien embarqués, pas une coquille) ;
+`apksigner verify --print-certs` confirme la signature avec le nouveau certificat dédié à Djignan.
+
+**Le fichier `djignan.keystore` et son mot de passe ont été remis directement à l'utilisateur** (même
+politique que pour GeoFinance — jamais committé, secret nécessaire à toute mise à jour future signée
+sous le même `packageId`).
+
+## 10. Exécutables installables multi-plateformes
+
+### 17 août 2026 — Windows : premier build réel (Tauri)
+
+Suite de la piste discutée le 16 août (ci-dessous) : l'auteur a demandé les deux builds (APK + Windows)
+en insistant sur le caractère **autonome** — aucune requête réseau vers GitHub Pages au démarrage.
+Premier exécutable Windows jamais construit pour ce projet, via **Tauri** (comme recommandé par
+l'analyse du 16 août). Contrairement à l'APK ci-dessus (§9, 17 août) qui charge les fichiers via un
+WebView Android, Tauri utilise **WebView2** (déjà présent sur Windows 10/11) et embarque les fichiers
+statiques directement dans l'exécutable au moment du build (`frontendDist`) — pas de serveur local, pas
+de `file://` vers un dossier externe.
+
+**Outillage déjà présent sur la machine** (installé lors d'une session précédente, non documenté
+avant aujourd'hui) : Rust/Cargo 1.97.1 et `@tauri-apps/cli` 2.11.x — contrairement à ce qu'anticipait
+l'entrée du 16 août ("rien construit"), le gros du setup était en fait déjà prêt.
+
+**Reproduire/mettre à jour ce build** (le projet Tauri vit hors du dépôt, même politique que l'APK) :
+1. `npm init -y`, puis `npx @tauri-apps/cli init --ci --app-name "Djignan Financial System"
+   --window-title "Djignan Financial System" --frontend-dist "./dist"` — génère `src-tauri/` (Rust)
+   à côté d'un dossier `dist/` où copier les mêmes fichiers statiques que pour l'APK Capacitor
+   (`index.html`, `manifest.json`, `sw.js`, `css/`, `js/`, `vendor/`, `icons/`).
+2. **Piège de chemin** : `frontendDist` dans `tauri.conf.json` est résolu relativement à
+   `src-tauri/`, pas à la racine du projet — `"./dist"` pointait donc vers `src-tauri/dist`
+   (inexistant) au lieu de `../dist`. Corrigé en `"../dist"`. Premier essai de build échoué avec un
+   message d'erreur explicite et clair ("Unable to find your web assets") — pas un piège silencieux,
+   juste à corriger avant de relancer.
+3. `tauri.conf.json` : `identifier` changé du défaut `com.tauri.dev` vers
+   `com.zaky04.djignanfinance` (même `packageId` que l'APK — cohérent, seule la plateforme change) ;
+   `beforeDevCommand`/`beforeBuildCommand` retirés (générés par défaut avec `npm run dev`/`npm run
+   build`, qui n'existent pas — le projet n'a aucune étape de build, JS vanilla pur, voir §3) ;
+   fenêtre par défaut 1280×860 avec `minWidth`/`minHeight` 375×600 (l'app reste utilisable en
+   fenêtre étroite, layout responsive déjà éprouvé sur mobile).
+4. Icônes : `npx @tauri-apps/cli icon dist/icons/icon-512.png` — génère automatiquement `.ico`
+   (Windows), `.icns` (macOS, inutilisé ici) et les tailles PNG nécessaires, plus des jeux d'icônes
+   iOS/Android non utilisés pour ce build mais sans conséquence (ignorés par le bundler Windows).
+5. Build : `npx @tauri-apps/cli build` — compile le binaire Rust en mode release (**~7-8 minutes**,
+   la première fois — dépendances Rust compilées depuis zéro) puis génère deux installeurs Windows :
+   un `.msi` (WiX) et un `.exe` NSIS (`Djignan Financial System_1.0.0_x64-setup.exe`), plus le binaire
+   nu `app.exe`.
+
+**Vérifié avant livraison** : l'exécutable (`app.exe`) lancé directement (`Start-Process`), fenêtre
+bien titrée "Djignan Financial System" — puis `Get-NetTCPConnection` sur son PID pendant qu'il tourne :
+**aucune connexion réseau sortante** (liste vide), confirmant qu'aucune requête n'est faite vers
+`zaky04.github.io` ou ailleurs au démarrage — l'app est bien autonome, tout est chargé depuis les
+ressources embarquées dans l'exécutable.
+
+**Pas de keystore de signature de code Windows** (Authenticode) — l'exécutable/l'installeur ne sont
+pas signés numériquement (nécessiterait un certificat payant d'une autorité de confiance,
+indépendant du keystore Android). Conséquence concrète : Windows SmartScreen affichera probablement
+un avertissement "Éditeur inconnu" au premier lancement — l'utilisateur devra cliquer "Plus
+d'infos" → "Exécuter quand même". Pas bloquant pour un usage personnel/sideload, mais à garder en
+tête si une distribution plus large est envisagée un jour.
+
+`packageId`/`identifier` partagé avec l'APK (`com.zaky04.djignanfinance`) — cohérence entre
+plateformes pour la même app, mais chaque plateforme a son propre mécanisme de signature
+indépendant (keystore Android vs Authenticode Windows, ce dernier absent ici).
 
 ### 16 août 2026 — Objectif : pouvoir installer l'app sans dépendre de GitHub
 
