@@ -38,6 +38,97 @@ const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="c
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
 const HISTORY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M13 3a9 9 0 1 0 8.94 10H19.9A7 7 0 1 1 13 5v4l5-4-5-4v2Z"/></svg>';
 
+function walletOptionsHtml(wallets, currency) {
+  const matching = wallets.filter((w) => w.currency === currency);
+  if (!matching.length) return `<option value="">${t('Aucun portefeuille en {currency}', { currency: escapeHtml(currency) })}</option>`;
+  return matching.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
+}
+
+/* ---------- Répartition d'un mouvement d'argent sur plusieurs portefeuilles ----------
+   Réutilisé par le formulaire d'achat (création d'investissement) et par le formulaire
+   d'apport/dividende de l'historique — même pattern que le mode scindé par catégorie de
+   transactions.js, mais scindé par PORTEFEUILLE : chaque ligne devient sa propre transaction,
+   toutes partageant investmentId (+ investmentEntryId pour les apports/dividendes) et un
+   splitGroupId commun, uniquement pour un affichage/regroupement futur éventuel. */
+function walletSplitRowHtml(wallets, currency) {
+  return `<div data-split-row style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+    <select class="split-wallet" style="flex:2;">${walletOptionsHtml(wallets, currency)}</select>
+    <input type="number" step="0.01" min="0" class="split-amount" placeholder="0.00" style="flex:1;">
+    <button type="button" class="icon-btn split-remove" aria-label="${t('Retirer')}">${DELETE_ICON}</button>
+  </div>`;
+}
+
+/** Câble un bloc "répartir sur plusieurs portefeuilles" : bouton de bascule, lignes
+    portefeuille/montant dynamiques, total courant. `getWallets`/`getCurrency` sont des fonctions
+    (pas des valeurs figées) car la devise peut changer après ouverture du formulaire. */
+function wireWalletSplit({ toggleBtn, singleSelect, splitWrap, listEl, addBtn, totalEl, getWallets, getCurrency }) {
+  let splitMode = false;
+
+  function updateTotal() {
+    const rows = [...listEl.querySelectorAll('[data-split-row]')];
+    const sum = rows.reduce((s, row) => s + (parseFloat(row.querySelector('.split-amount').value) || 0), 0);
+    totalEl.textContent = t('Total réparti : {sum}', { sum: sum.toFixed(2) });
+    return sum;
+  }
+
+  function addRow() {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = walletSplitRowHtml(getWallets(), getCurrency());
+    const row = wrap.firstElementChild;
+    listEl.appendChild(row);
+    row.querySelector('.split-amount').addEventListener('input', updateTotal);
+    row.querySelector('.split-remove').addEventListener('click', () => { row.remove(); updateTotal(); });
+  }
+
+  function refreshRowWallets() {
+    const wallets = getWallets();
+    const currency = getCurrency();
+    listEl.querySelectorAll('[data-split-row]').forEach((row) => {
+      const sel = row.querySelector('.split-wallet');
+      const prevVal = sel.value;
+      sel.innerHTML = walletOptionsHtml(wallets, currency);
+      if ([...sel.options].some((o) => o.value === prevVal)) sel.value = prevVal;
+    });
+  }
+
+  function setSplitMode(on) {
+    splitMode = on;
+    singleSelect.hidden = splitMode;
+    splitWrap.hidden = !splitMode;
+    toggleBtn.textContent = splitMode ? t('Revenir à un seul portefeuille') : t('Répartir sur plusieurs portefeuilles');
+    if (splitMode && !listEl.children.length) { addRow(); addRow(); updateTotal(); }
+  }
+
+  toggleBtn.addEventListener('click', () => setSplitMode(!splitMode));
+  addBtn.addEventListener('click', () => { addRow(); updateTotal(); });
+
+  return {
+    isSplit: () => splitMode,
+    refreshRowWallets,
+    getRows: () => [...listEl.querySelectorAll('[data-split-row]')]
+      .map((row) => ({ walletId: row.querySelector('.split-wallet').value, amount: parseFloat(row.querySelector('.split-amount').value) || 0 }))
+      .filter((r) => r.walletId && r.amount > 0),
+  };
+}
+
+// Mêmes variantes FR/EN qu'ensureDebtCategoryId (debts.js) : une note créée en anglais ne doit pas
+// faire naître une seconde catégorie "Investment" à côté de "Investissement" déjà existante.
+const INVESTMENT_CATEGORY_NAME_VARIANTS = ['Investissement', 'Investment'];
+
+/** Retrouve (ou crée) la catégorie "Investissement" pour le type de transaction donné (achat =
+    expense, dividende = income — les catégories sont scindées par type). Même rôle que
+    ensureDebtCategoryId (debts.js) : les mouvements de portefeuille liés à un investissement
+    n'apparaissent jamais "Sans catégorie", tout en restant exclus des agrégats budgétaires côté
+    dépense (voir ledger.js, filtré via investmentId, pas via la catégorie). */
+export async function ensureInvestmentCategoryId(txType) {
+  const categories = await dbGetAll(STORES.CATEGORIES);
+  const existing = categories.find((c) => c.type === txType && INVESTMENT_CATEGORY_NAME_VARIANTS.includes(c.name));
+  if (existing) return existing.id;
+  const category = { id: uuid(), name: t('Investissement'), type: txType, parentId: null, createdAt: new Date().toISOString() };
+  await dbAdd(STORES.CATEGORIES, category);
+  return category.id;
+}
+
 function computeMetrics(inv, entries) {
   const own = entries.filter((e) => e.investmentId === inv.id);
   const contributions = own.filter((e) => e.type === 'contribution').reduce((s, e) => s + e.amount, 0);
@@ -77,6 +168,7 @@ function investmentCardHtml(inv, metrics) {
 }
 
 function investmentFormHtml(inv, defaultCurrency) {
+  const isEdit = !!inv;
   return `
     <form id="investment-form">
       <div class="form-row"><label>${t('Nom')}</label><input type="text" name="name" required maxlength="60" value="${escapeHtml(inv?.name || '')}" placeholder="${t('Ex: Appartement Cocody, Actions Total…')}"></div>
@@ -85,6 +177,25 @@ function investmentFormHtml(inv, defaultCurrency) {
       </div>
       <div class="form-row"><label>${t('Devise')}</label>${currencySelectHtml(inv?.currency || defaultCurrency)}</div>
       <div class="form-row"><label>${t('Capital investi initial')}</label><input type="number" step="0.01" min="0" name="capitalInvested" required value="${inv?.capitalInvested ?? ''}"></div>
+      ${!isEdit ? `
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" name="movesMoneyNow" checked> ${t("Débiter ce montant d'un portefeuille")}
+        </label>
+        <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">${t('Décochez si cet investissement existait déjà avant d\'utiliser l\'app (aucun mouvement de portefeuille ne sera créé).')}</p>
+      </div>
+      <div class="form-row" data-field="movesMoneyWallet">
+        <label>${t('Portefeuille')}</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select name="walletId" style="flex:1;"></select>
+          <button type="button" class="btn btn-ghost" id="inv-split-toggle" style="white-space:nowrap;">${t('Répartir sur plusieurs portefeuilles')}</button>
+        </div>
+        <div id="inv-split-wrap" hidden>
+          <div id="inv-split-list"></div>
+          <button type="button" class="btn btn-ghost" id="inv-split-add">${t('+ Ajouter un portefeuille')}</button>
+          <div id="inv-split-total" style="font-size:12.5px;color:var(--text-muted);margin-top:4px;"></div>
+        </div>
+      </div>` : ''}
       <button type="submit" class="btn btn-primary btn-block">${inv ? t('Enregistrer') : t("Créer l'investissement")}</button>
     </form>`;
 }
@@ -93,28 +204,117 @@ async function openInvestmentModal(inv = null) {
   const defaultCurrency = inv ? inv.currency : await getSetting('baseCurrency', 'EUR');
   const modal = openModal(investmentFormHtml(inv, defaultCurrency), { title: inv ? t("Modifier l'investissement") : t('Nouvel investissement') });
   wireCurrencySelect(modal.el);
-  modal.el.querySelector('#investment-form').addEventListener('submit', async (e) => {
+
+  const form = modal.el.querySelector('#investment-form');
+  const movesCheckbox = form.elements.movesMoneyNow;
+  const walletRow = modal.el.querySelector('[data-field="movesMoneyWallet"]');
+  const walletSelect = form.elements.walletId;
+  let walletSplit = null;
+
+  if (movesCheckbox) {
+    let allWallets = [];
+    const refreshWalletOptions = async () => {
+      if (!allWallets.length) allWallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
+      walletSelect.innerHTML = walletOptionsHtml(allWallets, readCurrencyValue(form));
+      walletSplit?.refreshRowWallets();
+    };
+    const syncWalletVisibility = () => { walletRow.hidden = !movesCheckbox.checked; };
+    movesCheckbox.addEventListener('change', syncWalletVisibility);
+    modal.el.querySelectorAll('[data-currency-select], [data-currency-other]').forEach((el) => {
+      el.addEventListener('change', refreshWalletOptions);
+      el.addEventListener('input', refreshWalletOptions);
+    });
+    await refreshWalletOptions();
+    syncWalletVisibility();
+
+    walletSplit = wireWalletSplit({
+      toggleBtn: modal.el.querySelector('#inv-split-toggle'),
+      singleSelect: walletSelect,
+      splitWrap: modal.el.querySelector('#inv-split-wrap'),
+      listEl: modal.el.querySelector('#inv-split-list'),
+      addBtn: modal.el.querySelector('#inv-split-add'),
+      totalEl: modal.el.querySelector('#inv-split-total'),
+      getWallets: () => allWallets,
+      getCurrency: () => readCurrencyValue(form),
+    });
+  }
+
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const before = inv ? { ...inv } : null;
+    const currency = readCurrencyValue(e.target);
+    const capitalInvested = parseFloat(fd.get('capitalInvested')) || 0;
+    const movesMoneyNow = !inv && !!movesCheckbox?.checked && capitalInvested > 0;
+    const isSplit = movesMoneyNow && !!walletSplit?.isSplit();
+
+    let splitRows = [];
+    if (isSplit) {
+      splitRows = walletSplit.getRows();
+      const sum = splitRows.reduce((s, r) => s + r.amount, 0);
+      if (splitRows.length < 2) { showToast(t('Ajoutez au moins deux portefeuilles avec un montant.')); return; }
+      if (Math.abs(sum - capitalInvested) > 0.005) {
+        showToast(t('La somme des montants répartis ({sum}) doit égaler le capital investi ({total}).', { sum: sum.toFixed(2), total: capitalInvested.toFixed(2) }));
+        return;
+      }
+    } else if (movesMoneyNow && !walletSelect.value) {
+      showToast(t('Choisissez un portefeuille, ou décochez "Débiter ce montant d\'un portefeuille".'));
+      return;
+    }
+
     const record = {
       id: inv?.id || uuid(),
       name: fd.get('name').trim(),
       assetClass: fd.get('assetClass'),
-      currency: readCurrencyValue(e.target),
-      capitalInvested: parseFloat(fd.get('capitalInvested')) || 0,
+      currency,
+      capitalInvested,
       createdAt: inv?.createdAt || new Date().toISOString(),
+      walletId: inv ? (inv.walletId || null) : (movesMoneyNow && !isSplit ? walletSelect.value : null),
     };
+
+    if (movesMoneyNow) {
+      const categoryId = await ensureInvestmentCategoryId('expense');
+      const splitGroupId = isSplit ? uuid() : null;
+      const rows = isSplit ? splitRows : [{ walletId: walletSelect.value, amount: capitalInvested }];
+      for (const r of rows) {
+        const purchaseTx = {
+          id: uuid(),
+          type: 'expense',
+          walletId: r.walletId,
+          targetWalletId: null,
+          categoryId,
+          amount: r.amount,
+          date: record.createdAt.slice(0, 10),
+          note: t('Achat — {name}', { name: record.name }),
+          tags: [],
+          reconciled: false,
+          investmentId: record.id,
+          splitGroupId,
+          createdAt: new Date().toISOString(),
+        };
+        await dbAdd(STORES.TRANSACTIONS, purchaseTx);
+        await logAudit({ entityType: 'transaction', entityId: purchaseTx.id, action: 'create', after: purchaseTx, note: t("Achat d'investissement") });
+      }
+    }
+
     await dbPut(STORES.INVESTMENTS, record);
     await logAudit({ entityType: 'investment', entityId: record.id, action: inv ? 'update' : 'create', before, after: record });
     modal.close();
     showToast(inv ? t('Investissement mis à jour.') : t('Investissement créé.'));
-    notifyDataChanged('investments');
+    notifyDataChanged(movesMoneyNow ? 'all' : 'investments');
   });
 }
 
+// Ces deux types déplacent réellement de l'argent depuis/vers un portefeuille (achat
+// complémentaire = débit, dividende = crédit) — retrait/valorisation n'en ont pas besoin
+// (retrait déjà hors scope de cette fonctionnalité, valorisation n'est jamais un mouvement d'argent).
+const MONEY_MOVING_ENTRY_TYPES = ['contribution', 'dividend'];
+
 async function openHistoryModal(inv) {
-  const entries = (await dbGetAll(STORES.INVESTMENT_ENTRIES)).filter((e) => e.investmentId === inv.id).sort((a, b) => b.date.localeCompare(a.date));
+  const [entries, wallets] = await Promise.all([
+    dbGetAll(STORES.INVESTMENT_ENTRIES).then((rows) => rows.filter((e) => e.investmentId === inv.id).sort((a, b) => b.date.localeCompare(a.date))),
+    dbGetAll(STORES.WALLETS).then((rows) => rows.filter((w) => !w.archived)),
+  ]);
 
   const modal = openModal(`
     <form id="entry-form" style="margin-bottom:16px;">
@@ -122,6 +322,19 @@ async function openHistoryModal(inv) {
         <select name="type">${Object.entries(ENTRY_TYPE_LABELS).map(([k, l]) => `<option value="${k}">${t(l)}</option>`).join('')}</select>
       </div>
       <div class="form-row"><label>${t('Montant')}</label><input type="number" step="0.01" min="0" name="amount" required></div>
+      <div class="form-row" data-field="entryWallet">
+        <label>${t('Portefeuille')}</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select name="walletId" style="flex:1;">${walletOptionsHtml(wallets, inv.currency)}</select>
+          <button type="button" class="btn btn-ghost" id="entry-split-toggle" style="white-space:nowrap;">${t('Répartir sur plusieurs portefeuilles')}</button>
+        </div>
+        <div id="entry-split-wrap" hidden>
+          <div id="entry-split-list"></div>
+          <button type="button" class="btn btn-ghost" id="entry-split-add">${t('+ Ajouter un portefeuille')}</button>
+          <div id="entry-split-total" style="font-size:12.5px;color:var(--text-muted);margin-top:4px;"></div>
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">${t('Apport : débité de ce portefeuille. Dividende : crédité sur ce portefeuille.')}</p>
+      </div>
       <div class="form-row"><label>${t('Date')}</label><input type="date" name="date" value="${todayISO()}" required></div>
       <div class="form-row"><label>${t('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
       <button type="submit" class="btn btn-primary btn-block">${t('Ajouter')}</button>
@@ -139,22 +352,90 @@ async function openHistoryModal(inv) {
     </div>
   `, { title: t('Historique — {name}', { name: inv.name }) });
 
-  modal.el.querySelector('#entry-form').addEventListener('submit', async (e) => {
+  const entryForm = modal.el.querySelector('#entry-form');
+  const entryWalletRow = modal.el.querySelector('[data-field="entryWallet"]');
+  const entryWalletSelect = entryForm.elements.walletId;
+  const typeSelect = entryForm.elements.type;
+  const syncEntryWalletVisibility = () => { entryWalletRow.hidden = !MONEY_MOVING_ENTRY_TYPES.includes(typeSelect.value); };
+  typeSelect.addEventListener('change', syncEntryWalletVisibility);
+  syncEntryWalletVisibility();
+
+  const entrySplit = wireWalletSplit({
+    toggleBtn: modal.el.querySelector('#entry-split-toggle'),
+    singleSelect: entryWalletSelect,
+    splitWrap: modal.el.querySelector('#entry-split-wrap'),
+    listEl: modal.el.querySelector('#entry-split-list'),
+    addBtn: modal.el.querySelector('#entry-split-add'),
+    totalEl: modal.el.querySelector('#entry-split-total'),
+    getWallets: () => wallets,
+    getCurrency: () => inv.currency,
+  });
+
+  entryForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const type = fd.get('type');
+    const amount = parseFloat(fd.get('amount')) || 0;
+    const movesMoney = MONEY_MOVING_ENTRY_TYPES.includes(type);
+    const isSplit = movesMoney && entrySplit.isSplit();
+    const entryWalletId = fd.get('walletId') || '';
+
+    let splitRows = [];
+    if (isSplit) {
+      splitRows = entrySplit.getRows();
+      const sum = splitRows.reduce((s, r) => s + r.amount, 0);
+      if (splitRows.length < 2) { showToast(t('Ajoutez au moins deux portefeuilles avec un montant.')); return; }
+      if (Math.abs(sum - amount) > 0.005) {
+        showToast(t('La somme des montants répartis ({sum}) doit égaler le montant ({total}).', { sum: sum.toFixed(2), total: amount.toFixed(2) }));
+        return;
+      }
+    } else if (movesMoney && !entryWalletId) {
+      showToast(t('Choisissez un portefeuille.'));
+      return;
+    }
+
     const entry = {
       id: uuid(),
       investmentId: inv.id,
-      type: fd.get('type'),
-      amount: parseFloat(fd.get('amount')) || 0,
+      type,
+      amount,
       date: fd.get('date'),
       note: (fd.get('note') || '').trim().slice(0, 140),
+      walletId: movesMoney && !isSplit ? entryWalletId : null,
     };
     await dbAdd(STORES.INVESTMENT_ENTRIES, entry);
     await logAudit({ entityType: 'investmentEntry', entityId: entry.id, action: 'create', after: entry });
+
+    if (movesMoney) {
+      const txType = type === 'dividend' ? 'income' : 'expense';
+      const categoryId = await ensureInvestmentCategoryId(txType);
+      const splitGroupId = isSplit ? uuid() : null;
+      const rows = isSplit ? splitRows : [{ walletId: entryWalletId, amount }];
+      for (const r of rows) {
+        const moneyTx = {
+          id: uuid(),
+          type: txType,
+          walletId: r.walletId,
+          targetWalletId: null,
+          categoryId,
+          amount: r.amount,
+          date: entry.date,
+          note: type === 'dividend' ? t('Dividende — {name}', { name: inv.name }) : t('Apport — {name}', { name: inv.name }),
+          tags: [],
+          reconciled: false,
+          investmentId: inv.id,
+          investmentEntryId: entry.id,
+          splitGroupId,
+          createdAt: new Date().toISOString(),
+        };
+        await dbAdd(STORES.TRANSACTIONS, moneyTx);
+        await logAudit({ entityType: 'transaction', entityId: moneyTx.id, action: 'create', after: moneyTx, note: t('Mouvement de portefeuille lié à un investissement') });
+      }
+    }
+
     modal.close();
     showToast(t('Entrée ajoutée.'));
-    notifyDataChanged('investments');
+    notifyDataChanged(movesMoney ? 'all' : 'investments');
   });
 
   modal.el.querySelector('#entry-list').addEventListener('click', async (e) => {
@@ -163,11 +444,13 @@ async function openHistoryModal(inv) {
     const entryId = e.target.closest('[data-entry-id]').dataset.entryId;
     const ok = await confirmDialog(t("Supprimer cette entrée d'historique ?"), { danger: true, confirmText: t('Supprimer') });
     if (ok) {
+      const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((tx) => tx.investmentEntryId === entryId);
+      for (const tx of linkedTx) await dbDelete(STORES.TRANSACTIONS, tx.id);
       await dbDelete(STORES.INVESTMENT_ENTRIES, entryId);
       await logAudit({ entityType: 'investmentEntry', entityId, action: 'delete' });
       modal.close();
       showToast(t('Entrée supprimée.'));
-      notifyDataChanged('investments');
+      notifyDataChanged(linkedTx.length ? 'all' : 'investments');
     }
   });
 }
@@ -269,14 +552,16 @@ export function initInvestmentsModule() {
     } else if (btn.dataset.action === 'edit') {
       openInvestmentModal(inv);
     } else if (btn.dataset.action === 'delete') {
-      const ok = await confirmDialog(t('Supprimer l\'investissement "{name}" et tout son historique ?', { name: inv.name }), { danger: true, confirmText: t('Supprimer') });
+      const ok = await confirmDialog(t('Supprimer l\'investissement "{name}" et tout son historique (et les mouvements de portefeuille associés) ?', { name: inv.name }), { danger: true, confirmText: t('Supprimer') });
       if (ok) {
         const entries = (await dbGetAll(STORES.INVESTMENT_ENTRIES)).filter((en) => en.investmentId === inv.id);
         for (const en of entries) await dbDelete(STORES.INVESTMENT_ENTRIES, en.id);
+        const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((tx) => tx.investmentId === inv.id);
+        for (const tx of linkedTx) await dbDelete(STORES.TRANSACTIONS, tx.id);
         await dbDelete(STORES.INVESTMENTS, inv.id);
         await logAudit({ entityType: 'investment', entityId: inv.id, action: 'delete', before: inv });
         showToast(t('Investissement supprimé.'));
-        notifyDataChanged('investments');
+        notifyDataChanged(linkedTx.length ? 'all' : 'investments');
       }
     }
   });

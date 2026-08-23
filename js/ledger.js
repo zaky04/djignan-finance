@@ -228,6 +228,10 @@ export async function computeMonthSummary(monthKey = currentMonthKey()) {
   for (const t of transactions) {
     if (!t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue; // mouvement de dette/créance : pas une dépense/recette discrétionnaire
+    // Achat d'investissement (transfert d'actif, pas une dépense discrétionnaire) exclu — mais un
+    // dividende reste un vrai revenu, donc PAS exclu du côté "income" (contrairement à debtId,
+    // exclu symétriquement des deux côtés : un prêt reçu n'est pas un revenu, un dividende si).
+    if (t.investmentId && t.type === 'expense') continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     if (t.type === 'income') income += amt;
@@ -246,6 +250,7 @@ export async function computeSpendingBetween(startDate, endDate) {
   for (const t of transactions) {
     if (!t.date || t.date < startDate || t.date > endDate) continue;
     if (t.debtId) continue;
+    if (t.investmentId && t.type === 'expense') continue; // voir computeMonthSummary
     const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     if (t.type === 'income') income += amt;
     else if (t.type === 'expense') expenses += amt;
@@ -264,6 +269,7 @@ export async function computeExpensesByCategory(monthKey = currentMonthKey()) {
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
+    if (t.investmentId) continue; // achat d'investissement : pas une dépense discrétionnaire
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     const cat = catById[t.categoryId];
@@ -291,6 +297,7 @@ export async function computeMonthlyTypeHistory(year, type = 'expense', category
   for (const t of transactions) {
     if (t.type !== type || !t.date || !t.date.startsWith(String(year))) continue;
     if (t.debtId) continue;
+    if (t.investmentId && type === 'expense') continue; // voir computeMonthSummary
     if (categoryId && t.categoryId !== categoryId) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
@@ -346,6 +353,7 @@ export async function computeMonthlyBudgetVsActualHistory(year, categoryId = nul
     for (const t of transactions) {
       if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
       if (t.debtId) continue;
+      if (t.investmentId) continue;
       if (categoryId) { if (t.categoryId !== categoryId) continue; }
       else if (!budgetedCategoryIds.has(t.categoryId)) continue;
       const cur = walletCurrency[t.walletId] || baseCurrency;
@@ -372,6 +380,7 @@ export async function computeBudgetVsActual(monthKey = currentMonthKey()) {
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
+    if (t.investmentId) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     actualByCategory.set(t.categoryId, (actualByCategory.get(t.categoryId) || 0) + amt);
@@ -429,6 +438,7 @@ export async function computeCategoryActuals(monthKey = currentMonthKey(), type 
   for (const t of transactions) {
     if (t.type !== type || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
+    if (t.investmentId && type === 'expense') continue; // voir computeMonthSummary
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);
@@ -445,6 +455,7 @@ export async function computeAnnualCategoryActuals(year, type = 'expense') {
   for (const t of transactions) {
     if (t.type !== type || !t.date || !t.date.startsWith(String(year))) continue;
     if (t.debtId) continue;
+    if (t.investmentId && type === 'expense') continue; // voir computeMonthSummary
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);
@@ -523,7 +534,7 @@ export async function computeEnvelopeCarryover(categoryId, monthKey) {
     // "Prêt"/"Créance" n'est pas une dépense discrétionnaire. Cet oubli faisait diverger le report
     // d'enveloppe (qui l'incluait) de l'"actual" réellement affiché à l'écran (qui l'exclut déjà).
     const actual = transactions
-      .filter((t) => t.type === 'expense' && t.categoryId === categoryId && !t.debtId && (t.date || '').startsWith(b.month))
+      .filter((t) => t.type === 'expense' && t.categoryId === categoryId && !t.debtId && !t.investmentId && (t.date || '').startsWith(b.month))
       .reduce((sum, t) => sum + toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency), 0);
     carry += (b.limit || 0) - actual;
   }
