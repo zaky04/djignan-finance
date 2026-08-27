@@ -8,6 +8,7 @@
 
 import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit, getSetting } from '../db.js';
 import { computeCategoryActuals, computeEndOfMonthForecast, computeEnvelopeCarryover, computeAnnualCategoryActuals } from '../ledger.js';
+import { ensureInvestmentCategoryId } from './investments.js';
 import {
   uuid, formatCurrency, formatDate, formatMonthLabel, formatPercent, escapeHtml, todayISO, localISODate,
   currentMonthKey, monthKeyOffset, percentage, budgetProgressClass, openModal, confirmDialog, showToast,
@@ -367,17 +368,20 @@ async function renderCategoriesTab(container) {
    Onglet 3 — Récurrences & échéancier
    ========================================================================== */
 function recurringFormHtml(r) {
+  const kind = r?.investmentId ? 'investment' : (r?.type || 'expense');
   return `
     <form id="recurring-form">
       <div class="segmented" data-field="type">
-        <button type="button" class="segmented-btn ${(!r || r.type === 'expense') ? 'is-active' : ''}" data-value="expense">${t('Dépense')}</button>
-        <button type="button" class="segmented-btn ${r?.type === 'income' ? 'is-active' : ''}" data-value="income">${t('Recette')}</button>
+        <button type="button" class="segmented-btn ${kind === 'expense' ? 'is-active' : ''}" data-value="expense">${t('Dépense')}</button>
+        <button type="button" class="segmented-btn ${kind === 'income' ? 'is-active' : ''}" data-value="income">${t('Recette')}</button>
+        <button type="button" class="segmented-btn ${kind === 'investment' ? 'is-active' : ''}" data-value="investment">${t('Apport investissement')}</button>
       </div>
-      <input type="hidden" name="type" value="${r?.type || 'expense'}">
+      <input type="hidden" name="type" value="${kind === 'investment' ? 'expense' : kind}">
       <div class="form-row"><label>${t('Nom')}</label><input type="text" name="name" required maxlength="60" value="${escapeHtml(r?.name || '')}" placeholder="${t('Ex: Loyer, Netflix, Salaire…')}"></div>
       <div class="form-row"><label>${t('Montant')}</label><input type="number" step="0.01" min="0" name="amount" required value="${r?.amount ?? ''}"></div>
       <div class="form-row"><label>${t('Portefeuille')}</label><select name="walletId" required></select></div>
       <div class="form-row" data-field="categoryRow"><label>${t('Catégorie')}</label><select name="categoryId"></select></div>
+      <div class="form-row" data-field="investmentRow"><label>${t('Investissement')}</label><select name="investmentId"></select></div>
       <div class="form-row"><label>${t('Fréquence')}</label>
         <select name="frequency">
           <option value="monthly" ${(!r || r.frequency === 'monthly') ? 'selected' : ''}>${t('Mensuelle')}</option>
@@ -396,28 +400,53 @@ function openRecurringModal(r = null) {
   const typeHidden = form.elements.type;
   const walletSelect = form.elements.walletId;
   const categorySelect = form.elements.categoryId;
-  let currentType = r?.type || 'expense';
+  const categoryRow = modal.el.querySelector('[data-field="categoryRow"]');
+  const investmentRow = modal.el.querySelector('[data-field="investmentRow"]');
+  const investmentSelect = form.elements.investmentId;
+  let currentKind = r?.investmentId ? 'investment' : (r?.type || 'expense');
 
   async function populate() {
     const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
     walletSelect.innerHTML = wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('') || `<option value="">${t("Créez un portefeuille d'abord")}</option>`;
     if (r?.walletId) walletSelect.value = r.walletId;
 
-    const categories = await dbGetAll(STORES.CATEGORIES);
-    const roots = categories.filter((c) => c.type === currentType && !c.parentId);
-    categorySelect.innerHTML = roots.map((root) => {
-      const children = categories.filter((c) => c.parentId === root.id).map((ch) => `<option value="${ch.id}">— ${escapeHtml(ch.name)}</option>`).join('');
-      return `<option value="${root.id}">${escapeHtml(root.name)}</option>${children}`;
-    }).join('') || `<option value="">${t('Aucune catégorie')}</option>`;
-    if (r?.categoryId) categorySelect.value = r.categoryId;
+    categoryRow.hidden = currentKind === 'investment';
+    investmentRow.hidden = currentKind !== 'investment';
+
+    if (currentKind === 'investment') {
+      const selectedWallet = wallets.find((w) => w.id === walletSelect.value) || wallets[0];
+      const investments = (await dbGetAll(STORES.INVESTMENTS)).filter((i) => !selectedWallet || i.currency === selectedWallet.currency);
+      // Option vide toujours en tête, même quand des investissements existent : sans elle, un
+      // <select> non touché par l'utilisateur se retrouve automatiquement sur la PREMIÈRE option
+      // (comportement natif du navigateur), donc investmentSelect.value n'est jamais vide et la
+      // garde de soumission plus bas ("Choisissez un investissement...") ne se déclenche jamais —
+      // un utilisateur qui ne touche pas ce champ lie silencieusement sa récurrence au mauvais
+      // investissement. Sert aussi de repli explicite si r.investmentId ne correspond à aucune
+      // option de cette liste (ex: portefeuille lié entre-temps archivé, qui change la devise
+      // filtrée) : mieux vaut forcer un choix explicite que resélectionner silencieusement le
+      // premier investissement venu.
+      investmentSelect.innerHTML = investments.length
+        ? `<option value="">${t('Choisir…')}</option>` + investments.map((i) => `<option value="${i.id}">${escapeHtml(i.name)}</option>`).join('')
+        : `<option value="">${t("Aucun investissement dans cette devise — créez-en un d'abord")}</option>`;
+      if (r?.investmentId) investmentSelect.value = r.investmentId;
+    } else {
+      const categories = await dbGetAll(STORES.CATEGORIES);
+      const roots = categories.filter((c) => c.type === currentKind && !c.parentId);
+      categorySelect.innerHTML = roots.map((root) => {
+        const children = categories.filter((c) => c.parentId === root.id).map((ch) => `<option value="${ch.id}">— ${escapeHtml(ch.name)}</option>`).join('');
+        return `<option value="${root.id}">${escapeHtml(root.name)}</option>${children}`;
+      }).join('') || `<option value="">${t('Aucune catégorie')}</option>`;
+      if (r?.categoryId) categorySelect.value = r.categoryId;
+    }
   }
 
   modal.el.querySelectorAll('.segmented-btn').forEach((b) => b.addEventListener('click', () => {
-    currentType = b.dataset.value;
-    typeHidden.value = currentType;
+    currentKind = b.dataset.value;
+    typeHidden.value = currentKind === 'investment' ? 'expense' : currentKind;
     modal.el.querySelectorAll('.segmented-btn').forEach((x) => x.classList.toggle('is-active', x === b));
     populate();
   }));
+  walletSelect.addEventListener('change', () => { if (currentKind === 'investment') populate(); });
 
   populate();
 
@@ -425,14 +454,16 @@ function openRecurringModal(r = null) {
     e.preventDefault();
     const fd = new FormData(form);
     if (!fd.get('walletId')) { showToast(t("Créez au moins un portefeuille avant d'ajouter une récurrence.")); return; }
+    if (currentKind === 'investment' && !investmentSelect.value) { showToast(t("Choisissez un investissement, ou créez-en un d'abord.")); return; }
     const before = r ? { ...r } : null;
     const record = {
       id: r?.id || uuid(),
-      type: currentType,
+      type: currentKind === 'investment' ? 'expense' : currentKind,
       name: fd.get('name').trim(),
       amount: parseFloat(fd.get('amount')) || 0,
       walletId: fd.get('walletId'),
-      categoryId: fd.get('categoryId') || null,
+      categoryId: currentKind === 'investment' ? null : (fd.get('categoryId') || null),
+      investmentId: currentKind === 'investment' ? investmentSelect.value : null,
       frequency: fd.get('frequency'),
       nextDate: fd.get('nextDate'),
       active: r?.active ?? true,
@@ -445,14 +476,16 @@ function openRecurringModal(r = null) {
   });
 }
 
-function recurringRowHtml(r, wallets, categories) {
+function recurringRowHtml(r, wallets, categories, investments) {
   const wallet = wallets.find((w) => w.id === r.walletId);
-  const cat = categories.find((c) => c.id === r.categoryId);
+  const label = r.investmentId
+    ? (investments.find((i) => i.id === r.investmentId)?.name || t('Investissement supprimé'))
+    : (categories.find((c) => c.id === r.categoryId)?.name || t('Sans catégorie'));
   return `
     <div class="tx-row" data-recurring-id="${r.id}">
       <div class="tx-main">
         <div class="tx-title">${escapeHtml(r.name)} ${!r.active ? `<span class="badge">${t('Inactif')}</span>` : ''}</div>
-        <div class="tx-sub">${escapeHtml(wallet?.name || '—')} · ${escapeHtml(cat?.name || t('Sans catégorie'))} · ${t(FREQ_LABELS[r.frequency])} · ${t('Prochaine échéance : {date}', { date: formatDate(r.nextDate) })}</div>
+        <div class="tx-sub">${escapeHtml(wallet?.name || '—')} · ${escapeHtml(label)} · ${t(FREQ_LABELS[r.frequency])} · ${t('Prochaine échéance : {date}', { date: formatDate(r.nextDate) })}</div>
       </div>
       <div class="tx-amount amount ${r.type === 'income' ? 'pos' : 'neg'}">${r.type === 'income' ? '+' : '−'}${formatCurrency(r.amount, wallet?.currency || 'EUR')}</div>
       <div class="card-actions">
@@ -464,7 +497,7 @@ function recurringRowHtml(r, wallets, categories) {
 }
 
 async function renderRecurringTab(container) {
-  const [recurring, wallets, categories] = await Promise.all([dbGetAll(STORES.RECURRING), dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES)]);
+  const [recurring, wallets, categories, investments] = await Promise.all([dbGetAll(STORES.RECURRING), dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.INVESTMENTS)]);
   const sorted = [...recurring].sort((a, b) => (a.nextDate || '').localeCompare(b.nextDate || ''));
 
   container.innerHTML = `
@@ -473,7 +506,7 @@ async function renderRecurringTab(container) {
       <button type="button" class="btn btn-primary" id="recurring-add-btn">${t('+ Nouvelle récurrence')}</button>
     </div>
     <div class="panel">
-      ${sorted.length ? sorted.map((r) => recurringRowHtml(r, wallets, categories)).join('') : `<div class="empty-state">${t('Aucune récurrence. Ajoutez vos abonnements et factures régulières pour anticiper votre solde de fin de mois.')}</div>`}
+      ${sorted.length ? sorted.map((r) => recurringRowHtml(r, wallets, categories, investments)).join('') : `<div class="empty-state">${t('Aucune récurrence. Ajoutez vos abonnements et factures régulières pour anticiper votre solde de fin de mois.')}</div>`}
     </div>`;
 
   container.querySelector('#recurring-add-btn').addEventListener('click', () => openRecurringModal());
@@ -489,6 +522,10 @@ async function renderRecurringTab(container) {
     if (btn.dataset.action === 'toggle') {
       const before = { ...r };
       r.active = !r.active;
+      // Horodatage de mise en pause : sert à notifications.js pour rappeler qu'un apport
+      // récurrent d'investissement (DCA) est en pause depuis longtemps, potentiellement par
+      // erreur. Effacé à la réactivation.
+      r.pausedAt = r.active ? null : new Date().toISOString();
       await dbPut(STORES.RECURRING, r);
       await logAudit({ entityType: 'recurring', entityId: r.id, action: 'update', before, after: r });
       renderRecurringTab(container);
@@ -584,21 +621,59 @@ export async function generateDueRecurring() {
   const todayStr = todayISO();
   let generated = false;
 
+  // Filet de sécurité : supprimer un investissement désactive normalement ses récurrences liées
+  // (investments.js, action "delete"), mais une restauration/fusion de sauvegarde pourrait en
+  // théorie réintroduire une récurrence pointant vers un investmentId absent de cet appareil — sans
+  // cette vérification, elle continuerait à débiter le portefeuille indéfiniment à chaque
+  // déverrouillage, en créant des entrées d'historique orphelines invisibles nulle part dans l'UI.
+  let investmentIds = null;
+
   for (const r of recurring) {
     if (!r.active || !r.nextDate) continue;
+    if (r.investmentId) {
+      if (!investmentIds) investmentIds = new Set((await dbGetAll(STORES.INVESTMENTS)).map((i) => i.id));
+      if (!investmentIds.has(r.investmentId)) {
+        r.active = false;
+        r.pausedAt = new Date().toISOString();
+        await dbPut(STORES.RECURRING, r);
+        continue;
+      }
+    }
     let guard = 0;
     while (r.nextDate <= todayStr && guard < 60) {
-      const tx = {
-        id: uuid(), type: r.type, walletId: r.walletId, targetWalletId: null,
-        categoryId: r.categoryId, amount: r.amount, date: r.nextDate,
-        // t() ici, pas juste un préfixe français en dur : le préfixe résultant ("Récurrence : "/
-        // "Recurrence: ") doit rester reconnu par RECURRING_NOTE_PREFIXES (ledger.js,
-        // detectRecurringCandidates) quelle que soit la langue active à la création — les deux
-        // variantes y sont vérifiées, voir le commentaire à cet endroit.
-        note: t('Récurrence : {name}', { name: r.name }), reconciled: false, createdAt: new Date().toISOString(),
-      };
-      await dbAdd(STORES.TRANSACTIONS, tx);
-      await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: t('Générée automatiquement (récurrence)') });
+      // t() ici, pas juste un préfixe français en dur : le préfixe résultant ("Récurrence : "/
+      // "Recurrence: ") doit rester reconnu par RECURRING_NOTE_PREFIXES (ledger.js,
+      // detectRecurringCandidates) quelle que soit la langue active à la création — les deux
+      // variantes y sont vérifiées, voir le commentaire à cet endroit.
+      const note = t('Récurrence : {name}', { name: r.name });
+      if (r.investmentId) {
+        // Apport automatique (DCA) : même mécanique qu'un apport manuel (investments.js,
+        // openHistoryModal) — une entrée d'historique + une transaction liée (investmentId,
+        // investmentMovementType), exclue des agrégats de dépenses (voir ledger.js).
+        const entry = {
+          id: uuid(), investmentId: r.investmentId, type: 'contribution', amount: r.amount,
+          date: r.nextDate, note, walletId: r.walletId,
+        };
+        await dbAdd(STORES.INVESTMENT_ENTRIES, entry);
+        await logAudit({ entityType: 'investmentEntry', entityId: entry.id, action: 'create', after: entry, note: t('Générée automatiquement (récurrence)') });
+        const tx = {
+          id: uuid(), type: 'expense', walletId: r.walletId, targetWalletId: null,
+          categoryId: await ensureInvestmentCategoryId('expense'), amount: r.amount, date: r.nextDate,
+          note, tags: [], reconciled: false,
+          investmentId: r.investmentId, investmentEntryId: entry.id, investmentMovementType: 'contribution',
+          createdAt: new Date().toISOString(),
+        };
+        await dbAdd(STORES.TRANSACTIONS, tx);
+        await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: t('Générée automatiquement (récurrence)') });
+      } else {
+        const tx = {
+          id: uuid(), type: r.type, walletId: r.walletId, targetWalletId: null,
+          categoryId: r.categoryId, amount: r.amount, date: r.nextDate,
+          note, reconciled: false, createdAt: new Date().toISOString(),
+        };
+        await dbAdd(STORES.TRANSACTIONS, tx);
+        await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: t('Générée automatiquement (récurrence)') });
+      }
       r.nextDate = advanceDate(r.nextDate, r.frequency);
       generated = true;
       guard++;

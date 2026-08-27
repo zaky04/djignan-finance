@@ -39,6 +39,19 @@ function toBase(amount, currency, rates, baseCurrency) {
   return convertAmount(amount, currency, baseCurrency, rates, baseCurrency);
 }
 
+/** Un mouvement de portefeuille lié à un investissement (investmentId) doit-il être exclu des
+    agrégats de dépenses/revenus discrétionnaires (résumé mensuel, budget vs réel, camembert de
+    catégories...) ? Achat/apport (investmentMovementType 'purchase'/'contribution', toujours
+    type='expense') et retrait de capital ('withdrawal', type='income' mais ce n'est QUE le retour
+    d'un capital déjà compté ailleurs, pas un revenu) : oui, exclus. Dividende ('dividend',
+    type='income') : non — c'est un vrai revenu d'investissement, contrairement à
+    investmentMovementType==='withdrawal' ou à un prêt reçu (debtId, exclu symétriquement des deux
+    côtés lui aussi, voir plus bas). */
+function isInvestmentMovementExcluded(t) {
+  if (!t.investmentId) return false;
+  return t.type === 'expense' || t.investmentMovementType === 'withdrawal';
+}
+
 /** Reconstruit les taux tels qu'ils étaient à une date donnée : pour chaque devise, on prend
     l'entrée d'historique la plus récente à/avant cutoffDate, ou le taux actuel si aucun
     historique n'existe encore pour cette devise (compatibilité avec les données existantes). */
@@ -182,6 +195,26 @@ export async function computeNetWorthHistoryForYear(year) {
   return points;
 }
 
+/** Totaux des mouvements d'historique d'investissement (apports/dividendes/retraits) sur une plage
+    de dates [startDate, endDate] incluses, convertis en devise de base — pour la section
+    "Investissements" du bilan PDF (reports.js). */
+export async function computeInvestmentEntryTotals(startDate, endDate) {
+  const { investments, investmentEntries, rates, baseCurrency } = await ctx();
+  const currencyByInvestment = Object.fromEntries(investments.map((i) => [i.id, i.currency]));
+  const totals = { contribution: 0, dividend: 0, withdrawal: 0 };
+  for (const e of investmentEntries) {
+    if (!e.date || e.date < startDate || e.date > endDate) continue;
+    if (!(e.type in totals)) continue;
+    const cur = currencyByInvestment[e.investmentId];
+    // Entrée orpheline (investissement supprimé entre-temps) : ignorée, comme
+    // exportInvestmentEntriesCsv() (backup.js) — sans ça, le montant brut (potentiellement dans une
+    // devise étrangère) serait compté comme s'il était déjà en devise de base, faussant le total.
+    if (!cur) continue;
+    totals[e.type] += toBase(Number(e.amount) || 0, cur, rates, baseCurrency);
+  }
+  return { ...totals, currency: baseCurrency };
+}
+
 /** Historique de la valeur totale des investissements sur N mois (fin de chaque mois). */
 export async function computeInvestmentValueHistory(months = 6) {
   const { investments, investmentEntries, rates, rateHistory, baseCurrency } = await ctx();
@@ -228,10 +261,9 @@ export async function computeMonthSummary(monthKey = currentMonthKey()) {
   for (const t of transactions) {
     if (!t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue; // mouvement de dette/créance : pas une dépense/recette discrétionnaire
-    // Achat d'investissement (transfert d'actif, pas une dépense discrétionnaire) exclu — mais un
-    // dividende reste un vrai revenu, donc PAS exclu du côté "income" (contrairement à debtId,
-    // exclu symétriquement des deux côtés : un prêt reçu n'est pas un revenu, un dividende si).
-    if (t.investmentId && t.type === 'expense') continue;
+    // Achat/apport/retrait d'investissement exclus (transferts de capital) — mais un dividende
+    // reste un vrai revenu, donc PAS exclu du côté "income" (voir isInvestmentMovementExcluded).
+    if (isInvestmentMovementExcluded(t)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     if (t.type === 'income') income += amt;
@@ -250,7 +282,7 @@ export async function computeSpendingBetween(startDate, endDate) {
   for (const t of transactions) {
     if (!t.date || t.date < startDate || t.date > endDate) continue;
     if (t.debtId) continue;
-    if (t.investmentId && t.type === 'expense') continue; // voir computeMonthSummary
+    if (isInvestmentMovementExcluded(t)) continue;
     const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     if (t.type === 'income') income += amt;
     else if (t.type === 'expense') expenses += amt;
@@ -269,7 +301,7 @@ export async function computeExpensesByCategory(monthKey = currentMonthKey()) {
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
-    if (t.investmentId) continue; // achat d'investissement : pas une dépense discrétionnaire
+    if (isInvestmentMovementExcluded(t)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     const cat = catById[t.categoryId];
@@ -297,7 +329,7 @@ export async function computeMonthlyTypeHistory(year, type = 'expense', category
   for (const t of transactions) {
     if (t.type !== type || !t.date || !t.date.startsWith(String(year))) continue;
     if (t.debtId) continue;
-    if (t.investmentId && type === 'expense') continue; // voir computeMonthSummary
+    if (isInvestmentMovementExcluded(t)) continue;
     if (categoryId && t.categoryId !== categoryId) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
@@ -353,7 +385,7 @@ export async function computeMonthlyBudgetVsActualHistory(year, categoryId = nul
     for (const t of transactions) {
       if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
       if (t.debtId) continue;
-      if (t.investmentId) continue;
+      if (isInvestmentMovementExcluded(t)) continue;
       if (categoryId) { if (t.categoryId !== categoryId) continue; }
       else if (!budgetedCategoryIds.has(t.categoryId)) continue;
       const cur = walletCurrency[t.walletId] || baseCurrency;
@@ -380,7 +412,7 @@ export async function computeBudgetVsActual(monthKey = currentMonthKey()) {
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
-    if (t.investmentId) continue;
+    if (isInvestmentMovementExcluded(t)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     actualByCategory.set(t.categoryId, (actualByCategory.get(t.categoryId) || 0) + amt);
@@ -438,7 +470,7 @@ export async function computeCategoryActuals(monthKey = currentMonthKey(), type 
   for (const t of transactions) {
     if (t.type !== type || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
-    if (t.investmentId && type === 'expense') continue; // voir computeMonthSummary
+    if (isInvestmentMovementExcluded(t)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);
@@ -455,7 +487,7 @@ export async function computeAnnualCategoryActuals(year, type = 'expense') {
   for (const t of transactions) {
     if (t.type !== type || !t.date || !t.date.startsWith(String(year))) continue;
     if (t.debtId) continue;
-    if (t.investmentId && type === 'expense') continue; // voir computeMonthSummary
+    if (isInvestmentMovementExcluded(t)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);

@@ -7,10 +7,11 @@
 import {
   computeNetWorth, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeCategoryActuals,
   computeMonthlyTypeHistory, getCategoriesByType, computeMonthlyNetSavingsHistory, computeMonthlyBudgetVsActualHistory, computeNetWorthHistoryForYear,
+  computeNetWorthComposition, computeInvestmentEntryTotals,
 } from '../ledger.js';
 import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, localISODate, showToast, escapeHtml } from '../utils.js';
-import { exportTransactionsCsv } from '../backup.js';
-import { getSetting } from '../db.js';
+import { exportTransactionsCsv, exportInvestmentEntriesCsv } from '../backup.js';
+import { STORES, dbGetAll, getSetting } from '../db.js';
 import { healthScorePanelHtml, calendarPanelHtml, wireCalendarPanel } from './reports-extras.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderMultiTrendChart, renderNetSavingsBarChart } from '../charts.js';
 import { t } from '../i18n.js';
@@ -230,6 +231,29 @@ async function generatePdfReport() {
       y += 6;
     }
   } else { doc.text(t('Aucun budget défini ce mois-ci.'), 14, y); y += 6; }
+  y += 6;
+
+  pageBreakIfNeeded();
+  doc.setFontSize(13); doc.text(t('Investissements'), 14, y); y += 7;
+  doc.setFontSize(10);
+  const monthStart = `${reportMonthKey}-01`;
+  const monthEnd = localISODate(new Date(parseInt(reportMonthKey.slice(0, 4), 10), parseInt(reportMonthKey.slice(5, 7), 10), 0));
+  const [{ invested }, entryTotals, investmentCount] = await Promise.all([
+    computeNetWorthComposition(monthEnd), computeInvestmentEntryTotals(monthStart, monthEnd), dbGetAll(STORES.INVESTMENTS).then((rows) => rows.length),
+  ]);
+  // Existence réelle d'un investissement suivi, pas juste "un total non nul ce mois-ci" : un
+  // investissement dont la valeur nette au 0€ (entièrement retiré) ou sans aucun mouvement ce
+  // mois précis ne doit pas afficher "Aucun investissement suivi" alors qu'il est bien tracké.
+  if (investmentCount > 0) {
+    [
+      t('Valeur totale du portefeuille : {amount}', { amount: pdfAmount(invested, currency) }),
+      t('Apports du mois : {amount}', { amount: pdfAmount(entryTotals.contribution, entryTotals.currency) }),
+      t('Dividendes du mois : {amount}', { amount: pdfAmount(entryTotals.dividend, entryTotals.currency) }),
+      t('Retraits du mois : {amount}', { amount: pdfAmount(entryTotals.withdrawal, entryTotals.currency) }),
+    ].forEach((line) => { doc.text(line, 14, y); y += 6; });
+  } else {
+    doc.text(t('Aucun investissement suivi.'), 14, y); y += 6;
+  }
 
   doc.save(`djignan-bilan-${reportMonthKey}.pdf`);
   showToast(t('Bilan PDF généré.'));
@@ -319,6 +343,24 @@ async function generateAnnualPdfReport() {
   } else {
     doc.text(t('Aucune dépense cette année.'), 14, y); y += 6;
   }
+  y += 6;
+
+  pageBreakIfNeeded();
+  doc.setFontSize(13); doc.text(t('Investissements'), 14, y); y += 7;
+  doc.setFontSize(10);
+  const [{ invested: investedEnd }, entryTotalsYear, investmentCountYear] = await Promise.all([
+    computeNetWorthComposition(endCutoff), computeInvestmentEntryTotals(`${reportYear}-01-01`, endCutoff), dbGetAll(STORES.INVESTMENTS).then((rows) => rows.length),
+  ]);
+  if (investmentCountYear > 0) {
+    [
+      t('Valeur totale du portefeuille au 31 décembre : {amount}', { amount: pdfAmount(investedEnd, currency) }),
+      t('Apports de l\'année : {amount}', { amount: pdfAmount(entryTotalsYear.contribution, entryTotalsYear.currency) }),
+      t('Dividendes de l\'année : {amount}', { amount: pdfAmount(entryTotalsYear.dividend, entryTotalsYear.currency) }),
+      t('Retraits de l\'année : {amount}', { amount: pdfAmount(entryTotalsYear.withdrawal, entryTotalsYear.currency) }),
+    ].forEach((line) => { doc.text(line, 14, y); y += 6; });
+  } else {
+    doc.text(t('Aucun investissement suivi.'), 14, y); y += 6;
+  }
 
   doc.save(`djignan-bilan-annuel-${reportYear}.pdf`);
   showToast(t('Bilan annuel PDF généré.'));
@@ -339,6 +381,7 @@ export async function renderReports() {
         <button type="button" class="btn btn-primary" id="rep-pdf-btn">${t('Générer le bilan PDF')}</button>
         <button type="button" class="btn btn-ghost" id="rep-csv-month-btn">${t('Exporter les transactions du mois (CSV)')}</button>
         <button type="button" class="btn btn-ghost" id="rep-csv-all-btn">${t("Exporter tout l'historique (CSV)")}</button>
+        <button type="button" class="btn btn-ghost" id="rep-csv-investments-btn">${t("Exporter l'historique des investissements (CSV)")}</button>
       </div>
     </div>
     <div class="panel" style="margin-top:16px;">
@@ -365,6 +408,7 @@ export async function renderReports() {
   container.querySelector('#rep-pdf-btn').onclick = () => generatePdfReport();
   container.querySelector('#rep-csv-month-btn').onclick = async () => { await exportTransactionsCsv(reportMonthKey); showToast(t('Export CSV généré.')); };
   container.querySelector('#rep-csv-all-btn').onclick = async () => { await exportTransactionsCsv(); showToast(t('Export CSV généré.')); };
+  container.querySelector('#rep-csv-investments-btn').onclick = async () => { await exportInvestmentEntriesCsv(); showToast(t('Export CSV généré.')); };
 }
 
 export function initReportsModule() {}

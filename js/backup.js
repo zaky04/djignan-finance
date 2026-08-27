@@ -6,6 +6,7 @@
 
 import { STORES, dbGetAll, dbAdd, dbBulkPut, exportAllData, importAllData, getSetting, setSetting } from './db.js';
 import { getEnrichedTransactions, guessCategoryId } from './ledger.js';
+import { ASSET_CLASSES, ENTRY_TYPE_LABELS } from './modules/investments.js';
 import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast, safeNumber } from './utils.js';
 import { notifyDataChanged } from './state.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
@@ -169,6 +170,32 @@ export async function exportTransactionsCsv(monthKey = null) {
   }
   const suffix = monthKey || tr('historique-complet');
   downloadFile(`djignan-transactions-${suffix}.csv`, '﻿' + lines.join('\n'), 'text/csv;charset=utf-8');
+}
+
+const INVESTMENT_CSV_HEADER_FR = ['Date', 'Investissement', "Classe d'actif", 'Type', 'Montant', 'Devise', 'Portefeuille', 'Note'];
+
+/** Exporte l'historique complet des investissements (apports/dividendes/retraits/valorisations,
+    toutes classes d'actif confondues) en CSV — un investissement supprimé entre-temps laisse ses
+    entrées orphelines de côté plutôt que de planter l'export. */
+export async function exportInvestmentEntriesCsv() {
+  const [entries, investments, wallets] = await Promise.all([
+    dbGetAll(STORES.INVESTMENT_ENTRIES), dbGetAll(STORES.INVESTMENTS), dbGetAll(STORES.WALLETS),
+  ]);
+  const invById = Object.fromEntries(investments.map((i) => [i.id, i]));
+  const walletById = Object.fromEntries(wallets.map((w) => [w.id, w]));
+
+  const sorted = [...entries].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const header = INVESTMENT_CSV_HEADER_FR.map(tr);
+  const lines = [header.join(';')];
+  for (const e of sorted) {
+    const inv = invById[e.investmentId];
+    if (!inv) continue;
+    lines.push([
+      e.date, inv.name, tr(ASSET_CLASSES[inv.assetClass] || inv.assetClass), tr(ENTRY_TYPE_LABELS[e.type] || e.type),
+      e.amount, inv.currency, walletById[e.walletId]?.name || '', e.note || '',
+    ].map(csvEscape).join(';'));
+  }
+  downloadFile(`djignan-investissements-${todayISO()}.csv`, '﻿' + lines.join('\n'), 'text/csv;charset=utf-8');
 }
 
 function parseCsvLine(line, delimiter = ';') {

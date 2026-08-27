@@ -91,6 +91,57 @@ export async function checkAndNotify() {
     if (ok) { notifiedRecurring[key] = true; recurringChanged = true; }
   }
 
+  // ---- Récurrences d'apport d'investissement (DCA) en pause depuis longtemps ----
+  // Rappel unique par récurrence tant qu'elle reste en pause (dé-duplication par hystérésis, même
+  // principe que les portefeuilles sous seuil de solde bas ci-dessous) : évite d'oublier de
+  // reprendre un apport automatique suspendu par erreur.
+  const notifiedPausedDca = await getSetting('notifiedPausedDcaRecurring', {});
+  let pausedDcaChanged = false;
+  const PAUSED_DCA_REMINDER_MS = 30 * 24 * 3600 * 1000; // 30 jours
+  for (const r of recurring) {
+    if (!r.investmentId) continue;
+    if (r.active || !r.pausedAt) {
+      if (notifiedPausedDca[r.id]) { delete notifiedPausedDca[r.id]; pausedDcaChanged = true; }
+      continue;
+    }
+    if (Date.now() - new Date(r.pausedAt).getTime() < PAUSED_DCA_REMINDER_MS) continue;
+    if (notifiedPausedDca[r.id]) continue;
+    const ok = await fireNotification(t('Apport automatique en pause'), {
+      body: t('« {name} » est en pause depuis plus de 30 jours — reprenez-le si ce n\'était pas volontaire.', { name: r.name }),
+      tag: `paused-dca-${r.id}`,
+    });
+    if (ok) { notifiedPausedDca[r.id] = true; pausedDcaChanged = true; }
+  }
+  if (pausedDcaChanged) await setSetting('notifiedPausedDcaRecurring', notifiedPausedDca);
+
+  // ---- Investissements sans réévaluation depuis longtemps ----
+  // Sans entrée "valuation", investmentValueAsOf() (ledger.js) retombe sur le capital investi —
+  // "Valeur actuelle" (et l'alerte de dérive d'allocation qui en dépend, voir investments.js) peut
+  // donc rester silencieusement fausse pendant des mois. Même logique que l'alerte de taux de
+  // change non confirmé déjà existante. Dé-duplication liée à la date de dernière valorisation
+  // précise (pas juste un booléen) : si l'utilisateur revalorise puis laisse à nouveau traîner,
+  // le rappel doit pouvoir se redéclencher.
+  const notifiedStaleValuation = await getSetting('notifiedStaleValuation', {});
+  let staleValuationChanged = false;
+  const STALE_VALUATION_MS = 90 * 24 * 3600 * 1000; // 90 jours
+  const [investments, investmentEntries] = await Promise.all([dbGetAll(STORES.INVESTMENTS), dbGetAll(STORES.INVESTMENT_ENTRIES)]);
+  for (const inv of investments) {
+    const valuations = investmentEntries.filter((e) => e.investmentId === inv.id && e.type === 'valuation').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const lastValuationDate = valuations[0]?.date || (inv.createdAt || '').slice(0, 10);
+    if (!lastValuationDate) continue;
+    if (Date.now() - new Date(lastValuationDate).getTime() < STALE_VALUATION_MS) {
+      if (notifiedStaleValuation[inv.id]) { delete notifiedStaleValuation[inv.id]; staleValuationChanged = true; }
+      continue;
+    }
+    if (notifiedStaleValuation[inv.id] === lastValuationDate) continue;
+    const ok = await fireNotification(t('Réévaluation recommandée'), {
+      body: t('« {name} » n\'a pas été réévalué depuis plus de 3 mois — sa valeur affichée peut être obsolète.', { name: inv.name }),
+      tag: `stale-valuation-${inv.id}`,
+    });
+    if (ok) { notifiedStaleValuation[inv.id] = lastValuationDate; staleValuationChanged = true; }
+  }
+  if (staleValuationChanged) await setSetting('notifiedStaleValuation', notifiedStaleValuation);
+
   // ---- Échéances de dettes/créances dans les 3 prochains jours ----
   const [debts, debtPayments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
   for (const d of debts) {

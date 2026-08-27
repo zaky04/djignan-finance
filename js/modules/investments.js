@@ -4,7 +4,7 @@
    comparatif du rendement annualisé (yield) par classe d'actif.
    ========================================================================== */
 
-import { STORES, dbGetAll, dbPut, dbDelete, dbAdd, logAudit, getSetting } from '../db.js';
+import { STORES, dbGetAll, dbPut, dbDelete, dbAdd, logAudit, getSetting, setSetting } from '../db.js';
 import { investmentValueAsOf, getExchangeRates, computeInvestmentValueHistory } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
@@ -14,7 +14,7 @@ import { t } from '../i18n.js';
 // Les valeurs (libellés affichés) sont traduites à l'usage via t(...), jamais les clés
 // (immobilier/actions/...) : ces clés sont les valeurs stockées en base (inv.assetClass), pas du
 // texte d'interface.
-const ASSET_CLASSES = {
+export const ASSET_CLASSES = {
   immobilier: 'Immobilier',
   actions: 'Actions',
   flotte: 'Flotte / Transport',
@@ -33,7 +33,7 @@ let assetFilter = 'all'; // 'all' | 'physical' | 'financial'
 
 // Mêmes conventions que ASSET_CLASSES ci-dessus : les clés sont stockées en base (entry.type), les
 // valeurs (libellés) sont traduites à l'usage via t(...).
-const ENTRY_TYPE_LABELS = { contribution: 'Apport', withdrawal: 'Retrait', dividend: 'Dividende', valuation: 'Valorisation' };
+export const ENTRY_TYPE_LABELS = { contribution: 'Apport', withdrawal: 'Retrait', dividend: 'Dividende', valuation: 'Valorisation' };
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
 const HISTORY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M13 3a9 9 0 1 0 8.94 10H19.9A7 7 0 1 1 13 5v4l5-4-5-4v2Z"/></svg>';
@@ -289,6 +289,7 @@ async function openInvestmentModal(inv = null) {
           tags: [],
           reconciled: false,
           investmentId: record.id,
+          investmentMovementType: 'purchase',
           splitGroupId,
           createdAt: new Date().toISOString(),
         };
@@ -305,10 +306,13 @@ async function openInvestmentModal(inv = null) {
   });
 }
 
-// Ces deux types déplacent réellement de l'argent depuis/vers un portefeuille (achat
-// complémentaire = débit, dividende = crédit) — retrait/valorisation n'en ont pas besoin
-// (retrait déjà hors scope de cette fonctionnalité, valorisation n'est jamais un mouvement d'argent).
-const MONEY_MOVING_ENTRY_TYPES = ['contribution', 'dividend'];
+// Ces trois types déplacent réellement de l'argent depuis/vers un portefeuille — valorisation n'en
+// a pas besoin (jamais un mouvement d'argent, juste une réévaluation).
+const MONEY_MOVING_ENTRY_TYPES = ['contribution', 'dividend', 'withdrawal'];
+// Parmi ceux-ci, dividende ET retrait CRÉDITENT le portefeuille (argent qui sort de l'investissement
+// vers le portefeuille) ; apport le DÉBITE (argent qui part du portefeuille vers l'investissement).
+const CREDIT_ENTRY_TYPES = ['dividend', 'withdrawal'];
+const ENTRY_NOTE_LABELS = { contribution: 'Apport — {name}', dividend: 'Dividende — {name}', withdrawal: 'Retrait — {name}' };
 
 async function openHistoryModal(inv) {
   const [entries, wallets] = await Promise.all([
@@ -333,7 +337,7 @@ async function openHistoryModal(inv) {
           <button type="button" class="btn btn-ghost" id="entry-split-add">${t('+ Ajouter un portefeuille')}</button>
           <div id="entry-split-total" style="font-size:12.5px;color:var(--text-muted);margin-top:4px;"></div>
         </div>
-        <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">${t('Apport : débité de ce portefeuille. Dividende : crédité sur ce portefeuille.')}</p>
+        <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">${t('Apport : débité de ce portefeuille. Dividende et retrait : crédités sur ce portefeuille.')}</p>
       </div>
       <div class="form-row"><label>${t('Date')}</label><input type="date" name="date" value="${todayISO()}" required></div>
       <div class="form-row"><label>${t('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
@@ -407,7 +411,7 @@ async function openHistoryModal(inv) {
     await logAudit({ entityType: 'investmentEntry', entityId: entry.id, action: 'create', after: entry });
 
     if (movesMoney) {
-      const txType = type === 'dividend' ? 'income' : 'expense';
+      const txType = CREDIT_ENTRY_TYPES.includes(type) ? 'income' : 'expense';
       const categoryId = await ensureInvestmentCategoryId(txType);
       const splitGroupId = isSplit ? uuid() : null;
       const rows = isSplit ? splitRows : [{ walletId: entryWalletId, amount }];
@@ -420,11 +424,12 @@ async function openHistoryModal(inv) {
           categoryId,
           amount: r.amount,
           date: entry.date,
-          note: type === 'dividend' ? t('Dividende — {name}', { name: inv.name }) : t('Apport — {name}', { name: inv.name }),
+          note: t(ENTRY_NOTE_LABELS[type], { name: inv.name }),
           tags: [],
           reconciled: false,
           investmentId: inv.id,
           investmentEntryId: entry.id,
+          investmentMovementType: type,
           splitGroupId,
           createdAt: new Date().toISOString(),
         };
@@ -455,7 +460,9 @@ async function openHistoryModal(inv) {
   });
 }
 
-function renderYieldTable(rows, baseCurrency, rates) {
+const DEFAULT_ALLOCATION_ALERT_THRESHOLD = 70;
+
+function renderYieldTable(rows, baseCurrency, rates, threshold, showAlert) {
   const byClass = new Map();
   for (const r of rows) {
     const key = r.inv.assetClass;
@@ -475,18 +482,39 @@ function renderYieldTable(rows, baseCurrency, rates) {
   }));
   if (!lines.length) return `<div class="empty-state">${t('Ajoutez des investissements pour voir le comparatif de rendement.')}</div>`;
 
-  return `
+  // Part de chaque classe dans le portefeuille (basée sur la valeur actuelle, pas le capital
+  // investi — une classe qui a bien performé doit peser plus lourd dans l'alerte de dérive
+  // d'allocation, même si son capital investi initial était modeste). Les valeurs négatives
+  // (dette nette rare sur un bien physique) sont ignorées pour ce calcul, pas soustraites.
+  const totalValue = lines.reduce((s, l) => s + Math.max(l.currentValue, 0), 0);
+  const linesWithShare = lines.map((l) => ({ ...l, sharePct: totalValue ? (Math.max(l.currentValue, 0) / totalValue) * 100 : 0 }));
+  // showAlert=false quand un filtre (Actifs financiers/Biens physiques) est actif : le pourcentage
+  // ne serait calculé que sur le sous-ensemble affiché, pas le "portefeuille" que le texte de
+  // l'alerte prétend décrire — trompeur (une classe peut sembler dominer un sous-ensemble alors
+  // qu'elle pèse peu sur le portefeuille réel). linesWithShare.length < 2 exclu aussi : avec une
+  // seule classe d'actif, sa part est TOUJOURS 100%, ce n'est pas une "dérive" à signaler, juste
+  // l'état normal d'un portefeuille qui débute — l'alerte s'afficherait sans jamais pouvoir
+  // disparaître, ce qui la rendrait inutile (bruit permanent).
+  const overThreshold = (showAlert && linesWithShare.length > 1) ? linesWithShare.filter((l) => l.sharePct > threshold) : [];
+
+  const alertHtml = overThreshold.length ? `
+    <div class="alert alert-warn" style="margin-bottom:12px;">
+      ${overThreshold.map((l) => escapeHtml(t('{label} représente {pct}% de votre portefeuille (seuil {threshold}%).', { label: l.label, pct: l.sharePct.toFixed(0), threshold }))).join('<br>')}
+    </div>` : '';
+
+  return alertHtml + `
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
         <thead><tr style="text-align:left;color:var(--text-muted);">
-          <th style="padding:8px 6px;">${t("Classe d'actif")}</th><th style="padding:8px 6px;">${t('Capital net')}</th><th style="padding:8px 6px;">${t('Valeur actuelle')}</th><th style="padding:8px 6px;">${t('Rendement annualisé')}</th>
+          <th style="padding:8px 6px;">${t("Classe d'actif")}</th><th style="padding:8px 6px;">${t('Capital net')}</th><th style="padding:8px 6px;">${t('Valeur actuelle')}</th><th style="padding:8px 6px;">${t('Part du portefeuille')}</th><th style="padding:8px 6px;">${t('Rendement annualisé')}</th>
         </tr></thead>
         <tbody>
-          ${lines.map((l) => `
+          ${linesWithShare.map((l) => `
             <tr style="border-top:1px solid var(--border);">
               <td style="padding:8px 6px;font-weight:600;">${escapeHtml(l.label)}</td>
               <td style="padding:8px 6px;">${formatCurrency(l.netInvested, baseCurrency)}</td>
               <td style="padding:8px 6px;">${formatCurrency(l.currentValue, baseCurrency)}</td>
+              <td style="padding:8px 6px;"><span class="badge ${l.sharePct > threshold ? 'badge-neg' : ''}">${formatPercent(l.sharePct, 0)}</span></td>
               <td style="padding:8px 6px;"><span class="badge ${l.yieldPct >= 0 ? 'badge-pos' : 'badge-neg'}">${formatPercent(l.yieldPct)}</span></td>
             </tr>`).join('')}
         </tbody>
@@ -497,7 +525,10 @@ function renderYieldTable(rows, baseCurrency, rates) {
 export async function renderInvestments() {
   const container = document.getElementById('investments-content');
   if (!container) return;
-  const [investments, entries, { rates, baseCurrency }] = await Promise.all([dbGetAll(STORES.INVESTMENTS), dbGetAll(STORES.INVESTMENT_ENTRIES), getExchangeRates()]);
+  const [investments, entries, { rates, baseCurrency }, threshold] = await Promise.all([
+    dbGetAll(STORES.INVESTMENTS), dbGetAll(STORES.INVESTMENT_ENTRIES), getExchangeRates(),
+    getSetting('investmentAllocationAlertThreshold', DEFAULT_ALLOCATION_ALERT_THRESHOLD),
+  ]);
 
   if (!investments.length) {
     container.innerHTML = `<div class="empty-state">${t('Aucun investissement suivi. Ajoutez votre premier actif (immobilier, actions, business…).')}</div>`;
@@ -523,12 +554,25 @@ export async function renderInvestments() {
       <div class="chart-canvas-wrap"><canvas id="chart-investments-trend"></canvas></div>
     </div>
     <div class="panel">
-      <div class="panel-header"><h3>${t("Comparatif de rendement par classe d'actif")}</h3></div>
-      ${renderYieldTable(rows, baseCurrency, rates)}
+      <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <h3>${t("Comparatif de rendement par classe d'actif")}</h3>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);font-weight:400;">
+          ${t('Alerte si plus de')}
+          <input type="number" id="allocation-threshold" min="1" max="100" step="1" value="${threshold}" style="width:56px;">%
+        </label>
+      </div>
+      <div id="yield-table-wrap">${renderYieldTable(rows, baseCurrency, rates, threshold, assetFilter === 'all')}</div>
     </div>`;
 
   container.querySelectorAll('[data-asset-filter]').forEach((btn) => {
     btn.addEventListener('click', () => { assetFilter = btn.dataset.assetFilter; renderInvestments(); });
+  });
+
+  container.querySelector('#allocation-threshold').addEventListener('change', async (e) => {
+    const value = Math.min(100, Math.max(1, parseInt(e.target.value, 10) || DEFAULT_ALLOCATION_ALERT_THRESHOLD));
+    e.target.value = value;
+    await setSetting('investmentAllocationAlertThreshold', value);
+    container.querySelector('#yield-table-wrap').innerHTML = renderYieldTable(rows, baseCurrency, rates, value, assetFilter === 'all');
   });
 
   const history = await computeInvestmentValueHistory(6);
@@ -552,16 +596,25 @@ export function initInvestmentsModule() {
     } else if (btn.dataset.action === 'edit') {
       openInvestmentModal(inv);
     } else if (btn.dataset.action === 'delete') {
-      const ok = await confirmDialog(t('Supprimer l\'investissement "{name}" et tout son historique (et les mouvements de portefeuille associés) ?', { name: inv.name }), { danger: true, confirmText: t('Supprimer') });
+      const linkedRecurring = (await dbGetAll(STORES.RECURRING)).filter((r) => r.investmentId === inv.id);
+      const confirmMsg = linkedRecurring.length
+        ? t('Supprimer l\'investissement "{name}" et tout son historique (mouvements de portefeuille associés ET {count} apport(s) récurrent(s) lié(s)) ?', { name: inv.name, count: linkedRecurring.length })
+        : t('Supprimer l\'investissement "{name}" et tout son historique (et les mouvements de portefeuille associés) ?', { name: inv.name });
+      const ok = await confirmDialog(confirmMsg, { danger: true, confirmText: t('Supprimer') });
       if (ok) {
         const entries = (await dbGetAll(STORES.INVESTMENT_ENTRIES)).filter((en) => en.investmentId === inv.id);
         for (const en of entries) await dbDelete(STORES.INVESTMENT_ENTRIES, en.id);
         const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((tx) => tx.investmentId === inv.id);
         for (const tx of linkedTx) await dbDelete(STORES.TRANSACTIONS, tx.id);
+        // Sans ça, une récurrence d'apport (DCA) pointant sur cet investissement resterait active
+        // et continuerait à débiter le portefeuille indéfiniment à chaque déverrouillage
+        // (generateDueRecurring, budgets.js), en créant des entrées d'historique orphelines
+        // invisibles nulle part dans l'UI.
+        for (const r of linkedRecurring) await dbDelete(STORES.RECURRING, r.id);
         await dbDelete(STORES.INVESTMENTS, inv.id);
         await logAudit({ entityType: 'investment', entityId: inv.id, action: 'delete', before: inv });
         showToast(t('Investissement supprimé.'));
-        notifyDataChanged(linkedTx.length ? 'all' : 'investments');
+        notifyDataChanged(linkedTx.length || linkedRecurring.length ? 'all' : 'investments');
       }
     }
   });
