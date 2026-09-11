@@ -369,6 +369,15 @@ export async function resolveCloudUser() {
 // plutôt que dans un seul champ — marge confortable sous la limite exacte.
 const CHUNK_SIZE = 900000;
 
+// 11 septembre 2026 — Découper en morceaux résout la limite PAR DOCUMENT (1 Mo) mais pas la limite
+// PAR REQUÊTE : tous les morceaux étaient écrits dans un seul writeBatch() atomique, qui a sa
+// propre limite de taille totale (~10-11 Mo, tous les morceaux combinés). Une fois la sauvegarde
+// d'un utilisateur réel devenue assez grosse (plusieurs mois d'usage, justificatifs photo), le lot
+// entier a fini par dépasser cette limite : "Request payload size exceeds the limit: 11534336
+// bytes" (= exactement 11 Mio) remonté par l'auteur, sauvegarde cloud alors totalement bloquée.
+// BATCH_BYTE_BUDGET borne chaque lot d'écriture individuellement plutôt qu'un seul lot géant.
+const BATCH_BYTE_BUDGET = 8000000;
+
 export async function pushBackupToCloud(passphrase) {
   const { firestoreMod } = await ensureFirebase();
   const user = firebaseAuth.currentUser;
@@ -378,16 +387,41 @@ export async function pushBackupToCloud(passphrase) {
   for (let i = 0; i < payloadStr.length; i += CHUNK_SIZE) chunks.push(payloadStr.slice(i, i + CHUNK_SIZE));
 
   const chunksRef = firestoreMod.collection(firebaseDb, 'backups', user.uid, 'chunks');
-  const existing = await firestoreMod.getDocs(chunksRef);
-  const batch = firestoreMod.writeBatch(firebaseDb);
-  // Supprime d'abord les anciens morceaux : leur nombre peut varier d'une sauvegarde à l'autre
-  // (données en plus ou en moins) — sans ça, d'anciens morceaux en trop resteraient et
-  // corrompraient la sauvegarde suivante à la lecture (concaténation avec des restes obsolètes).
-  existing.forEach((d) => batch.delete(d.ref));
-  chunks.forEach((chunk, i) => batch.set(firestoreMod.doc(chunksRef, String(i)), { data: chunk }));
   const backupDocRef = firestoreMod.doc(firebaseDb, 'backups', user.uid);
-  batch.set(backupDocRef, { chunkCount: chunks.length, updatedAt: firestoreMod.serverTimestamp() });
-  await batch.commit();
+
+  // Phase 1 : écrit tous les NOUVEAUX morceaux, répartis en plusieurs lots sous BATCH_BYTE_BUDGET
+  // chacun. Le pointeur chunkCount du document parent n'est PAS touché ici — voir phase 2 — pour
+  // qu'une coupure réseau en cours de route (lot 2 sur 3 par exemple) laisse le document parent
+  // pointer vers l'ANCIENNE sauvegarde complète et valide, jamais vers une sauvegarde à moitié
+  // écrite. Un nouvel essai repart proprement (les morceaux déjà écrits sont juste réécrits).
+  let batch = firestoreMod.writeBatch(firebaseDb);
+  let batchBytes = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    if (batchBytes > 0 && batchBytes + chunks[i].length > BATCH_BYTE_BUDGET) {
+      await batch.commit();
+      batch = firestoreMod.writeBatch(firebaseDb);
+      batchBytes = 0;
+    }
+    batch.set(firestoreMod.doc(chunksRef, String(i)), { data: chunks[i] });
+    batchBytes += chunks[i].length;
+  }
+  if (batchBytes > 0) await batch.commit();
+
+  // Phase 2 : le pointeur bascule vers la nouvelle sauvegarde — à partir d'ici, pullBackupFromCloud
+  // lit bien les nouveaux morceaux (elle ne lit que 0..chunkCount-1, jamais au-delà).
+  await firestoreMod.setDoc(backupDocRef, { chunkCount: chunks.length, updatedAt: firestoreMod.serverTimestamp() });
+
+  // Phase 3 : nettoyage des anciens morceaux devenus superflus (index ≥ chunks.length, ex. une
+  // sauvegarde précédente plus volumineuse) — purement cosmétique à ce stade, sans risque pour la
+  // sauvegarde déjà validée en phase 2 ; par lots de 400 par prudence (limite Firestore de 500
+  // opérations par lot, jamais approchée par les écritures ci-dessus vu la taille de CHUNK_SIZE).
+  const existing = await firestoreMod.getDocs(chunksRef);
+  const staleDocs = existing.docs.filter((d) => parseInt(d.id, 10) >= chunks.length);
+  for (let i = 0; i < staleDocs.length; i += 400) {
+    const cleanupBatch = firestoreMod.writeBatch(firebaseDb);
+    for (const d of staleDocs.slice(i, i + 400)) cleanupBatch.delete(d.ref);
+    await cleanupBatch.commit();
+  }
 
   await markBackupDone();
   await setSetting('lastCloudBackupAt', new Date().toISOString());

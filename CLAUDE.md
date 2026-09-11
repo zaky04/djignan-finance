@@ -2,7 +2,7 @@
 
 > Ce fichier sert de mémoire du projet pour toute personne (ou IA) qui reprend le développement.
 > À tenir à jour à chaque session de travail significative : ce qui a été fait, pourquoi, et ce qui reste ouvert.
-> Dernière mise à jour : **16 août 2026**.
+> Dernière mise à jour : **11 septembre 2026**.
 
 ## 1. C'est quoi ce projet
 
@@ -2396,6 +2396,110 @@ session.
 
 `CACHE_VERSION` (`djignan-finance`, `main`) : `v80` → `v81`. `CACHE_VERSION` (`geofinance`,
 `free-migration-banner`) : `v78` → `v79`.
+
+### 23-24 août 2026 — Investissements liés aux portefeuilles (achat, apport, dividende, retrait)
+
+Demande de l'auteur : un achat d'investissement doit débiter un portefeuille, un apport/dividende/
+retrait doit débiter/créditer un portefeuille — jamais traité comme une dépense/recette
+discrétionnaire (même logique que les dettes/créances, §6 du 13 août).
+
+**DB** : `walletId` ajouté sur `Investment` (portefeuille de l'achat initial, informatif — ne
+verrouille rien pour la suite, chaque apport/dividende/retrait choisit librement son propre
+portefeuille) et sur `InvestmentEntry` (apport/dividende/retrait). Aucune migration `DB_VERSION`
+nécessaire (IndexedDB sans schéma).
+**Logique** (`ledger.js`) : nouveau champ `investmentMovementType` sur les transactions liées
+(`purchase`/`contribution`/`dividend`/`withdrawal`), consommé par un helper unique
+`isInvestmentMovementExcluded(t)` qui remplace toutes les vérifications `investmentId` dispersées —
+achat/apport/retrait exclus des agrégats de dépenses/revenus (transfert de capital), mais un
+**dividende reste compté en revenu** (contrairement à `debtId`, exclu symétriquement des deux côtés :
+un prêt reçu n'est pas un revenu, un dividende si).
+**UI** (`investments.js`) : sélecteur de portefeuille pour achat/apport/dividende/retrait, avec
+**répartition sur plusieurs portefeuilles** en une seule saisie (même principe que le mode scindé par
+catégorie de `transactions.js`, mais scindé par portefeuille — chaque ligne devient sa propre
+transaction, toutes partageant un `splitGroupId`). Suppression en cascade (investissement ou entrée)
+déjà couverte par un simple filtre sur `investmentId`/`investmentEntryId`.
+**Apports récurrents (DCA)** (`budgets.js`) : réutilise entièrement le moteur `STORES.RECURRING`/
+`generateDueRecurring()` existant plutôt qu'un système parallèle — troisième option "Apport
+investissement" dans le formulaire de récurrence.
+**Alerte de dérive d'allocation** : seuil configurable (défaut 70%), panneau "Comparatif de rendement
+par classe d'actif".
+**Rapports** : section "Investissements" dans les bilans PDF mensuel/annuel (nouvelle
+`computeInvestmentEntryTotals()` dans `ledger.js`), export CSV dédié (`exportInvestmentEntriesCsv()`,
+`backup.js`).
+**Notifications** : rappel après 30 jours de pause d'une récurrence DCA, et après 90 jours sans
+réévaluation d'un investissement (`investmentValueAsOf()` retombe silencieusement sur le capital
+investi sans entrée `valuation` récente — même logique que l'alerte de taux de change non confirmé).
+
+**Revue de bugs + sécurité avant push** (3 agents indépendants + revue de sécurité dédiée), **7
+problèmes trouvés et corrigés** :
+1. **XSS stocké** dans la bannière d'alerte d'allocation — le nom de classe d'actif n'était pas
+   échappé (contrairement à la cellule du tableau juste à côté), exploitable via un fichier de
+   sauvegarde trafiqué (`sanitizeImportedRow()` ne valide aucun champ texte à l'import).
+2. Alerte d'allocation **permanente** pour un portefeuille à une seule classe d'actif (100% > tout
+   seuil).
+3. Alerte calculée sur l'**onglet filtré** (Actifs financiers/Biens physiques) au lieu du portefeuille
+   entier, tout en prétendant le décrire.
+4. Sélecteur d'investissement du formulaire de récurrence **sans option vide** → le navigateur
+   présélectionnait silencieusement le premier investissement, rendant la validation inopérante — un
+   apport automatique récurrent pouvait se lier au mauvais investissement, indéfiniment.
+5. `computeInvestmentEntryTotals()` traitait une entrée orpheline (investissement supprimé) comme si
+   son montant était déjà en devise de base.
+6. Le PDF affichait "Aucun investissement suivi" dès que les totaux du mois étaient à zéro, même
+   quand un investissement existait réellement (valeur nette à 0, ou simplement pas de mouvement ce
+   mois précis).
+7. **Le plus sérieux** : supprimer un investissement ne désactivait pas sa récurrence DCA liée — elle
+   restait active et continuait à débiter le portefeuille indéfiniment à chaque déverrouillage,
+   créant des entrées orphelines invisibles nulle part dans l'UI. Corrigé par suppression en cascade
+   (`investments.js`) + filet de sécurité dans `generateDueRecurring()` pour toute récurrence
+   orpheline restante (fusion/restauration future).
+
+Tous les correctifs vérifiés en conditions réelles (clics/imports simulés, pas seulement en logique) ;
+`test/ledger.test.html` 24/24 après chaque lot de changements.
+
+`CACHE_VERSION` : `v91` → `v95` (plusieurs lots successifs le même jour).
+
+### 11 septembre 2026 — Sauvegarde cloud bloquée : limite de taille par REQUÊTE (pas par document)
+
+Signalé par l'auteur (capture d'écran, Paramètres) : `Erreur : Request payload size exceeds the
+limit: 11534336 bytes` — la sauvegarde cloud, qui fonctionnait auparavant, échouait systématiquement
+depuis plusieurs jours. `11534336` = très exactement **11 Mio**.
+
+**Diagnostic** : le découpage en morceaux (`CHUNK_SIZE`, §6 du 13 août) résout bien la limite
+Firestore PAR DOCUMENT (~1 Mo), mais `pushBackupToCloud()` écrivait TOUS les morceaux (plus les
+suppressions des anciens) dans un **seul `writeBatch()` atomique** — qui a sa propre limite de
+taille totale, tous les documents du lot combinés (~10-11 Mo). La sauvegarde de l'auteur (plusieurs
+mois de transactions + justificatifs photo accumulés) a fini par dépasser ce second plafond, jamais
+anticipé lors de la conception initiale du découpage en morceaux.
+
+**Fix** (`firebase-sync.js`) : écriture en **plusieurs lots successifs**, chacun borné par
+`BATCH_BYTE_BUDGET` (8 Mo, marge confortable sous le plafond observé), au lieu d'un lot géant unique.
+Pattern en 3 phases pour ne jamais risquer de sauvegarde à moitié écrite :
+1. **Écrit tous les nouveaux morceaux** par lots sous `BATCH_BYTE_BUDGET`, sans toucher au document
+   parent (`backups/{uid}`, champ `chunkCount`).
+2. **Seulement une fois TOUS les lots de morceaux confirmés écrits**, met à jour `chunkCount` sur le
+   document parent — c'est ce champ que `pullBackupFromCloud()` utilise pour savoir combien de
+   morceaux lire (`0..chunkCount-1`), jamais au-delà.
+3. Nettoie les anciens morceaux devenus superflus (index ≥ nouveau `chunkCount`), par lots de 400
+   (limite Firestore de 500 opérations/lot) — purement cosmétique, sans risque pour la sauvegarde
+   déjà validée en phase 2.
+
+Grâce à ce séquencement, une coupure réseau en cours de route (ex: lot 2 sur 3) laisse le document
+parent pointer vers l'**ancienne sauvegarde complète et valide** — jamais vers une sauvegarde à
+moitié écrite. Un nouvel essai repart proprement (les morceaux déjà écrits sont juste réécrits à
+l'identique).
+
+**Testé** : logique de répartition en lots vérifiée isolément (script Node reproduisant exactement
+l'algorithme du fichier réel, comparé ligne à ligne pour écarter toute divergence) — un payload de
+taille comparable au bug original (~13 Mo) se répartit bien sur plusieurs lots sous
+`BATCH_BYTE_BUDGET`, tous les morceaux écrits exactement une fois dans le bon ordre, et un échec
+simulé sur un lot intermédiaire empêche bien d'atteindre la phase 2 (pointeur jamais mis à jour vers
+une sauvegarde incomplète). `firebase-sync.js` vérifié syntaxiquement valide et chargeable sans
+erreur ; `test/ledger.test.html` 24/24 (fichier non concerné, vérifié par habitude). Le round-trip
+complet avec un vrai compte Google/Firestore reste à confirmer par l'auteur (hors de portée d'une
+session automatisée, comme pour le reste des fonctionnalités Firebase de ce projet) — mais l'auteur
+peut maintenant réessayer "Sauvegarder maintenant" directement.
+
+`CACHE_VERSION` : `v95` → `v96`.
 
 ## 7. Pistes prioritaires non traitées
 
