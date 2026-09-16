@@ -9,7 +9,7 @@ import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, logAudit } from '../db.js';
 import { getEnrichedTransactions, guessCategoryId, checkUnusualExpense } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
-import { extractAmountFromImage } from '../ocr.js';
+import { extractReceiptDataFromImage } from '../ocr.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // plusieurs fonctions (txRowHtml(t), reconTxRowHtml(t), et une const t locale dans le handler de
 // clic de initTransactionsModule) — voir le même piège documenté dans dashboard.js.
@@ -33,7 +33,7 @@ const RECEIPT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill
 /* ==========================================================================
    Modale Saisie express (création + édition)
    ========================================================================== */
-export function openQuickAdd({ editTransaction = null } = {}) {
+export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null } = {}) {
   document.querySelectorAll('#modal-root .modal-backdrop[data-modal="quick-add"]').forEach((el) => el.remove());
   const tpl = document.getElementById('tpl-modal-quick-add');
   const root = document.getElementById('modal-root');
@@ -108,7 +108,7 @@ export function openQuickAdd({ editTransaction = null } = {}) {
     receiptScanBtn.textContent = tr('Analyse en cours…');
     receiptScanBtn.disabled = true;
     try {
-      const amount = await extractAmountFromImage(source);
+      const { amount, merchant, date } = await extractReceiptDataFromImage(source);
       if (amount != null && !splitMode) {
         form.elements.amount.value = amount.toFixed(2);
         showToast(tr("Montant détecté : {amount} — vérifiez avant d'enregistrer.", { amount: amount.toFixed(2) }));
@@ -116,6 +116,17 @@ export function openQuickAdd({ editTransaction = null } = {}) {
         showToast(tr('Montant détecté : {amount} — ajoutez-le manuellement à une ligne (mode scindé).', { amount: amount.toFixed(2) }));
       } else {
         showToast(tr('Aucun montant détecté sur cette photo, saisissez-le manuellement.'));
+      }
+      // Commerçant/date : complètent la saisie sans jamais écraser ce que l'utilisateur a déjà
+      // renseigné lui-même (note non vide, date déjà changée de la valeur par défaut du jour) —
+      // contrairement au montant, toujours écrasé puisque le toast invite explicitement à le
+      // vérifier avant d'enregistrer.
+      if (merchant && !form.elements.note.value.trim()) {
+        form.elements.note.value = merchant;
+        form.elements.note.dispatchEvent(new Event('input'));
+      }
+      if (date && form.elements.date.value === todayISO()) {
+        form.elements.date.value = date;
       }
     } catch (err) {
       console.warn('[OCR]', err);
@@ -266,6 +277,18 @@ export function openQuickAdd({ editTransaction = null } = {}) {
       }
       else categorySelect.value = editTransaction.categoryId || '';
       splitToggleRow.hidden = true;
+    }
+    // Photo reçue via le partage entrant (Web Share Target, voir applyShareTarget() dans app.js) :
+    // injectée dans le vrai <input type="file"> via DataTransfer plutôt que dans une variable à
+    // part, pour réutiliser tel quel tout le circuit existant (aperçu, retrait, résolution du
+    // receiptBlob à l'enregistrement) sans dupliquer sa logique. Le scan OCR est déclenché
+    // automatiquement : partager une photo pour ça, c'est déjà l'intention explicite du geste.
+    if (sharedReceiptBlob) {
+      const dt = new DataTransfer();
+      dt.items.add(new File([sharedReceiptBlob], 'receipt.jpg', { type: sharedReceiptBlob.type || 'image/jpeg' }));
+      receiptInput.files = dt.files;
+      receiptInput.dispatchEvent(new Event('change'));
+      receiptScanBtn.click();
     }
   })();
 

@@ -2886,6 +2886,109 @@ latérale confirmé mis à jour au nouveau nom.
 
 `CACHE_VERSION` : `v101` → `v102`.
 
+### 16 septembre 2026 (suite 6) — OCR : extraction du commerçant et de la date, pas seulement le montant
+
+Demandé par l'auteur suite à une discussion sur des pistes d'amélioration compétitives (voir aussi
+la piste tontine, discutée mais pas encore implémentée) : gain rapide côté saisie, sans nouveau
+chantier — Tesseract est déjà en place, seul le parsing du texte OCR était limité au montant.
+
+→ `ocr.js` : `extractAmountFromImage()` devient `extractReceiptDataFromImage()`, renvoie
+`{ amount, merchant, date }` (chacun `null` si rien de fiable détecté) au lieu d'un simple nombre.
+- `parseMerchantFromText()` : prend la première ligne parmi les 5 premières qui ressemble à un nom
+  (majorité de lettres, ≤ 40 caractères) — l'en-tête d'un ticket (nom du commerçant) est presque
+  toujours en toute première ligne.
+- `parseDateFromText()` : cherche un motif JJ/MM/AAAA (ou `-`/`.`, année sur 2 ou 4 chiffres) — même
+  convention JJ/MM que `parseFlexibleDate` (`backup.js`), jamais MM/JJ. Rejette toute date dans le
+  futur ou à plus de 2 ans dans le passé (fenêtre plausible pour un ticket de caisse) : un faux
+  positif OCR (numéro de ticket/téléphone mal lu comme une date) tombe presque toujours hors de
+  cette fenêtre.
+- `transactions.js` (Saisie express) : commerçant → champ Note, date → champ Date, mais **seulement
+  si le champ est encore à sa valeur par défaut** (note vide, date = aujourd'hui) — contrairement au
+  montant (toujours écrasé, le toast invite explicitement à le vérifier), on ne veut jamais effacer
+  une saisie que l'utilisateur a déjà faite lui-même. La note préremplie déclenche aussi
+  `suggestCategoryFromNote()` (événement `input` envoyé manuellement) — un commerçant reconnu peut
+  donc aussi présélectionner la bonne catégorie, bénéfice secondaire gratuit de la même modification.
+
+Testé : logique de parsing vérifiée isolément (script Node, 5 cas dont date invalide `31/02`
+correctement ignorée au profit d'une seconde date valide, date future et date de plus de 2 ans
+toutes deux rejetées) ; puis **pipeline OCR réel de bout en bout dans le navigateur** (image de
+synthèse générée via `<canvas>`, vraie reconnaissance Tesseract) : commerçant et date extraits
+correctement du texte OCR réel ; le montant est resté `null` sur ce test précis parce que Tesseract
+a mal lu "5500,00" en "5500,080" sur ce rendu synthétique — comportement déjà voulu du parseur de
+montant existant (rejette un nombre à 3 décimales plutôt que d'en proposer un faux), pas une
+régression introduite ici.
+
+`CACHE_VERSION` : `v102` → `v103`.
+
+### 16 septembre 2026 (suite 7) — 3 améliorations compétitives (Djignan uniquement, pas geofinance-free)
+
+Suite à une discussion sur des pistes pour rendre l'app plus compétitive : une piste plus lourde
+(suivi de tontine) discutée puis volontairement écartée pour l'instant (l'auteur a jugé, à raison,
+que ça ajouterait un module entier à maintenir pour un besoin pas encore confirmé par de vrais
+utilisateurs — mieux vaut attendre une vraie demande). Trois améliorations plus légères retenues à
+la place, chacune un calcul pur sur des données déjà chargées ou une petite extension d'un
+mécanisme déjà en place — aucun nouvel écran :
+
+1. **« Reste à vivre » quotidien** (`dashboard.js`) — le panneau "Reste à vivre" affiche maintenant
+   aussi une ligne secondaire (`#dash-safe-to-spend-daily`) : le montant divisé par les jours
+   restants du mois (aujourd'hui inclus), façon Monzo/Cleo. N'apparaît que si le solde est positif
+   (un "reste à vivre" négatif divisé en montant/jour n'a pas de sens à afficher, déjà couvert par
+   le message d'alerte existant juste en dessous).
+2. **Alerte de dépassement prédictive** (`dashboard.js`, `renderAlerts()`) — en plus des alertes
+   existantes (déclenchées une fois le seuil de 70%/90% déjà atteint), une nouvelle passe projette
+   chaque catégorie encore sous le seuil (`actual ÷ joursÉcoulés × joursDansLeMois`) et prévient
+   *avant* le fait si la projection dépasse le budget : *"Au rythme actuel, le budget X sera dépassé
+   de {montant} vers le {jour}."* Ignore les 4 premiers jours du mois (projection trop instable sur
+   1-4 jours de données, même garde-fou que `checkUnusualExpense` dans `ledger.js`) et les
+   catégories déjà signalées par l'alerte de seuil (pas de double alerte sur la même catégorie).
+3. **Partage entrant (Web Share Target) → OCR** (`manifest.json`, `sw.js`, `app.js`,
+   `transactions.js`) — l'utilisateur peut maintenant partager une photo (capture d'écran d'une
+   confirmation Mobile Money, photo de ticket) directement depuis sa galerie/messagerie vers
+   Djignan : `manifest.json` déclare `share_target` (`action: "share-target"`, POST,
+   `multipart/form-data`, champ `receipt`) ; `sw.js` intercepte ce POST (nouveau bloc au tout début
+   du handler `fetch`, avant le cache-first GET existant — aucune interférence, méthodes
+   différentes), met le fichier en cache (`SHARE_TARGET_CACHE = 'share-target-cache'`, **nom
+   volontairement sans le préfixe `geofinance-`** pour ne jamais être balayé par le nettoyage de
+   `activate` qui supprime tout cache `geofinance-*` différent de `CACHE_NAME` à chaque déploiement),
+   puis redirige vers `?share-target=1` ; `app.js` (`applyShareTarget()`, même endroit que
+   `applyShortcutParams()` dans `boot()`, donc toujours après déverrouillage — la photo n'est jamais
+   touchée avant que l'utilisateur ait saisi son PIN) lit le cache, l'efface (usage unique), et
+   ouvre Saisie express (`openQuickAdd({ sharedReceiptBlob })`, nouveau paramètre) avec la photo
+   injectée dans le vrai `<input type="file">` via `DataTransfer` (réutilise tout le circuit
+   existant : aperçu, résolution du `receiptBlob` à l'enregistrement — rien dupliqué) et le scan OCR
+   déclenché automatiquement (`receiptScanBtn.click()`) : l'utilisateur retrouve directement montant/
+   commerçant/date pré-remplis (bénéficie de l'amélioration OCR de l'entrée précédente). Capitalise
+   directement sur l'OCR étendu plutôt que de construire un parseur de SMS séparé (piste plus lourde,
+   spécifique Android, mise de côté depuis le 13 août).
+
+**Piège rencontré en testant** : le Service Worker cache-first sert la version précédemment
+installée tant que `CACHE_VERSION` n'est pas rebumpé — un premier test après ces changements a
+montré l'ancien tableau de bord (sans la ligne quotidienne) malgré les fichiers à jour sur disque,
+piège déjà documenté ailleurs dans ce fichier (§11) mais qui vaut la peine d'être rappelé : après un
+`unregister()`+vidage des caches en test local, la page rechargée qui a DÉCLENCHÉ l'enregistrement
+n'est pas automatiquement "contrôlée" par le nouveau SW (`navigator.serviceWorker.controller` reste
+`null` sur ce premier chargement, même une fois le SW `activated` grâce à `clients.claim()`) — il
+faut un second rechargement pour que le contrôle prenne effet, sans quoi les appels `fetch()` type
+`share-target` ne sont jamais interceptés par le SW.
+
+Testé dans le navigateur (mode démo re-semé + une transaction de test injectée en Alimentation pour
+forcer une projection sous le seuil de 70%) : ligne quotidienne calculée correctement (501 000 F CFA
+÷ 15 jours restants = 33 400 F CFA/jour, vérifié à la main) et masquée quand non pertinente ; alerte
+prédictive déclenchée avec les bons chiffres (Alimentation 38 000/60 000, projection 71 250 →
+dépassement de 11 250 F CFA vers le jour 26, vérifié à la main), absente pour une catégorie déjà
+signalée par le seuil (Loisirs, 86%) ; les deux traduits correctement en anglais. Partage entrant
+testé de bout en bout avec le **vrai** pipeline (POST multipart simulé vers `/share-target`, fichier
+confirmé en cache, `openQuickAdd({ sharedReceiptBlob })` appelé directement — aperçu affiché, scan
+OCR réel déclenché automatiquement, champs Note/Date/Montant correctement pré-remplis depuis une
+image de synthèse). Le vrai geste de partage OS (galerie → "Partager" → Djignan dans la liste) n'a
+pas pu être déclenché depuis cette session automatisée (nécessite un vrai geste utilisateur sur un
+appareil réel) — le mécanisme sous-jacent (interception SW, cache, lecture au boot, ouverture Saisie
+express) est lui entièrement vérifié.
+
+**Pas porté sur `geofinance-free`** — demande explicite de l'auteur limitée à Djignan cette fois.
+
+`CACHE_VERSION` : `v103` → `v104`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

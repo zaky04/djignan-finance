@@ -163,6 +163,9 @@ const EN = {
   'Aucune transaction pour le moment. Utilisez « Saisie express » pour commencer.': 'No transactions yet. Use "Quick add" to get started.',
   "Aucun budget défini pour l'instant.": 'No budget set yet.',
   'Après budgets réservés et échéances à venir': 'After reserved budgets and upcoming bills',
+  'Soit {amount}/jour sur les {days} jour(s) restants': "That's {amount}/day over the {days} day(s) left",
+  'Au rythme actuel, le budget "{label}" sera dépassé de {amount} vers le {day}.':
+    'At the current pace, the "{label}" budget will be exceeded by {amount} around day {day}.',
   '⚠ Dépenses prévues supérieures aux liquidités disponibles': '⚠ Planned expenses exceed available cash',
   "Pas encore assez d'historique": 'Not enough history yet',
   'Reste {amount} ce mois-ci': '{amount} left this month',

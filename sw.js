@@ -4,8 +4,13 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v102';
+const CACHE_VERSION = 'v104';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
+// Nom volontairement SANS le préfixe "geofinance-" : le nettoyage de l'activate ci-dessous
+// supprime tout cache "geofinance-*" différent de CACHE_NAME à chaque déploiement (mécanisme de
+// versioning de l'app shell) — ce cache-ci n'a rien à voir avec l'app shell et ne doit jamais
+// être balayé par cette règle, même transitoirement pendant une mise à jour.
+const SHARE_TARGET_CACHE = 'share-target-cache';
 
 const APP_SHELL = [
   './',
@@ -97,9 +102,32 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-/* ---------- Fetch : cache-first + revalidation en arrière-plan ---------- */
+/* ---------- Partage entrant (Web Share Target, manifest.json) ----------
+   Une autre app (galerie, messagerie...) envoie ici une photo en POST — jamais un GET normal,
+   donc ça ne peut pas interférer avec le cache-first ci-dessous. Le fichier est mis en cache (une
+   redirection HTTP ne peut pas transporter un Blob) puis la page se recharge en GET normal avec
+   ?share-target=1, lu par applyShareTarget() (app.js) au démarrage suivant pour ouvrir Saisie
+   express avec la photo déjà chargée dans l'OCR. */
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+  const url = new URL(request.url);
+
+  if (request.method === 'POST' && url.pathname.endsWith('/share-target')) {
+    event.respondWith((async () => {
+      try {
+        const formData = await request.formData();
+        const file = formData.get('receipt');
+        if (file && file.size > 0) {
+          const cache = await caches.open(SHARE_TARGET_CACHE);
+          await cache.put('shared-receipt', new Response(file, { headers: { 'Content-Type': file.type || 'image/jpeg' } }));
+        }
+      } catch (err) {
+        console.warn('[SW] Partage entrant échoué', err);
+      }
+      return Response.redirect(new URL('./?share-target=1', self.location.href).href, 303);
+    })());
+    return;
+  }
 
   // Seules les requêtes GET same-origin sont gérées par le cache applicatif.
   if (request.method !== 'GET' || !request.url.startsWith(self.location.origin)) {

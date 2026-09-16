@@ -46,7 +46,7 @@ function setAmount(el, value, currency) {
   el.textContent = formatCurrency(value, currency);
 }
 
-function renderAlerts(budgetRows, thresholds, unconfirmedRates) {
+function renderAlerts(budgetRows, thresholds, unconfirmedRates, currency) {
   const stack = document.getElementById('dashboard-alerts');
   if (!stack) return;
   stack.innerHTML = '';
@@ -72,6 +72,36 @@ function renderAlerts(budgetRows, thresholds, unconfirmedRates) {
       ? tr('Budget "{label}" dépassé ({pct}% utilisé)', { label: r.label, pct: r.pct.toFixed(0) })
       : tr('Budget "{label}" à {pct}% de la limite', { label: r.label, pct: r.pct.toFixed(0) });
     stack.appendChild(div);
+  }
+
+  // Alerte prédictive : catégories pas encore signalées ci-dessus (sous le seuil), mais dont le
+  // rythme de dépense actuel projette un dépassement avant la fin du mois — prévient AVANT le
+  // fait plutôt que de constater après coup, seule chose que les alertes ci-dessus font. Ignore
+  // les tout premiers jours du mois : sur 1-4 jours de données, une seule dépense matinale suffit
+  // à fausser complètement l'extrapolation (même garde-fou que checkUnusualExpense, ledger.js,
+  // qui exige un minimum d'historique avant de se fier à une moyenne).
+  const overBudgetIds = new Set(overBudget.map((r) => r.categoryId));
+  const now = new Date();
+  const daysElapsed = now.getDate();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  if (daysElapsed >= 5 && daysElapsed < daysInMonth) {
+    const projected = budgetRows
+      .filter((r) => r.budget > 0 && !overBudgetIds.has(r.categoryId))
+      .map((r) => ({ ...r, projectedTotal: (r.actual / daysElapsed) * daysInMonth }))
+      .filter((r) => r.projectedTotal > r.budget)
+      .sort((a, b) => b.projectedTotal / b.budget - a.projectedTotal / a.budget);
+
+    for (const r of projected.slice(0, 2)) {
+      const overshootDay = Math.min(daysInMonth, Math.max(daysElapsed + 1, Math.ceil((r.budget / r.projectedTotal) * daysInMonth)));
+      const div = document.createElement('div');
+      div.className = 'alert alert-warn';
+      div.textContent = tr('Au rythme actuel, le budget "{label}" sera dépassé de {amount} vers le {day}.', {
+        label: r.label,
+        amount: formatCurrency(r.projectedTotal - r.budget, currency),
+        day: overshootDay,
+      });
+      stack.appendChild(div);
+    }
   }
 }
 
@@ -251,6 +281,21 @@ export async function renderDashboard() {
     const safeToSpend = forecast.current - upcomingBillsTotal - reservedBudget;
     setAmount(document.getElementById('dash-safe-to-spend-value'), safeToSpend, forecast.currency);
     safeToSpendEl?.classList.toggle('is-negative', safeToSpend < 0);
+    const dailyEl = document.getElementById('dash-safe-to-spend-daily');
+    if (dailyEl) {
+      // Uniquement quand il reste un solde positif : un "reste à vivre" négatif divisé en
+      // montant/jour n'a pas de sens à afficher (déjà couvert par le message d'alerte ci-dessous).
+      if (safeToSpend > 0) {
+        const now = new Date();
+        const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+        const daysRemaining = daysInMonth - now.getDate() + 1; // aujourd'hui inclus
+        const daily = safeToSpend / daysRemaining;
+        dailyEl.textContent = tr('Soit {amount}/jour sur les {days} jour(s) restants', { amount: formatCurrency(daily, forecast.currency), days: daysRemaining });
+        dailyEl.hidden = false;
+      } else {
+        dailyEl.hidden = true;
+      }
+    }
     const safeTrendEl = document.getElementById('dash-safe-to-spend-trend');
     if (safeTrendEl) {
       safeTrendEl.textContent = safeToSpend >= 0
@@ -326,7 +371,7 @@ export async function renderDashboard() {
     await refreshIncomeTrend();
   }
 
-  renderAlerts(budgetVsActual, thresholds, unconfirmedRates);
+  renderAlerts(budgetVsActual, thresholds, unconfirmedRates, currency);
   if (panels.recentTransactions) renderRecentTransactions(recentTx);
   if (panels.watchCategories) renderWatchCategories(budgetVsActual);
   if (panels.upcomingBills) renderUpcomingBills(forecast.upcoming, forecast.currency);

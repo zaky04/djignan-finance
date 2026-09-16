@@ -229,6 +229,32 @@ function applyShortcutParams() {
   if (view || action) window.history.replaceState({}, '', window.location.pathname);
 }
 
+// Même nom que côté sw.js (SHARE_TARGET_CACHE) — doit rester identique, c'est le SW qui écrit
+// dans ce cache (à la réception d'un partage) et cette fonction qui le lit (au redémarrage).
+const SHARE_TARGET_CACHE = 'share-target-cache';
+
+/** Reçoit une photo partagée depuis une autre app (galerie, messagerie...) via le Web Share
+    Target déclaré dans manifest.json : sw.js intercepte le POST entrant, met le fichier en cache
+    et redirige vers ?share-target=1 — lu ici une fois déverrouillé, pour ouvrir Saisie express
+    avec la photo déjà chargée dans l'OCR (montant/commerçant/date détectés automatiquement),
+    encore plus rapide qu'un partage de justificatif classique depuis l'app elle-même. */
+async function applyShareTarget() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('share-target') !== '1') return;
+  window.history.replaceState({}, '', window.location.pathname);
+  if (!('caches' in window)) return;
+  try {
+    const cache = await caches.open(SHARE_TARGET_CACHE);
+    const response = await cache.match('shared-receipt');
+    if (!response) return;
+    await cache.delete('shared-receipt');
+    const blob = await response.blob();
+    openQuickAdd({ sharedReceiptBlob: blob });
+  } catch (err) {
+    console.warn('[ShareTarget]', err);
+  }
+}
+
 /** Bouton "Passer cette étape" commun à (presque) toutes les étapes de l'onboarding : avance
     sans rien enregistrer, laissant les valeurs par défaut déjà seedées (seedDefaultsIfNeeded)
     ou les réglages par défaut de chaque module en place. */
@@ -667,6 +693,7 @@ async function onUnlocked() {
   await generateDueRecurring();
   navigateTo('dashboard');
   applyShortcutParams();
+  await applyShareTarget();
   await renderDemoModeBanner();
   await maybeShowOnboarding();
   maybeShowInstallPrompt();

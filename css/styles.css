@@ -304,6 +304,7 @@ body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
 .hero-card-value { font-size: 38px; font-weight: 800; margin: 6px 0; }
 .hero-card-value .amount { color: #fff; }
 body[data-privacy="hidden"] .hero-card-value .amount::after { color: #fff; }
+.hero-card-daily { font-size: 14px; font-weight: 700; opacity: .95; margin-bottom: 2px; }
 .hero-card-trend { font-size: 13px; opacity: .9; }
 .hero-card-badge {
   display: inline-flex; align-items: center; gap: 4px; margin-top: 8px;
