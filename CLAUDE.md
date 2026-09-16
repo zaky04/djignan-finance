@@ -2829,6 +2829,63 @@ supplémentaire, déjà utilisé ailleurs dans le même fichier `ledger.js`).
 
 `CACHE_VERSION` : `v99` → `v100`.
 
+### 16 septembre 2026 (suite 4) — Revue ciblée de `firebase-sync.js` + bug trouvé dans `ocr.js`
+
+Demande de l'auteur : revue de `firebase-sync.js`, avec une prudence explicite vu l'historique de
+soucis passés sur ce fichier précis. Lecture complète (741 lignes) croisée avec tout l'historique
+ci-dessus (découpage en lots §11 sept, horloge serveur/répit §15 août, etc.) — **rien touché dans ce
+fichier** : les deux cas limites identifiés (morceau Firestore manquant → `TypeError` au lieu d'un
+message propre, mais déjà rattrapé par le `try/catch` de chaque appelant ; absence de verrou
+distribué entre appareils, limitation déjà documentée et assumée depuis la conception) ne
+justifiaient pas un changement risqué sur un fichier aussi sensible sans bug reproductible.
+
+Poursuite sur les fichiers encore jamais audités en profondeur (`ocr.js`, `i18n.js`, `demo-data.js`,
+`sw-register.js`) — **1 bug réel trouvé et corrigé** :
+
+**`ensureTesseractScript()` (`ocr.js`) mettait en cache une promesse rejetée pour toujours.** La
+promesse de chargement de `vendor/tesseract.min.js` est mémorisée dans une variable de module
+(`scriptLoadPromise`) pour éviter de réinjecter le `<script>` à chaque scan de justificatif — mais en
+cas d'échec (Service Worker pas encore fini de précacher le vendor au tout premier lancement, réseau
+capricieux), la promesse **rejetée** restait en cache indéfiniment : toute tentative d'OCR suivante,
+même après que la cause transitoire ait disparu, échouait instantanément avec la même erreur, sans
+jamais retenter le chargement — jusqu'à un rechargement complet de la page. → Le `.catch()` ajouté
+réinitialise `scriptLoadPromise = null` avant de repropager l'erreur, pour qu'un appel suivant
+retente réellement le chargement au lieu de rejouer l'échec en cache.
+
+Testé isolément (script Node reproduisant exactement le motif promesse-mise-en-cache-au-niveau-module
+du fichier réel) : un premier appel simulé en échec confirme `scriptLoadPromise` remis à `null`
+immédiatement après, puis un second appel (retry) réussit — comportement cassé avant le correctif
+(un script de contrôle sans le `.catch()` aurait rejoué l'échec indéfiniment), confirmé corrigé après.
+Pas re-testé dans le navigateur avec le vrai worker Tesseract (nécessiterait de simuler un vendor
+manquant puis restauré en cours de session, hors de portée pratique) — changement ciblé et à faible
+risque (une seule ligne de reset, aucun changement du chemin normal quand le chargement réussit du
+premier coup).
+
+`CACHE_VERSION` : `v100` → `v101`.
+
+### 16 septembre 2026 (suite 5) — Section « À propos du développeur » dans Paramètres
+
+Demande de l'auteur : une vraie section avec son nom/email (numéro de téléphone pas encore fourni,
+à ajouter plus tard). Avant ce lot, seul un discret lien `mailto:` existait à deux endroits — bas de
+la barre latérale (`index.html`) et une ligne centrée en petits caractères en bas de Paramètres
+(`settings.js`, `#settings-credit`) — sous le nom « Adtcheko 5T/ ».
+
+→ `settings.js` : `#settings-credit` remplacé par `renderDeveloperSection()`, un vrai panneau
+(`.panel`/`.panel-header`, même convention que les autres sections de Paramètres) avec deux
+`stat-row` (Nom, Email — lien `mailto:` cliquable). Constantes `DEVELOPER_NAME`/`DEVELOPER_EMAIL` en
+tête de fichier, avec un commentaire indiquant où ajouter une ligne Téléphone le jour où l'auteur le
+fournit. Nom mis à jour partout (barre latérale comprise) : **Bibiê Adtcheko**, email inchangé
+(`ronywest01@gmail.com`). Clé `'Par {author}'` (devenue orpheline, plus utilisée que par l'ancienne
+ligne) retirée du dictionnaire ; deux nouvelles clés ajoutées (`'À propos du développeur'`, `'Email'`).
+
+Testé par rendu direct de `renderSettings()` dans le navigateur (le clavier PIN restant peu fiable
+aux clics synthétiques, même limite que d'habitude) : panneau correctement affiché en français
+(« À propos du développeur » / Nom / Email) puis en anglais (« About the developer » / Name /
+Email) après bascule de langue, lien `mailto:` intact dans les deux cas ; crédit de la barre
+latérale confirmé mis à jour au nouveau nom.
+
+`CACHE_VERSION` : `v101` → `v102`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

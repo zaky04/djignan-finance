@@ -16,6 +16,13 @@ function ensureTesseractScript() {
     script.onload = () => resolve();
     script.onerror = () => reject(new Error("Impossible de charger le moteur OCR (vendor/tesseract.min.js manquant)."));
     document.head.appendChild(script);
+  }).catch((err) => {
+    // Sans ce reset, un échec transitoire (SW pas encore fini de précacher le vendor, réseau
+    // capricieux au tout premier lancement) désactivait l'OCR pour le reste de la session : la
+    // promesse rejetée restait en cache, tout nouvel essai échouait instantanément sans jamais
+    // retenter le chargement du script.
+    scriptLoadPromise = null;
+    throw err;
   });
   return scriptLoadPromise;
 }
