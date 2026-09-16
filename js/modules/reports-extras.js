@@ -4,7 +4,7 @@
    Séparé de reports.js pour ne pas alourdir la génération PDF.
    ========================================================================== */
 
-import { computeFinancialHealthScore, computeDailySpending, getEnrichedTransactions } from '../ledger.js';
+import { computeFinancialHealthScore, computeDailySpending, getEnrichedTransactions, isInvestmentMovementExcluded } from '../ledger.js';
 import { formatCurrency, formatPercent, formatDate, escapeHtml, localISODate } from '../utils.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // wireCalendarPanel() — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js.
@@ -84,7 +84,12 @@ export function wireCalendarPanel(container, monthKey) {
     btn.addEventListener('click', async () => {
       const date = btn.dataset.date;
       panel.querySelectorAll('.calendar-day').forEach((b) => b.classList.toggle('is-selected', b === btn));
-      const rows = (await getEnrichedTransactions({ monthKey })).filter((t) => t.date === date && t.type === 'expense');
+      // Même filtre que computeDailySpending() (ledger.js), qui a produit le total/l'intensité de
+      // cette case : sans ça, un remboursement de dette ou un achat d'investissement apparaissait
+      // dans le détail du jour comme une dépense ordinaire, alors qu'il n'a jamais compté dans le
+      // total affiché sur la case elle-même — la liste ne correspondait plus au chiffre du dessus.
+      const rows = (await getEnrichedTransactions({ monthKey }))
+        .filter((t) => t.date === date && t.type === 'expense' && !t.debtId && !isInvestmentMovementExcluded(t));
       detail.innerHTML = rows.length
         ? `<div class="tx-sub" style="margin-bottom:6px;">${formatDate(date)}</div>` + rows.map((t) => `
             <div class="tx-row">

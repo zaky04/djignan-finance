@@ -2775,6 +2775,60 @@ console à aucune étape.
 
 `CACHE_VERSION` : `v98` → `v99`.
 
+### 16 septembre 2026 (suite 3) — Audit élargi bugs/crashs sur le reste de l'app
+
+Demande explicite de l'auteur : élargir la recherche au-delà des calculs financiers, y compris les
+petits bugs/incohérences, sur tout ce qui n'avait pas encore été lu en profondeur —
+`app.js` (bootstrap/routeur), `auth.js` (PIN/biométrie), `dashboard.js`, `charts.js`,
+`reports.js`/`reports-extras.js`, `search.js`, `settings.js`, `notifications.js`, `utils.js`,
+`state.js`, `tools.js`, `install-prompt.js`. Deux bugs réels trouvés et corrigés :
+
+1. **Crash confirmé dans la recherche globale** (`search.js`). `index` (le résultat de
+   `collectSearchIndex()`, 8 lectures IndexedDB en parallèle — potentiellement lent sur un historique
+   de plusieurs milliers de transactions depuis que son plafond de 500 a été retiré, voir lot 13 de
+   l'internationalisation) démarre à `null` et n'est peuplé qu'une fois la promesse résolue, mais les
+   écouteurs de saisie sont câblés immédiatement à l'ouverture de la modale. Taper vite juste après
+   avoir ouvert la recherche (Ctrl/Cmd+K, un geste très naturel) avant que l'index soit prêt
+   déclenchait `index.filter(...)` sur `null` → reproduit et confirmé isolément :
+   `TypeError: Cannot read properties of null (reading 'filter')`, non rattrapée (le handler `input`
+   n'a pas de try/catch), cassant la recherche pour ce cycle de rendu. **Fix** : garde `if (!index)
+   return;` dans `runSearch()`, et le `.then()` qui peuple `index` relance `runSearch()` une fois
+   prêt — la requête déjà tapée n'est donc pas perdue, juste retardée.
+
+2. **Incohérence dans le calendrier des dépenses** (`reports-extras.js`). Le total/l'intensité de
+   chaque case du calendrier (`computeDailySpending`, `ledger.js`) exclut déjà les mouvements de
+   dette/créance et d'investissement, comme tous les autres agrégats du fichier — mais cliquer sur
+   une case pour afficher le détail du jour (`wireCalendarPanel`) ne filtrait que par
+   `type === 'expense'`, sans exclure ces mêmes mouvements. Concrètement : un remboursement de dette
+   apparaissait dans la liste comme une dépense ordinaire, et la somme des lignes affichées ne
+   correspondait plus au total déjà affiché sur la case cliquée. **Fix** : `isInvestmentMovementExcluded`
+   (`ledger.js`) exportée (elle ne l'était pas), réutilisée dans `wireCalendarPanel` avec le même
+   filtre `!t.debtId` que `computeDailySpending`.
+
+**Vérifié, pas de bug retenu** :
+- `signInWithGoogle()` (`firebase-sync.js`) : `pendingSignIn` (état module partagé entre appels) est
+  écrasé sans garde si la fonction est appelée deux fois en concurrence — orpheline la première
+  promesse. Non exploitable actuellement : les deux points d'appel (`app.js` écran de restauration,
+  `settings.js` section cloud) désactivent/remplacent synchroniquement l'élément déclencheur avant
+  l'appel, empêchant un double-clic d'atteindre ce chemin. Noté comme fragile pour un futur 3e point
+  d'appel qui n'aurait pas la même discipline, pas corrigé (rien à corriger sans un vrai symptôme).
+- `changePin()` (`settings.js`) sans limite anti-brute-force sur les tentatives d'ancien PIN — déjà
+  connu (dette technique du dépôt `geofinance`, jamais portée ici faute d'avoir été redemandée),
+  faible sévérité (nécessite déjà un accès physique à l'appareil déverrouillé).
+- `auth.js`, `charts.js`, `utils.js` (`openModal`/`confirmDialog`/formatage), `state.js` (bus
+  d'événements), `dashboard.js`, `tools.js`, `install-prompt.js`, `notifications.js` : lus en entier,
+  rien trouvé — déjà bien durcis par les correctifs de sessions précédentes (gardes null
+  systématiques, verrous anti-concurrence documentés, filets try/catch explicites).
+
+Testé : les 3 fichiers modifiés passent `node --check`. Le crash de `search.js` reproduit et
+confirmé par un script Node isolé avant correction (`TypeError` confirmée sur le code du bug, absent
+après le fix). L'incohérence du calendrier n'a pas pu être revérifiée dans le navigateur cette
+session (nécessite des transactions liées à une dette/un investissement sur le mois courant, pas de
+jeu de données de test adapté sous la main) — changement ciblé et à faible risque (un filtre
+supplémentaire, déjà utilisé ailleurs dans le même fichier `ledger.js`).
+
+`CACHE_VERSION` : `v99` → `v100`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

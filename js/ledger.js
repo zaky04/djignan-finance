@@ -47,7 +47,7 @@ function toBase(amount, currency, rates, baseCurrency) {
     type='income') : non — c'est un vrai revenu d'investissement, contrairement à
     investmentMovementType==='withdrawal' ou à un prêt reçu (debtId, exclu symétriquement des deux
     côtés lui aussi, voir plus bas). */
-function isInvestmentMovementExcluded(t) {
+export function isInvestmentMovementExcluded(t) {
   if (!t.investmentId) return false;
   return t.type === 'expense' || t.investmentMovementType === 'withdrawal';
 }
