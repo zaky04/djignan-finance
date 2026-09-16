@@ -2501,6 +2501,280 @@ peut maintenant réessayer "Sauvegarder maintenant" directement.
 
 `CACHE_VERSION` : `v95` → `v96`.
 
+### 16 septembre 2026 — Trois bugs de calcul causant une dérive lente du solde vs la réalité
+
+Signalé par l'auteur : après plusieurs mois d'usage, malgré "tout enregistré", le solde de l'app
+finit par diverger du solde réel et nécessite un redressement manuel périodique. Recherche ciblée
+sur tout ce qui touche au calcul de solde (`walletBalancesAsOf` lui-même s'est révélé correct — il
+ne filtre par aucun champ ajouté depuis, dettes/investissements/partage inclus). Trois bugs distincts
+trouvés et corrigés, chacun capable de créer une dérive silencieuse et cumulative sur plusieurs mois :
+
+**1. `advanceDate()` (`budgets.js`) — récurrences ancrées en fin de mois qui sautaient des
+occurrences.** `setMonth()`/`setFullYear()` débordent silencieusement sur le mois suivant quand le
+jour d'origine (29/30/31) n'existe pas dans le mois cible : une récurrence mensuelle posée le 31
+janvier donnait le 3 mars au lieu du 28 février — **février était intégralement sauté**, puis le
+jour restait décalé en permanence (verrouillé sur "le 3" pour toujours, plus jamais le 31 même les
+mois qui en ont un). Pour un loyer/abonnement payé en fin de mois (cas très courant), ça veut dire
+une vraie dépense réelle jamais générée dans l'app — exactement le type d'écart silencieux qui
+s'accumule sur plusieurs mois avant d'être remarqué. **Fix** : nouveau champ `anchorDay` sur
+`RECURRING` (fixé à la création/modification depuis la date choisie, auto-guéri pour les
+enregistrements existants à la première génération après mise à jour) ; `advanceDate()` avance
+maintenant en mois/année calendaires puis clampe seulement au dernier jour du mois cible si besoin,
+en revenant au jour d'ancrage dès que le mois suivant le permet à nouveau (comportement d'une vraie
+échéance de facturation, pas de dérive permanente). Testé isolément (script Node reproduisant
+l'algorithme) : 14 mois consécutifs à partir du 31 janvier ne sautent ni ne dupliquent aucun mois
+calendaire, redescendent à 28/30 sur les mois courts et reviennent à 31 dès que possible ; cas
+bissextile (29 février annuel → 28 février une année non bissextile) et passage d'année couverts.
+
+**2. Transfert entre portefeuilles de devises différentes traité comme 1:1 (`transactions.js`).**
+`walletBalancesAsOf` applique le même montant brut aux deux côtés d'un virement (`-amt` source,
+`+amt` cible, voir `ledger.js`) — sans aucune conversion. Le formulaire de virement listait TOUS
+les portefeuilles comme cible potentielle, y compris ceux dans une autre devise que la source :
+virer "100" d'un portefeuille EUR vers un portefeuille USD aurait silencieusement créé/détruit de
+la valeur (100 EUR ≠ 100 USD), un écart invisible tant que l'utilisateur n'a pas fait le
+rapprochement dans chaque devise séparément. Le projet a bien la notion de devises multiples
+(`EXCHANGE_RATES`/`EXCHANGE_RATE_HISTORY` existent pour l'agrégation du patrimoine net), donc ce
+n'est pas un cas théorique pour un utilisateur multi-devises. **Fix** : la liste "Vers le
+portefeuille" ne propose plus que les portefeuilles de la **même devise** que la source, rafraîchie
+dynamiquement si la source change ; un virement multi-devises existant (saisi avant ce correctif,
+ou dont un portefeuille a changé de devise depuis) reste éditable — sa cible d'origine est ajoutée
+explicitement à la liste au lieu d'être masquée, pour ne pas vider silencieusement la sélection à
+l'ouverture. Un déplacement de valeur entre devises différentes doit désormais être saisi comme deux
+transactions (dépense + recette) avec le montant réellement converti de chaque côté. Vérifié dans le
+navigateur (3 portefeuilles créés : 2 EUR + 1 USD — la cible se limite bien aux portefeuilles EUR
+quand la source est EUR, "Aucun autre portefeuille dans cette devise" s'affiche correctement quand
+aucune cible compatible n'existe).
+
+**3. Modifier une ligne d'une transaction scindée perdait silencieusement `splitGroupId`
+(`transactions.js`).** Le formulaire d'édition reconstruit `record` en repartant de zéro puis
+`dbPut` **remplace** intégralement l'ancien enregistrement (pas de fusion) — `splitGroupId` n'était
+jamais recopié depuis `editTransaction`. Modifier ne serait-ce que la note ou la date d'une ligne
+scindée la détachait donc silencieusement de son groupe (label "Scindée" disparu, plus regroupée
+nulle part dans l'UI). N'affecte pas directement le calcul du solde (le montant reste inchangé), mais
+peut pousser l'utilisateur à ressaisir "la partie manquante" qu'il croit avoir perdue — donc une
+dérive indirecte par doublon. **Fix** : `splitGroupId` est maintenant préservé depuis
+`editTransaction` lors de la reconstruction du record.
+
+**4. Dédoublonnage à l'import CSV trop agressif (`backup.js`), dette technique connue depuis
+l'audit du 12 août (§5) mais jamais corrigée.** `isDuplicateTransaction` ne comparait que
+portefeuille + date + type + montant — **jamais la note/description**. Deux dépenses réelles et
+distinctes mais de même montant le même jour (ex : deux déjeuners à 15 €) étaient donc silencieusement
+fusionnées lors d'un réimport de relevé bancaire sur une période chevauchante : la 2e ligne
+disparaissait, sous-comptant les dépenses réelles — le solde de l'app dérive alors au-dessus du
+solde bancaire réel, de plus en plus à chaque réimport mensuel. **Fix** : la note est maintenant
+incluse dans la comparaison (un vrai doublon réimporté a une description identique — c'est la même
+ligne source — alors que deux transactions différentes n'ont presque jamais la même note).
+
+**Vérifié correct, non modifié** :
+- `walletBalancesAsOf` (`ledger.js`) lui-même — parcourt tous les types de transactions sans
+  filtrage par champ ajouté depuis (dette, investissement, partage), donc aucune catégorie de
+  transaction n'est silencieusement exclue du calcul de solde. Pas de solde mis en cache nulle part
+  (`w.balance` est toujours recalculé à la volée depuis les transactions, jamais stocké/incrémenté
+  — voir `ledger.js:89`) : aucun risque de désynchronisation entre un solde affiché et un solde réel
+  recalculé.
+- Cascade dette/créance (`debts.js`, suppression + annulation) et cascade investissement
+  (`investments.js`, suppression d'entrée/d'investissement) : les transactions liées sont
+  retrouvées via `debtId`/`investmentEntryId`/`investmentId` et supprimées en bloc de façon
+  symétrique à leur création, sans résidu ni double suppression repérés.
+- Fusion de sauvegarde cloud multi-appareils (`firebase-sync.js`, `pullBackupFromCloud`) : pas de
+  déduplication par contenu en mode fusion, mais c'est une limitation **déjà documentée et
+  assumée** dans le code (commentaire explicite sur l'absence volontaire d'un moteur de résolution
+  de conflits) — pas une régression découverte ici, pertinent seulement si l'auteur utilise
+  plusieurs appareils avec des saisies non synchronisées.
+
+**Piste identifiée mais NON corrigée — nécessite une décision produit avant d'y toucher :**
+**dépenses partagées (`shared.js`) sans mécanisme de règlement.** Quand `paidBy` est un tiers, ma
+part (`myShare = montant / nb participants`) est débitée de mon portefeuille **immédiatement à la
+création** de la dépense partagée — alors qu'en réalité l'argent ne quitte mon portefeuille que plus
+tard, quand je rembourse cette personne. Le solde "Doit recevoir"/"Doit au groupe" affiché
+(`computeBalances`) est purement informatif : aucune action "marquer comme réglé" n'existe nulle
+part dans l'UI, et le champ `settled` du modèle de données est écrit une fois à `false` puis **jamais
+relu ni modifié ailleurs dans tout le code** (`grep` confirmé) — un vestige d'un flux de règlement
+qui semble avoir été prévu mais jamais terminé. Concrètement, deux scénarios réels créent une dérive
+permanente si l'utilisateur enregistre aussi le mouvement réel correspondant (comportement naturel
+pour quelqu'un qui veut "tout enregistrer") :
+- **paidBy = moi** (j'avance l'argent pour le groupe) : l'app ne débite que ma part (ex: 25 € sur
+  100 € payés), jamais le montant réel sorti de mon portefeuille. Si je saisis ensuite en plus les
+  remboursements reçus de mes amis comme des recettes séparées, l'app finit par afficher PLUS
+  d'argent que je n'en ai réellement (double comptage du côté recette).
+- **paidBy = un tiers** (un ami avance, je lui dois ma part) : l'app me débite ma part *immédiatement*,
+  avant même que je l'aie réellement remboursé. Si je saisis ensuite le remboursement réel (cash/mobile
+  money) comme une dépense séparée quand je paie vraiment mon ami, l'app me débite **deux fois** la
+  même somme — l'app finit par afficher MOINS d'argent que je n'en ai réellement.
+Les deux cas sont plausibles pour un usage courant (repas de groupe, loyer partagé, voyage) et
+s'accumulent silencieusement sur plusieurs mois. Non corrigé ici car la bonne solution dépend de
+l'usage réel de l'auteur (relance-t-il "Partage de dépenses" régulièrement ? attend-il un vrai flux
+de règlement avec transaction générée automatiquement, ou juste une clarification du comportement
+actuel dans l'UI pour éviter le double comptage ?) — à trancher avec lui avant d'y toucher.
+
+Testé : les quatre fichiers modifiés passent `node --check` sans erreur. Le fix #1 (logique pure,
+pas d'UI) vérifié par script Node isolé. Le fix #2 vérifié dans le navigateur (voir ci-dessus, code
+d'activation temporairement désactivé en local pour le test puis restauré via `git checkout`, jamais
+commité). Les fix #3 et #4 non vérifiés dans le navigateur (changements ciblés à faible risque —
+un seul champ préservé pour #3, un critère de comparaison ajouté pour #4) —
+`test/ledger.test.html` non concerné (ces bugs sont hors de `ledger.js`, la suite existante ne les
+couvre pas).
+
+`CACHE_VERSION` : `v96` → `v97`.
+
+### 16 septembre 2026 (suite) — Vrai flux de règlement pour le partage de dépenses
+
+L'auteur utilise "Partage de dépenses" régulièrement et a demandé, suite à la découverte ci-dessus,
+que le reliquat devienne une vraie dette/créance dans le module Dettes & créances plutôt qu'un solde
+purement informatif.
+
+**Nouveau modèle** (`shared.js`, en-tête du fichier détaillé) :
+- **"Moi" est le payeur** : le **montant total** (pas ma part) est enregistré tout de suite comme
+  une vraie dépense personnelle — c'est cet argent-là qui quitte réellement mon portefeuille.
+  Chaque AUTRE participant inclus dans la répartition devient une **créance** ("on me doit"), créée
+  sans transaction d'ouverture (l'argent a déjà bougé via la dépense totale ci-dessus — une
+  transaction d'ouverture en plus aurait doublé le montant compté).
+- **"Moi" fait partie de la répartition mais n'est pas le payeur** : rien ne bouge dans mon
+  portefeuille tout de suite (je n'ai encore rien payé en réalité) ; ma part devient une **dette**
+  ("je dois") envers le payeur, sans transaction ni à la création.
+- Le remboursement, dans les deux cas, passe par le flux **existant** de `debts.js`
+  (bouton "Rembourser" sur la carte dette/créance) : c'est LÀ qu'une vraie transaction est créée
+  (recette si on me rembourse, dépense si je rembourse), pas dans `shared.js`. Ce découpage —
+  argent réel enregistré une seule fois, au bon moment — élimine le double comptage identifié dans
+  l'entrée précédente.
+
+**`debts.js`** : deux nouvelles fonctions exportées, réutilisables ailleurs et utilisées par
+`shared.js` :
+- `createLinkedDebt({ type, personName, principal, currency, startDate, note, sharedExpenseId })` —
+  crée une dette/créance SANS transaction d'ouverture (`openingTransactionId: null`), pour les cas
+  où le mouvement réel est déjà couvert par une transaction créée ailleurs.
+- `deleteDebtCascade(debtId)` — extrait de la suppression déjà existante (remboursements + toutes
+  les transactions liées, ouverture et remboursements), maintenant réutilisée par le bouton
+  "Supprimer" de Dettes & créances ET par la suppression en cascade d'une dépense partagée.
+  Nouveau champ `sharedExpenseId` sur `DEBTS` (comme `debtId`/`investmentEntryId` ailleurs) pour
+  relier une dette/créance à la dépense partagée qui l'a générée.
+
+**Affichage** : le statut de règlement de chaque dépense partagée (`sharedExpenseRowHtml`) est
+calculé EN DIRECT depuis les dettes/créances liées (remboursements déjà faits inclus) — pas stocké
+séparément, pour ne jamais pouvoir diverger si une dette est réglée ou supprimée directement depuis
+Dettes & créances. Pour la même raison, la ligne "Moi" du panneau "Soldes" n'affiche plus un solde
+brut calculé sur toutes les dépenses (qui ignorait les remboursements, donc redevenait trompeur dès
+le premier règlement partiel) mais un simple renvoi "→ voir Dettes & créances", où le reliquat exact
+et à jour se lit sur chaque dette/créance individuelle. Les autres participants (pas "Moi") gardent
+l'ancien solde informatif agrégé — l'app ne suit pas leurs vrais portefeuilles, donc pas de
+remboursement réel à soustraire pour eux.
+
+**Suppression en cascade** : supprimer une dépense partagée retire aussi sa transaction personnelle
+liée (ancien style, `myTransactionId`) ET toutes les dettes/créances qu'elle a générées, avec leurs
+remboursements et transactions liées — via `deleteDebtCascade` pour chacune. "Annuler" restaure tout
+symétriquement (dépense, transaction, dettes, remboursements).
+
+**Compatibilité** : les dépenses partagées créées AVANT ce changement gardent leur ancien
+comportement figé (transaction "ma part" seule, `myTransactionId`) — rien n'est migré
+rétroactivement, mais leur suppression reste gérée correctement par l'ancien chemin (toujours
+présent dans le handler de suppression).
+
+**Non traité, tradeoff assumé** : le montant total payé (ex: 100 € restaurant) reste catégorisé
+intégralement dans le budget de la catégorie choisie (ex: "Restaurant"), même si seule "ma part" en
+est le coût réel final — le remboursement reçu plus tard est exclu des agrégats budgétaires (comme
+tout mouvement `debtId`, cohérent avec le reste de l'app) donc ne vient jamais réduire ce total a
+posteriori. Accepté comme tradeoff raisonnable : la priorité de cette demande était l'exactitude du
+**solde**, pas l'attribution budgétaire par catégorie.
+
+Testé dans le navigateur de bout en bout (3 participants, Moi/Boubacar/Awa) : dépense payée par
+"Moi" → transaction du montant TOTAL (pas la part) débitée du bon portefeuille + 2 créances créées ;
+dépense payée par un tiers avec "Moi" dans la répartition → 1 dette créée, AUCUNE transaction
+fantôme ; remboursement partiel d'une créance depuis Dettes & créances → transaction de recette
+créée, solde du portefeuille mis à jour correctement, badge de statut recalculé ; suppression d'une
+dépense partagée avec dette liée → la dette disparaît bien de Dettes & créances, les dettes/créances
+des AUTRES dépenses restent intactes. Aucune erreur console à aucune étape.
+
+`CACHE_VERSION` : `v97` → `v98`.
+
+### 16 septembre 2026 (suite 2) — Audit du stockage et filet de sécurité anti-corruption
+
+Demande explicite de l'auteur après les deux passes précédentes : creuser encore, explorer la
+couche de stockage (`db.js`) et toute la logique, "aucune erreur n'est tolérée". Quatre choses
+trouvées et corrigées, une limitation architecturale identifiée et partiellement compensée.
+
+**1. `computeDailySpending` (`ledger.js`) — seule fonction d'agrégation du fichier à ne pas exclure
+les mouvements d'investissement.** Toutes les autres (`computeMonthSummary`,
+`computeBudgetVsActual`, `computeExpensesByCategory`...) excluent `isInvestmentMovementExcluded(t)`
+en plus de `t.debtId` — celle-ci (vue calendrier de Rapports) ne filtrait que `debtId`. Un achat/
+apport d'investissement gonflait donc la vue calendrier alors que le total "Dépenses" du même mois,
+affiché ailleurs, l'exclut déjà : la somme des jours du calendrier ne correspondait plus au total du
+résumé mensuel. **Fix** : ajout du même filtre que partout ailleurs.
+
+**2. `investmentValueAsOf` (`ledger.js`) — un apport après la création sans nouvelle valorisation
+faisait apparaître une perte fictive.** Tant qu'aucune entrée `type: 'valuation'` n'a été saisie, la
+fonction retombait sur `investment.capitalInvested` (le capital **initial**, figé à la création) —
+jamais mis à jour par les apports ultérieurs (`computeMetrics()`, investments.js, calcule lui
+correctement `capitalInvested + contributions - retraits` pour "Capital net investi", mais
+`investmentValueAsOf` divergeait de ce calcul). Concrètement : investissement créé à 1000, apport de
+500 plus tard (transaction réelle, portefeuille bien débité) → "Valeur actuelle" restait à 1000,
+"Plus/moins-value" affichait -500 € de perte immédiate et injustifiée, et le patrimoine net total
+semblait avoir perdu 500 € qui pourtant n'avaient fait que changer de forme (liquide → investi).
+Vérifié par script isolé : avant le fix, apport de 500 → valeur actuelle 1000 (perte apparente
+-500) ; après le fix → valeur actuelle 1500 (gain 0, correct) ; comportement avec valorisation
+postérieure et avec cutoffDate antérieur à l'apport tous deux inchangés (non-régression confirmée).
+**Fix** : à défaut de valorisation, reconstruit le capital NET investi à la date donnée (capital
+initial + apports - retraits jusqu'à cutoffDate) au lieu du capital initial seul.
+
+**3. Filet de sécurité `Infinity`/`NaN` à chaque point de saisie d'un montant.** `db.js` protège
+déjà les imports de sauvegarde contre `Infinity`/`NaN` (`sanitizeImportedRow`, avec le commentaire
+explicite : `Number(x) || 0` ne filtre PAS `Infinity`, qui est "truthy") — mais ~20 points de saisie
+normale (transactions, dettes, investissements, épargne, comptes gardés, dépenses partagées, taux de
+change, seuil de solde bas) utilisaient exactement cet idiome non protégé (`parseFloat(...) || 0`).
+Un montant tapé en notation scientifique qui déborde (ex: `1e400`) aurait produit `Infinity`,
+propagé tel quel dans `walletBalancesAsOf` et toute conversion de devise en aval — un seul
+portefeuille ou taux de change contaminé aurait fait afficher "Infinity"/"NaN" partout où il
+intervient. **Vérifié à l'usage** : un `<input type="number">` standard refuse déjà nativement
+`1e400` comme valeur (testé dans le navigateur — la valeur reste vide), donc ce vecteur précis
+n'était pas exploitable via l'UI normale d'un navigateur moderne compatible. Le correctif
+(`safeNumber(parseFloat(...))`, réutilisant l'utilitaire existant plutôt que juste `|| 0`, à chaque
+site identifié dans `budgets.js`/`debts.js`/`investments.js`/`kept-accounts.js`/`savings.js`/
+`shared.js`/`transactions.js`/`wallets.js`) reste appliqué par prudence : défense en profondeur pour
+tout environnement moins strict (ancien WebView Android packagé en APK, navigateur non conforme) et
+cohérence avec le traitement déjà appliqué aux imports.
+
+**4. Écritures multi-stores non atomiques (`db.js`).** Chaque `dbAdd`/`dbPut`/`dbDelete` "isolé"
+ouvre SA PROPRE transaction IndexedDB. Un enchaînement de plusieurs appels séparés pour une seule
+opération logique (ex: un remboursement de dette = ligne `DEBT_PAYMENTS` + transaction de
+portefeuille + parfois passage de la dette à "soldée", trois écritures dans `openPaymentModal`)
+pouvait laisser un état partiellement écrit si l'onglet/l'appareil meurt exactement entre deux
+appels (fermeture forcée, coupure de courant, l'OS qui tue l'onglet en arrière-plan sur mobile) — la
+dette paraîtrait remboursée sans que l'argent n'ait bougé. Improbable par occurrence (fenêtre de
+quelques millisecondes), mais jamais acceptable pour un solde financier selon le principe posé pour
+cette passe. **Fix** : nouvelle fonction `dbWriteBatch(operations)` (db.js) qui regroupe plusieurs
+écritures (add/put/delete, un ou plusieurs stores) dans une seule transaction IndexedDB — soit
+toutes appliquées, soit aucune. Appliquée aux deux chemins les plus fréquents/à plus fort enjeu :
+`openPaymentModal` (debts.js, remboursement) et `deleteDebtCascade` (debts.js, réutilisée par la
+suppression directe ET par la suppression en cascade d'une dépense partagée). Vérifié dans le
+navigateur : remboursement d'une créance de 10 € faisant passer la dette à "soldée" (donc les 3
+écritures du lot) → dette bien déplacée en "Soldées", transaction de recette bien créée, aucune
+erreur console.
+
+**Non traité, limitation documentée, pas une régression :**
+- Les AUTRES chemins d'écriture multi-stores (création de dépense partagée avec plusieurs créances,
+  génération de récurrence investissement, mode scindé de transactions.js) restent non atomiques —
+  moins prioritaires : leur pire scénario d'interruption laisse le portefeuille correct (l'argent
+  déjà comptabilisé) avec au pire une créance/ligne manquante à rajouter à la main, pas une dette
+  faussement soldée. À généraliser avec `dbWriteBatch` dans une passe future si souhaité.
+- Pas de `db.onversionchange` (fermeture propre de la connexion quand un autre onglet a besoin de
+  monter la base en version supérieure après un déploiement) : un onglet resté ouvert pourrait bloquer
+  la mise à niveau d'un autre onglet/appareil du même utilisateur (juste un blocage/gel, pas une
+  corruption de données — `onblocked` existe déjà et logue en console). Pas corrigé ici, risque
+  UX/fiabilité mineur pour un usage multi-onglets rare, pas un risque financier.
+
+**Vérifié correct, non modifié** : le reste de `db.js` (schéma additif uniquement depuis `DB_VERSION
+4`, pas de migration structurelle nécessitant une réécriture d'index) ; `savings.js` et
+`kept-accounts.js` — tous deux entièrement décorrélés de `ledger.js`/des portefeuilles par design
+(confirmé par lecture complète), donc structurellement incapables de créer une dérive de solde ;
+`convertAmount`/la convention `rateToBase` (`utils.js`) et son édition (`wallets.js`, saisie manuelle
+et récupération live) — cohérents et corrects, aucune inversion de taux repérée.
+
+Testé : les 13 fichiers touchés dans cette passe passent `node --check`. Vérifié dans le navigateur :
+protection Infinity (native au navigateur + filet applicatif), remboursement atomique menant une
+dette à "soldée", entrée normale toujours fonctionnelle après le filet de sécurité — aucune erreur
+console à aucune étape.
+
+`CACHE_VERSION` : `v98` → `v99`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

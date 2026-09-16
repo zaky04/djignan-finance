@@ -6,7 +6,7 @@
 
 import { STORES, dbGetAll, dbPut, dbDelete, dbAdd, logAudit, getSetting, setSetting } from '../db.js';
 import { investmentValueAsOf, getExchangeRates, computeInvestmentValueHistory } from '../ledger.js';
-import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
+import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { renderNetWorthTrendChart } from '../charts.js';
 import { t } from '../i18n.js';
@@ -106,7 +106,7 @@ function wireWalletSplit({ toggleBtn, singleSelect, splitWrap, listEl, addBtn, t
     isSplit: () => splitMode,
     refreshRowWallets,
     getRows: () => [...listEl.querySelectorAll('[data-split-row]')]
-      .map((row) => ({ walletId: row.querySelector('.split-wallet').value, amount: parseFloat(row.querySelector('.split-amount').value) || 0 }))
+      .map((row) => ({ walletId: row.querySelector('.split-wallet').value, amount: safeNumber(parseFloat(row.querySelector('.split-amount').value)) }))
       .filter((r) => r.walletId && r.amount > 0),
   };
 }
@@ -244,7 +244,7 @@ async function openInvestmentModal(inv = null) {
     const fd = new FormData(e.target);
     const before = inv ? { ...inv } : null;
     const currency = readCurrencyValue(e.target);
-    const capitalInvested = parseFloat(fd.get('capitalInvested')) || 0;
+    const capitalInvested = safeNumber(parseFloat(fd.get('capitalInvested')));
     const movesMoneyNow = !inv && !!movesCheckbox?.checked && capitalInvested > 0;
     const isSplit = movesMoneyNow && !!walletSplit?.isSplit();
 
@@ -379,7 +379,7 @@ async function openHistoryModal(inv) {
     e.preventDefault();
     const fd = new FormData(e.target);
     const type = fd.get('type');
-    const amount = parseFloat(fd.get('amount')) || 0;
+    const amount = safeNumber(parseFloat(fd.get('amount')));
     const movesMoney = MONEY_MOVING_ENTRY_TYPES.includes(type);
     const isSplit = movesMoney && entrySplit.isSplit();
     const entryWalletId = fd.get('walletId') || '';

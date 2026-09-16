@@ -94,14 +94,25 @@ export async function getWalletBalance(walletId) {
   return walletBalancesAsOf(wallets, transactions).get(walletId) || 0;
 }
 
-/** Valeur d'un investissement à une date donnée (dernière valorisation connue avant/à cette date). */
+/** Valeur d'un investissement à une date donnée (dernière valorisation connue avant/à cette date).
+    Si aucune valorisation n'a encore été saisie (avant cutoffDate), on reconstruit le capital NET
+    investi à cette date (capital initial + apports - retraits, voir computeMetrics()/investments.js
+    pour le même calcul en "temps réel") au lieu de renvoyer seulement le capital initial figé — sans
+    ça, un apport ultérieur sans valorisation immédiate après (cas normal : on ne revalorise pas à
+    chaque apport) faisait paraître l'investissement en perte immédiate (valeur < capital investi) et
+    cet apport "disparaissait" du patrimoine net : l'argent sort bien du portefeuille (transaction
+    liée) mais n'était compté nulle part ailleurs tant qu'aucune valorisation n'était saisie à la
+    main. */
 export function investmentValueAsOf(investment, entries, cutoffDate) {
   const relevant = entries
     .filter((e) => e.investmentId === investment.id && e.type === 'valuation' && (!cutoffDate || e.date <= cutoffDate))
     .sort((a, b) => (a.date < b.date ? 1 : -1));
   if (relevant.length) return relevant[0].amount;
   if (cutoffDate && investment.createdAt && investment.createdAt.slice(0, 10) > cutoffDate) return 0;
-  return investment.capitalInvested || 0;
+  const own = entries.filter((e) => e.investmentId === investment.id && (!cutoffDate || e.date <= cutoffDate));
+  const contributions = own.filter((e) => e.type === 'contribution').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const withdrawals = own.filter((e) => e.type === 'withdrawal').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  return (investment.capitalInvested || 0) + contributions - withdrawals;
 }
 
 /** Montant restant dû d'une dette/créance à une date donnée. */
@@ -629,6 +640,11 @@ export async function computeDailySpending(monthKey) {
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
+    // Manquait ici (seule fonction d'agrégation du fichier à l'oublier) : sans cette exclusion, un
+    // achat/apport d'investissement gonflait la vue calendrier alors que le résumé du mois
+    // (computeMonthSummary) et tous les autres agrégats l'excluent déjà — la somme des jours du
+    // calendrier ne correspondait plus au total "Dépenses" affiché ailleurs pour le même mois.
+    if (isInvestmentMovementExcluded(t)) continue;
     const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     totals.set(t.date, (totals.get(t.date) || 0) + amt);
   }
