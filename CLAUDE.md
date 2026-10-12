@@ -3302,6 +3302,25 @@ code d'activation reste un filtre de distribution, pas une sécurité cryptograp
 
 `CACHE_VERSION` : `v109` → `v118`.
 
+### 12 octobre 2026 (suite 5) — Comportement « application » une fois installée sur mobile
+
+Demandé par l'auteur : « l'application se comporte trop comme une page web » (zoom, visuel) quand on crée
+le raccourci sur mobile. Nouveau `js/app-mode.js` (ajouté à `APP_SHELL`, importé EN PREMIER par `app.js`) :
+détecte le lancement depuis l'écran d'accueil (`display-mode: standalone/fullscreen/minimal-ui`,
+`navigator.standalone` pour iOS) ou un shell natif (Capacitor/Tauri) et pose `.is-app` sur `<html>`.
+Sous `.is-app` (fin de `styles.css`) : pas de zoom au pincement ni au double-tap (`user-scalable=no` posé en
+JS + événements `gesture*` pour iOS, qui ignore le viewport + `touch-action: pan-x pan-y`), pas de tirer
+pour rafraîchir / rebond (`overscroll-behavior: none`), pas de sélection de texte ni de menu au toucher
+long hors champs de saisie, pas de surbrillance au toucher, `text-size-adjust` figé. **Dans un navigateur
+normal RIEN ne change** : le zoom reste disponible (accessibilité). Règles tactiles sous
+`@media (pointer: coarse)` : sur un EXE de bureau la sélection de texte et le clic droit restent.
+Hors mode app, pour tout écran tactile : champs à 16 px (en dessous, iOS zoome à la mise au point) et
+`100dvh` à la place de `100vh` pour la hauteur de l'écran.
+Testé en émulation mobile (`__TAURI__` simulé) : navigateur inchangé, mode app actif, champ toujours
+sélectionnable, menu contextuel bloqué hors champ. Le vrai geste (pincement sur un téléphone avec
+raccourci installé) reste à confirmer sur appareil. `orientation` du manifeste laissé à `any`.
+`CACHE_VERSION` : `v118` → `v119`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
