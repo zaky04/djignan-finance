@@ -19,9 +19,10 @@
    comportement (débiter "ma part" immédiatement ET compter séparément le
    remboursement réel plus tard). */
 
-import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit } from '../db.js';
+import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit, getSetting } from '../db.js';
 import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { isDailyWallet } from '../ledger.js';
 import { t } from '../i18n.js';
 import { createLinkedDebt, deleteDebtCascade } from './debts.js';
 
@@ -138,7 +139,7 @@ async function openSharedExpenseModal(participants, defaultCurrency) {
   if (participants.length < 2) { showToast(t('Ajoutez au moins 2 participants avant de créer une dépense partagée.')); return; }
   const meParticipant = participants.find((p) => p.isMe) || null;
   const [categories, wallets] = await Promise.all([dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.WALLETS)]);
-  const activeWallets = wallets.filter((w) => !w.archived);
+  const activeWallets = wallets.filter(isDailyWallet);
   const modal = openModal(sharedExpenseFormHtml(participants, defaultCurrency, meParticipant), { title: t('Nouvelle dépense partagée') });
   wireCurrencySelect(modal.el);
   const form = modal.el.querySelector('#shared-expense-form');
@@ -175,6 +176,7 @@ async function openSharedExpenseModal(participants, defaultCurrency) {
     const fd = new FormData(form);
     const splitAmong = fd.getAll('splitAmong');
     if (splitAmong.length < 1) { showToast(t('Sélectionnez au moins un participant.')); return; }
+    if (!(safeNumber(parseFloat(fd.get('amount'))) > 0)) { showToast(t('Saisissez un montant supérieur à 0.')); return; }
     const currency = readCurrencyValue(form);
     const record = {
       id: uuid(),
@@ -350,8 +352,12 @@ export async function renderShared() {
 
   await renderParticipantsPanel(document.getElementById('shared-participants'));
 
-  container.querySelector('#shared-expense-add-btn').addEventListener('click', () => {
-    openSharedExpenseModal(participants, participants[0] ? (expenses[0]?.currency || 'EUR') : 'EUR');
+  container.querySelector('#shared-expense-add-btn').addEventListener('click', async () => {
+    // Devise de la dernière dépense partagée, sinon devise de base : un défaut codé en dur à EUR
+    // faisait échouer l'enregistrement d'une dépense payée par « moi » (« Créez d'abord un
+    // portefeuille en EUR ») pour tout utilisateur dont les portefeuilles sont en XOF/XAF.
+    const baseCurrency = await getSetting('baseCurrency', 'EUR');
+    openSharedExpenseModal(participants, expenses[0]?.currency || baseCurrency);
   });
 
   container.querySelectorAll('[data-action="delete-expense"]').forEach((btn) => {

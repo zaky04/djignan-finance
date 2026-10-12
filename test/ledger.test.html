@@ -31,10 +31,13 @@
 // test isolée, jamais la vraie base de l'utilisateur.
 window.__GEOFINANCE_TEST_DB_NAME__ = 'geofinance-ledger-test-db';
 
-const { STORES, dbAdd, wipeAllData, setSetting } = await import('../js/db.js');
+const { STORES, dbAdd, dbGetAll, wipeAllData, setSetting, exportAllData, importAllData } = await import('../js/db.js');
 const {
   walletBalancesAsOf, investmentValueAsOf, computeNetWorth, computeMonthSummary,
   computeBudgetVsActual, computeExpensesByCategory, computeFinancialHealthScore, guessCategoryId,
+  suggestBudgetFromHistory, computeBudgetSuggestions,
+  computeNetWorthComposition, computeEndOfMonthForecast, computeLiquidBalance, computeSavingsAllocations,
+  isDailyWallet, walletUsage, withdrawalLockedUntil,
 } = await import('../js/ledger.js');
 
 const results = [];
@@ -69,8 +72,8 @@ async function seedFixtures() {
 
   await dbAdd(STORES.BUDGETS, { id: 'b1', categoryId: 'c1', month: '2026-06', limit: 400 });
 
-  await dbAdd(STORES.DEBTS, { id: 'd1', type: 'debt', currency: 'EUR', principal: 500, startDate: '2026-05-01' });
-  await dbAdd(STORES.DEBTS, { id: 'd2', type: 'receivable', currency: 'EUR', principal: 200, startDate: '2026-05-01' });
+  await dbAdd(STORES.DEBTS, { id: 'd1', type: 'debt', personName: 'Prêteur test', currency: 'EUR', principal: 500, startDate: '2026-05-01' });
+  await dbAdd(STORES.DEBTS, { id: 'd2', type: 'receivable', personName: 'Débiteur test', currency: 'EUR', principal: 200, startDate: '2026-05-01' });
   await dbAdd(STORES.DEBT_PAYMENTS, { id: 'p1', debtId: 'd1', amount: 100, date: '2026-06-01' });
 
   await dbAdd(STORES.INVESTMENTS, { id: 'inv1', name: 'Actions', currency: 'EUR', capitalInvested: 1000, createdAt: '2026-01-01T00:00:00.000Z' });
@@ -123,6 +126,14 @@ async function runTests() {
   assertEqual('investmentValueAsOf : valorisation la plus récente ≤ cutoff', investmentValueAsOf(inv, entries, '2026-06-01'), 1200);
   assertEqual('investmentValueAsOf : repli sur le capital investi si aucune valorisation avant cutoff', investmentValueAsOf(inv, entries, '2026-02-01'), 1000);
   assertEqual('investmentValueAsOf : 0 si cutoff avant la création de l\'investissement', investmentValueAsOf(inv, entries, '2025-12-01'), 0);
+  const entriesAfter = [
+    ...entries,
+    { investmentId: 'inv1', type: 'contribution', amount: 500, date: '2026-06-20' },
+    { investmentId: 'inv1', type: 'withdrawal', amount: 100, date: '2026-06-25' },
+    { investmentId: 'inv1', type: 'contribution', amount: 50, date: '2026-06-10' },
+  ];
+  assertEqual('investmentValueAsOf : apports/retraits APRÈS la dernière valorisation s\'y ajoutent (1300 + 500 - 100)', investmentValueAsOf(inv, entriesAfter, null), 1700);
+  assertEqual('investmentValueAsOf : un apport daté du jour de la valorisation est déjà compris dedans', investmentValueAsOf(inv, entriesAfter, '2026-06-15'), 1300);
 
   // --- computeNetWorth (agrégat complet : portefeuilles + investissements + créances - dettes) ---
   const netWorth = await computeNetWorth();
@@ -171,6 +182,107 @@ async function runTests() {
 
   const byNothing = await guessCategoryId('xyz totalement inconnu', 'expense');
   assertEqual('guessCategoryId : null si aucune correspondance', byNothing, null);
+
+  // --- suggestBudgetFromHistory (cœur pur, sans base) ---
+  const stable = suggestBudgetFromHistory([100, 100, 100, 100, 100, 100]);
+  // Entre 100 et 110 : 100 × 1,05 tombe à 104,999… en flottant selon l'ordre des opérations, ce qui
+  // s'arrondit à 100 ou 110 — les deux sont valides, seule la plage compte (jamais sous la moyenne).
+  assertTrue('suggestBudgetFromHistory : habitude stable -> proche de la moyenne (marge ≤ 10 %), tendance stable', stable && stable.suggested >= 100 && stable.suggested <= 110 && stable.trend === 'flat', JSON.stringify(stable));
+  assertEqual('suggestBudgetFromHistory : moins de 2 mois -> null', suggestBudgetFromHistory([100]), null);
+  const spike = suggestBudgetFromHistory([20, 20, 200, 20, 20, 20]);
+  assertTrue('suggestBudgetFromHistory : un pic isolé ne gonfle pas la suggestion', spike && spike.suggested < 30 && spike.trend === 'flat', JSON.stringify(spike));
+  const shift = suggestBudgetFromHistory([10, 10, 10, 10, 50, 50]);
+  assertTrue('suggestBudgetFromHistory : une nouvelle habitude durable (2 mois) est suivie sans attendre', shift && shift.suggested >= 50 && shift.trend === 'up', JSON.stringify(shift));
+  const irregular = suggestBudgetFromHistory([0, 0, 0, 25, 0]);
+  assertTrue('suggestBudgetFromHistory : catégorie irrégulière signalée, sans flèche de tendance', irregular && irregular.irregular && irregular.trend === 'flat', JSON.stringify(irregular));
+  const floored = suggestBudgetFromHistory([0, 0, 0, 0], 47.35);
+  assertTrue('suggestBudgetFromHistory : le plancher fixe (récurrence) est respecté, arrondi au-dessus', floored && floored.suggested === 48 && floored.hasFixedPart && !floored.irregular, JSON.stringify(floored));
+
+  // --- computeBudgetSuggestions (intégration) : ajouté EN DERNIER, après toutes les assertions de
+  //     soldes/patrimoine ci-dessus, car ces données supplémentaires les fausseraient. ---
+  await dbAdd(STORES.CATEGORIES, { id: 'c5', name: 'Test suggestions stable', type: 'expense' });
+  await dbAdd(STORES.CATEGORIES, { id: 'c6', name: 'Test suggestions récurrent', type: 'expense' });
+  for (const m of ['2026-06', '2026-07', '2026-08', '2026-09', '2026-10', '2026-11']) {
+    await dbAdd(STORES.TRANSACTIONS, { id: `ts-${m}`, type: 'expense', walletId: 'w4', categoryId: 'c5', amount: 100, date: `${m}-10`, note: 'Suggestion' });
+  }
+  // Mouvement de dette dans la même catégorie : doit être ignoré (comme dans tous les agrégats).
+  await dbAdd(STORES.TRANSACTIONS, { id: 'ts-debt', type: 'expense', walletId: 'w4', categoryId: 'c5', amount: 9999, date: '2026-11-12', note: 'Remboursement', debtId: 'd1' });
+  await dbAdd(STORES.RECURRING, { id: 'rec1', name: 'Abonnement test', type: 'expense', amount: 250, walletId: 'w4', categoryId: 'c6', frequency: 'monthly', nextDate: '2026-12-05', active: true });
+  await dbAdd(STORES.RECURRING, { id: 'rec2', name: 'Abonnement inactif', type: 'expense', amount: 9000, walletId: 'w4', categoryId: 'c6', frequency: 'monthly', nextDate: '2026-12-05', active: false });
+
+  const sugg = await computeBudgetSuggestions('2026-12');
+  const stableRow = sugg.rows.find((r) => r.categoryId === 'c5');
+  const fixedRow = sugg.rows.find((r) => r.categoryId === 'c6');
+  assertTrue('computeBudgetSuggestions : 6 mois d\'historique utilisés', !sugg.insufficient && sugg.monthsUsed === 6, `monthsUsed=${sugg.monthsUsed}`);
+  assertTrue('computeBudgetSuggestions : le remboursement de dette (9999) est exclu de la suggestion', stableRow && stableRow.suggested >= 100 && stableRow.suggested <= 110, JSON.stringify(stableRow));
+  assertTrue('computeBudgetSuggestions : une récurrence active sans historique donne son montant (250), l\'inactive est ignorée', fixedRow && fixedRow.suggested === 250 && fixedRow.hasFixedPart, JSON.stringify(fixedRow));
+  assertEqual('computeBudgetSuggestions : revenu mensuel moyen (2 000 € sur 6 mois)', sugg.averageIncome, 2000 / 6, 0.01);
+  const early = await computeBudgetSuggestions('2026-04');
+  assertTrue('computeBudgetSuggestions : historique insuffisant -> insufficient', early.insufficient === true && early.rows.length === 0, JSON.stringify(early));
+
+  // --- Portefeuilles Épargne / Bloqué + objectifs d'épargne liés (ajoutés APRÈS toutes les
+  //     assertions de soldes/patrimoine ci-dessus, qu'ils fausseraient) ---
+  const compBefore = await computeNetWorthComposition();
+  const forecastBefore = await computeEndOfMonthForecast();
+  const liquidBefore = await computeLiquidBalance();
+  await dbAdd(STORES.WALLETS, { id: 'w6', name: 'Livret test', type: 'savings', usage: 'savings', currency: 'EUR', initialBalance: 500, createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.WALLETS, { id: 'w7', name: 'Dépôt à terme test', type: 'savings', usage: 'blocked', unlockDate: '2099-01-01', currency: 'EUR', initialBalance: 300, createdAt: '2026-01-01T00:00:00.000Z' });
+  // Virement du portefeuille courant w1 vers l'épargne w6 : le patrimoine total ne change pas.
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tsv1', type: 'transfer', walletId: 'w1', targetWalletId: 'w6', amount: 100, date: '2026-05-01', note: 'Épargne', savingsGoalId: 'g1' });
+  // DEUX objectifs partagent le même portefeuille d'épargne w6 (une voiture ET une maison).
+  await dbAdd(STORES.SAVINGS_GOALS, { id: 'g1', name: 'Voiture', targetAmount: 1000, currentAmount: 0, walletIds: ['w6'], allocations: { w6: 200 }, currency: 'EUR', archived: false });
+  await dbAdd(STORES.SAVINGS_GOALS, { id: 'g3', name: 'Maison', targetAmount: 5000, currentAmount: 0, walletIds: ['w6'], allocations: { w6: 150 }, currency: 'EUR', archived: false });
+  await dbAdd(STORES.SAVINGS_GOALS, { id: 'g2', name: 'Ancien objectif manuel', targetAmount: 800, currentAmount: 250, currency: 'EUR', archived: false });
+
+  const compAfter = await computeNetWorthComposition();
+  const forecastAfter = await computeEndOfMonthForecast();
+  const liquidAfter = await computeLiquidBalance();
+  assertEqual('rôle : un ancien portefeuille sans champ usage est courant', walletUsage({ id: 'x' }), 'current');
+  assertTrue('rôle : isDailyWallet vrai pour courant, faux pour épargne/bloqué/archivé',
+    isDailyWallet({ usage: 'current' }) && !isDailyWallet({ usage: 'savings' }) && !isDailyWallet({ usage: 'blocked' }) && !isDailyWallet({ archived: true }));
+  assertEqual('composition : épargne = solde du portefeuille d\'épargne (500 + 100 versés)', compAfter.savings - compBefore.savings, 600);
+  assertEqual('composition : bloqué = solde du portefeuille bloqué', compAfter.blocked - compBefore.blocked, 300);
+  assertEqual('patrimoine : un virement courant -> épargne ne change PAS la somme liquidités+épargne', (compAfter.liquid + compAfter.savings) - (compBefore.liquid + compBefore.savings), 500);
+  assertEqual('reste à vivre : le solde courant baisse du montant épargné, sans compter épargne/bloqué', forecastAfter.current - forecastBefore.current, -100);
+  assertEqual('liquidités (outils) : comptent courant + épargne mais PAS le bloqué', liquidAfter.total - liquidBefore.total, 500);
+  let allocation = await computeSavingsAllocations();
+  assertEqual('objectif lié : part = montant de départ (200) + versement étiqueté (100)', allocation.goals.get('g1').saved, 300);
+  assertEqual('2e objectif sur le MÊME portefeuille : sa propre part (150)', allocation.goals.get('g3').saved, 150);
+  assertEqual('portefeuille partagé : libre = solde (600) − parts des objectifs (300 + 150)', allocation.wallets.get('w6').free, 150);
+  assertTrue('ancien objectif non lié : garde son montant manuel', !allocation.goals.get('g2').linked && allocation.goals.get('g2').saved === 250, JSON.stringify(allocation.goals.get('g2')));
+  // Retrait étiqueté de l'objectif « Voiture » : sa part baisse de 50, pas celle de « Maison ».
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tsv2', type: 'transfer', walletId: 'w6', targetWalletId: 'w1', amount: 50, date: '2026-05-02', note: 'Retrait voiture', savingsGoalId: 'g1' });
+  allocation = await computeSavingsAllocations();
+  assertEqual('retrait étiqueté : la part de « Voiture » baisse (300 → 250)', allocation.goals.get('g1').saved, 250);
+  assertEqual('retrait étiqueté : la part de « Maison » est intacte', allocation.goals.get('g3').saved, 150);
+  assertEqual('retrait étiqueté : le libre est inchangé (le solde baisse comme la part)', allocation.wallets.get('w6').free, 150);
+  // Un objectif archivé libère sa part.
+  await dbAdd(STORES.SAVINGS_GOALS, { id: 'g4', name: 'Archivé', targetAmount: 100, currentAmount: 0, walletIds: ['w6'], allocations: { w6: 40 }, currency: 'EUR', archived: true });
+  allocation = await computeSavingsAllocations();
+  assertEqual('objectif archivé : sa part ne réduit pas le libre', allocation.wallets.get('w6').free, 150);
+  assertEqual('verrou : retrait refusé avant la date de déblocage', withdrawalLockedUntil({ usage: 'blocked', unlockDate: '2099-01-01' }, '2026-10-12'), '2099-01-01');
+  assertEqual('verrou : retrait possible une fois la date atteinte', withdrawalLockedUntil({ usage: 'blocked', unlockDate: '2026-10-01' }, '2026-10-12'), null);
+  assertEqual('verrou : un portefeuille Épargne n\'est jamais verrouillé', withdrawalLockedUntil({ usage: 'savings', unlockDate: '2099-01-01' }, '2026-10-12'), null);
+
+  // --- Import de sauvegarde : validé d'abord, atomique ensuite (db.js) ---
+  // Cette section vient en DERNIER : un import « remplacer » réécrit la base de test.
+  const snapshot = async () => JSON.stringify(Object.fromEntries(await Promise.all(Object.entries(STORES).map(async ([k, s]) => [k, (await dbGetAll(s)).length]))));
+  const good = JSON.parse(JSON.stringify(await exportAllData()));
+  const before = await snapshot();
+  const tryImport = async (mutate, opts) => {
+    const copy = JSON.parse(JSON.stringify(good)); mutate(copy);
+    try { await importAllData(copy, opts); return 'accepté'; } catch { return 'refusé'; }
+  };
+  assertEqual('import : une sauvegarde saine est acceptée (aller-retour)', await tryImport(() => {}, { merge: false }), 'accepté');
+  assertEqual('import : l\'aller-retour conserve exactement les mêmes données', await snapshot(), before);
+  assertEqual('import : ligne sans id refusée', await tryImport((d) => { d.stores[STORES.TRANSACTIONS].push({ amount: 5 }); }, { merge: false }), 'refusé');
+  assertEqual('import : transaction à date null refusée (elle ferait planter le tableau de bord)', await tryImport((d) => { d.stores[STORES.TRANSACTIONS][0].date = null; }, { merge: false }), 'refusé');
+  assertEqual('import : montant non numérique refusé', await tryImport((d) => { d.stores[STORES.TRANSACTIONS][0].amount = 'abc'; }, { merge: false }), 'refusé');
+  assertEqual('import : nom de portefeuille non texte refusé', await tryImport((d) => { d.stores[STORES.WALLETS][0].name = { a: 1 }; }, { merge: false }), 'refusé');
+  assertEqual('import : un fichier refusé ne modifie RIEN (atomique)', await snapshot(), before);
+  assertEqual('import : un stores non tableau est refusé', await tryImport((d) => { d.stores[STORES.WALLETS] = {}; }, { merge: false }), 'refusé');
+  await importAllData({ stores: { [STORES.SETTINGS]: [{ key: 'pinHash', value: 'evil' }] } }, { merge: true });
+  assertTrue('import : un pinHash forgé est ignoré', !(await dbGetAll(STORES.SETTINGS)).some((r) => r.key === 'pinHash'));
 
   render();
 }

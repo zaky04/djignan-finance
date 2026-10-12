@@ -2,10 +2,11 @@
    Djignan Financial System — Module Tableau de bord
    ========================================================================== */
 
-import { formatCurrency, formatDate, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';
-import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates, computeMonthlyTypeHistory, getCategoriesByType } from '../ledger.js';
+import { formatCurrency, formatDate, formatMonthLabel, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';
+import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates, computeMonthlyTypeHistory, getCategoriesByType, computeBudgetSuggestions } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart } from '../charts.js';
-import { getSetting } from '../db.js';
+import { getSetting, setSetting } from '../db.js';
+import { openBudgetSuggestions } from './budgets.js';
 // Aliasé en tr (pas t) : ce fichier utilise déjà `t` comme nom de paramètre pour une transaction
 // (voir txRowHtml(t)) — importer la fonction de traduction sous le même nom la masquerait
 // silencieusement à l'intérieur de cette fonction (t('Sans catégorie') appellerait alors la
@@ -103,6 +104,41 @@ function renderAlerts(budgetRows, thresholds, unconfirmedRates, currency) {
       stack.appendChild(div);
     }
   }
+}
+
+/** Rappel quand aucun budget n'est défini pour le mois en cours alors qu'il y a assez d'historique
+    pour en suggérer (voir computeBudgetSuggestions, ledger.js). Asynchrone et non bloquant : le
+    calcul relit tout l'historique, donc l'alerte s'ajoute à la pile une fois prête plutôt que de
+    retarder le rendu du tableau de bord. Ignorable pour le mois en cours (réapparaît le mois
+    suivant). Le garde `data-budget-suggest` évite un doublon si deux rendus se chevauchent. */
+async function maybeShowBudgetSuggestionReminder(monthKey) {
+  if ((await getSetting('budgetSuggestionDismissedMonth', null)) === monthKey) return;
+  const data = await computeBudgetSuggestions(monthKey);
+  if (data.insufficient || !data.rows.length) return;
+  const stack = document.getElementById('dashboard-alerts');
+  if (!stack || stack.querySelector('[data-budget-suggest]')) return;
+
+  const div = document.createElement('div');
+  div.className = 'alert alert-info';
+  div.dataset.budgetSuggest = '1';
+  const text = document.createElement('span');
+  text.textContent = tr('Vos budgets pour {month} ne sont pas encore définis.', { month: formatMonthLabel(monthKey) });
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'btn btn-ghost alert-action';
+  open.textContent = tr('Voir les suggestions');
+  open.addEventListener('click', () => openBudgetSuggestions(monthKey));
+  const dismiss = document.createElement('button');
+  dismiss.type = 'button';
+  dismiss.className = 'icon-btn';
+  dismiss.textContent = '✕';
+  dismiss.setAttribute('aria-label', tr('Ignorer pour ce mois'));
+  dismiss.addEventListener('click', async () => {
+    await setSetting('budgetSuggestionDismissedMonth', monthKey);
+    div.remove();
+  });
+  div.append(text, open, dismiss);
+  stack.appendChild(div);
 }
 
 function txRowHtml(t) {
@@ -372,6 +408,7 @@ export async function renderDashboard() {
   }
 
   renderAlerts(budgetVsActual, thresholds, unconfirmedRates, currency);
+  if (budgetVsActual.every((r) => !(r.budget > 0))) maybeShowBudgetSuggestionReminder(monthKey).catch((err) => console.warn('[BudgetSuggest]', err));
   if (panels.recentTransactions) renderRecentTransactions(recentTx);
   if (panels.watchCategories) renderWatchCategories(budgetVsActual);
   if (panels.upcomingBills) renderUpcomingBills(forecast.upcoming, forecast.currency);

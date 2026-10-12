@@ -6,13 +6,14 @@
 
    Convention patrimoine net = soldes portefeuilles + valeur investissements
    + créances - dettes. Les objectifs d'épargne ne sont PAS additionnés en
-   plus : ce sont des enveloppes visuelles sur de l'argent déjà présent dans
-   un portefeuille (pas un actif séparé), donc les compter à part créerait
-   un double comptage.
+   plus : leur argent est dans les portefeuilles d'usage Épargne/Bloqué qui
+   leur sont liés (déjà comptés dans les soldes de portefeuilles), donc les
+   compter à part créerait un double comptage. Un portefeuille Épargne ou
+   Bloqué compte dans le patrimoine net mais PAS dans le « reste à vivre ».
    ========================================================================== */
 
 import { STORES, dbGetAll, getSetting } from './db.js';
-import { convertAmount, currentMonthKey, localISODate, intlLocale } from './utils.js';
+import { convertAmount, currentMonthKey, monthKeyOffset, localISODate, intlLocale } from './utils.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // plusieurs fonctions — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js/
 // reports-extras.js/search.js/backup.js.
@@ -65,6 +66,27 @@ function ratesAsOf(cutoffDate, rates, rateHistory) {
   });
 }
 
+/** Rôle d'un portefeuille : 'current' (utilisable au quotidien — TOUS les portefeuilles créés avant
+    l'existence de ce champ), 'savings' (épargne) ou 'blocked' (bloqué jusqu'à une date de
+    déblocage). Un portefeuille non courant n'apparaît dans AUCUN sélecteur du quotidien (saisie
+    express, récurrences, remboursements, achats d'investissement…) : on n'y verse et on n'en retire
+    qu'en ouvrant sa fiche (wallets.js) ou depuis l'objectif d'épargne qui lui est lié. */
+export function walletUsage(wallet) {
+  return wallet?.usage === 'savings' || wallet?.usage === 'blocked' ? wallet.usage : 'current';
+}
+
+/** Portefeuille proposable dans les sélecteurs du quotidien : actif ET courant. */
+export function isDailyWallet(wallet) {
+  return !wallet.archived && walletUsage(wallet) === 'current';
+}
+
+/** Raison pour laquelle on ne peut PAS retirer d'argent de ce portefeuille aujourd'hui (portefeuille
+    bloqué avant sa date de déblocage), ou null si le retrait est possible. */
+export function withdrawalLockedUntil(wallet, today = localISODate()) {
+  if (walletUsage(wallet) !== 'blocked') return null;
+  return wallet.unlockDate && wallet.unlockDate > today ? wallet.unlockDate : null;
+}
+
 /** Solde de chaque portefeuille (dans SA propre devise), jusqu'à une date optionnelle incluse. */
 export function walletBalancesAsOf(wallets, transactions, cutoffDate = null) {
   const balances = new Map(wallets.map((w) => [w.id, w.initialBalance || 0]));
@@ -94,8 +116,8 @@ export async function getWalletBalance(walletId) {
   return walletBalancesAsOf(wallets, transactions).get(walletId) || 0;
 }
 
-/** Valeur d'un investissement à une date donnée (dernière valorisation connue avant/à cette date).
-    Si aucune valorisation n'a encore été saisie (avant cutoffDate), on reconstruit le capital NET
+/** Valeur d'un investissement à une date donnée (dernière valorisation connue avant/à cette date,
+    plus les apports nets saisis depuis). Si aucune valorisation n'a encore été saisie (avant cutoffDate), on reconstruit le capital NET
     investi à cette date (capital initial + apports - retraits, voir computeMetrics()/investments.js
     pour le même calcul en "temps réel") au lieu de renvoyer seulement le capital initial figé — sans
     ça, un apport ultérieur sans valorisation immédiate après (cas normal : on ne revalorise pas à
@@ -107,12 +129,18 @@ export function investmentValueAsOf(investment, entries, cutoffDate) {
   const relevant = entries
     .filter((e) => e.investmentId === investment.id && e.type === 'valuation' && (!cutoffDate || e.date <= cutoffDate))
     .sort((a, b) => (a.date < b.date ? 1 : -1));
-  if (relevant.length) return relevant[0].amount;
-  if (cutoffDate && investment.createdAt && investment.createdAt.slice(0, 10) > cutoffDate) return 0;
-  const own = entries.filter((e) => e.investmentId === investment.id && (!cutoffDate || e.date <= cutoffDate));
+  const lastValuation = relevant[0] || null;
+  if (!lastValuation && cutoffDate && investment.createdAt && investment.createdAt.slice(0, 10) > cutoffDate) return 0;
+  // Une valorisation est la valeur totale À SA DATE : les apports/retraits datés strictement APRÈS
+  // elle s'y ajoutent (ou s'en retranchent), sinon un apport — surtout un gros, financé par un
+  // prêt — ferait baisser le patrimoine net du montant apporté jusqu'à la prochaine revalorisation.
+  const own = entries.filter((e) => e.investmentId === investment.id
+    && (!cutoffDate || e.date <= cutoffDate)
+    && (!lastValuation || e.date > lastValuation.date));
   const contributions = own.filter((e) => e.type === 'contribution').reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const withdrawals = own.filter((e) => e.type === 'withdrawal').reduce((s, e) => s + (Number(e.amount) || 0), 0);
-  return (investment.capitalInvested || 0) + contributions - withdrawals;
+  const base = lastValuation ? lastValuation.amount : (investment.capitalInvested || 0);
+  return base + contributions - withdrawals;
 }
 
 /** Montant restant dû d'une dette/créance à une date donnée. */
@@ -151,16 +179,23 @@ export async function computeNetWorth(cutoffDate = null) {
   return netWorthAt(cutoffDate, await ctx());
 }
 
-/** Répartition du patrimoine net (liquidités / investissements / dettes) à une date donnée, pour le donut de composition. */
+/** Répartition du patrimoine net (liquidités courantes / épargne / bloqué / investissements /
+    créances / dettes) à une date donnée, pour le donut de composition. Le patrimoine net compte
+    TOUS les portefeuilles, quel que soit leur rôle : épargner ou bloquer de l'argent ne le fait pas
+    sortir de votre patrimoine, seulement de ce que vous pouvez dépenser au quotidien. */
 export async function computeNetWorthComposition(cutoffDate = null) {
   const { wallets, transactions, investments, investmentEntries, debts, debtPayments, rates, rateHistory, baseCurrency } = await ctx();
   const balances = walletBalancesAsOf(wallets, transactions, cutoffDate);
   const ratesForDate = ratesAsOf(cutoffDate, rates, rateHistory);
 
-  let liquid = 0, invested = 0, receivables = 0, debtTotal = 0;
+  let liquid = 0, savings = 0, blocked = 0, invested = 0, receivables = 0, debtTotal = 0;
   for (const w of wallets) {
     if (cutoffDate && w.createdAt && w.createdAt.slice(0, 10) > cutoffDate) continue;
-    liquid += toBase(balances.get(w.id) || 0, w.currency, ratesForDate, baseCurrency);
+    const amount = toBase(balances.get(w.id) || 0, w.currency, ratesForDate, baseCurrency);
+    const usage = walletUsage(w);
+    if (usage === 'savings') savings += amount;
+    else if (usage === 'blocked') blocked += amount;
+    else liquid += amount;
   }
   for (const inv of investments) {
     invested += toBase(investmentValueAsOf(inv, investmentEntries, cutoffDate), inv.currency, ratesForDate, baseCurrency);
@@ -170,7 +205,7 @@ export async function computeNetWorthComposition(cutoffDate = null) {
     if (d.type === 'receivable') receivables += remaining;
     else debtTotal += remaining;
   }
-  return { liquid, invested, receivables, debts: debtTotal, currency: baseCurrency };
+  return { liquid, savings, blocked, invested, receivables, debts: debtTotal, currency: baseCurrency };
 }
 
 /** Historique du patrimoine net sur N mois (fin de chaque mois), pour le graphique de tendance.
@@ -447,6 +482,167 @@ export async function computeMonthlyBudgetSummary(monthKey = currentMonthKey()) 
   return { totalBudget, totalSpent, remaining: totalBudget - totalSpent, currency: baseCurrency };
 }
 
+/* ---------- Suggestions de budget (d'après les habitudes de dépense) ---------- */
+const BUDGET_SUGGESTION_MONTHS = 6;
+const BUDGET_SUGGESTION_HALF_LIFE = 2; // mois : une dépense plus ancienne de 2 mois pèse moitié moins
+const BUDGET_SUGGESTION_MARGIN = 1.05;
+
+function medianOf(values) {
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+/** Arrondit à 2 chiffres significatifs (17 340 → 17 000 ; 8 230 → 8 200 ; 43,7 → 44) : un budget
+    "propre" à saisir et à lire, sans fausse précision. `up` arrondit au-dessus (plancher fixe). */
+function roundTwoSignificant(value, up = false) {
+  if (!(value > 0)) return 0;
+  const unit = Math.pow(10, Math.floor(Math.log10(value)) - 1);
+  const q = value / unit;
+  return Math.round((up ? Math.ceil(q - 1e-9) : Math.round(q)) * unit * 100) / 100;
+}
+
+/** Cœur pur (testable sans base) : montants mensuels d'UNE catégorie, du plus ancien au plus récent
+    (uniquement des mois réellement utilisables), plus un plancher fixe éventuel (récurrences
+    actives de cette catégorie, en équivalent mensuel). Renvoie null s'il n'y a rien à suggérer.
+    - Moyenne pondérée à décroissance exponentielle : les mois récents comptent davantage, donc la
+      suggestion suit les habitudes qui évoluent.
+    - Changement de régime : si les 2 derniers mois sont TOUS DEUX nettement au-dessus (ou en
+      dessous) de la moyenne antérieure, on s'aligne directement sur eux au lieu d'attendre que la
+      pondération rattrape — sinon un loyer qui monte resterait sous-estimé pendant des mois.
+    - Mois exceptionnel isolé (un seul mois > 2× la médiane) : remplacé par la médiane, pour qu'une
+      grosse facture ponctuelle ne gonfle pas le budget des mois suivants (ni ne fausse la flèche de
+      tendance). Deux mois élevés = nouvelle habitude, jamais neutralisée. */
+export function suggestBudgetFromHistory(amounts, floor = 0) {
+  const n = amounts.length;
+  if (n < 2) return null;
+  const nonZero = amounts.filter((a) => a > 0);
+  if (!nonZero.length && !(floor > 0)) return null;
+  const mean = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0);
+
+  // Plafonnement d'un pic isolé AVANT toute autre analyse : sinon il fausserait aussi la détection
+  // de changement de régime et la flèche de tendance (un pic ancien ferait croire à une baisse).
+  let adj = amounts;
+  if (nonZero.length >= 3) {
+    const med = medianOf(nonZero);
+    if (nonZero.filter((a) => a > 2 * med).length === 1) adj = amounts.map((a) => (a > 2 * med ? med : a));
+  }
+
+  const last2 = adj.slice(-2);
+  const olderMean = mean(adj.slice(0, -2));
+  const shiftedUp = n >= 4 && Math.min(...last2) > olderMean * 1.2;
+  const shiftedDown = n >= 4 && olderMean > 0 && Math.max(...last2) < olderMean * 0.8;
+
+  let base;
+  if (shiftedUp || shiftedDown) {
+    base = mean(last2);
+  } else {
+    let weightedSum = 0;
+    let weightTotal = 0;
+    adj.forEach((a, i) => {
+      const weight = Math.pow(0.5, (n - 1 - i) / BUDGET_SUGGESTION_HALF_LIFE);
+      weightedSum += a * weight;
+      weightTotal += weight;
+    });
+    base = weightedSum / weightTotal;
+  }
+
+  const irregular = nonZero.length / n < 0.5;
+  // Une flèche de tendance n'a de sens que pour une dépense régulière.
+  let trend = 'flat';
+  if (n >= 4 && !irregular) {
+    const recent = mean(last2);
+    if (olderMean > 0 ? recent / olderMean > 1.15 : recent > 0) trend = 'up';
+    else if (olderMean > 0 && recent / olderMean < 0.85) trend = 'down';
+  }
+
+  let suggested = roundTwoSignificant(base * BUDGET_SUGGESTION_MARGIN);
+  const fixedFloor = floor > 0 ? roundTwoSignificant(floor, true) : 0;
+  if (fixedFloor > suggested) suggested = fixedFloor;
+  if (!(suggested > 0)) return null;
+  return {
+    suggested,
+    avg3: mean(amounts.slice(-3)),
+    trend,
+    monthsWithSpend: nonZero.length,
+    monthsUsed: n,
+    irregular: !fixedFloor && irregular,
+    hasFixedPart: fixedFloor > 0,
+  };
+}
+
+/** Propose un budget pour chaque catégorie de dépense d'après les 6 derniers mois COMPLETS avant
+    `monthKey` (le mois en cours n'est jamais compté : il est partiel). Mêmes exclusions que tous les
+    autres agrégats (mouvements de dette et d'investissement). Les mois antérieurs à la toute
+    première transaction sont ignorés (ce ne sont pas des mois "à 0 dépense" mais des mois sans
+    historique), et le premier mois d'utilisation aussi quand il reste assez d'autres mois (souvent
+    partiel). Aucun état mémorisé : tout est recalculé à chaque appel, donc la suggestion suit
+    automatiquement l'évolution des habitudes. */
+export async function computeBudgetSuggestions(monthKey = currentMonthKey()) {
+  const { wallets, transactions, categories, budgets, rates, baseCurrency } = await ctx();
+  const recurring = await dbGetAll(STORES.RECURRING);
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+
+  let firstMonth = null;
+  for (const t of transactions) {
+    if (!t.date) continue;
+    const m = t.date.slice(0, 7);
+    if (!firstMonth || m < firstMonth) firstMonth = m;
+  }
+  let months = [];
+  for (let i = BUDGET_SUGGESTION_MONTHS; i >= 1; i--) months.push(monthKeyOffset(monthKey, -i));
+  months = months.filter((m) => firstMonth && m >= firstMonth);
+  if (months.length >= 4 && months[0] === firstMonth) months = months.slice(1);
+
+  const base = {
+    currency: baseCurrency,
+    monthsUsed: months.length,
+    unconfirmedRates: rates.filter((r) => r.confirmed === false).map((r) => r.code),
+  };
+  if (months.length < 2) return { ...base, insufficient: true, rows: [], averageIncome: 0 };
+
+  const monthSet = new Set(months);
+  const spend = new Map();
+  const incomeByMonth = new Map(months.map((m) => [m, 0]));
+  for (const t of transactions) {
+    const m = t.date?.slice(0, 7);
+    if (!m || !monthSet.has(m)) continue;
+    if (t.debtId || isInvestmentMovementExcluded(t)) continue;
+    const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
+    if (t.type === 'expense') {
+      const key = `${m}|${t.categoryId}`;
+      spend.set(key, (spend.get(key) || 0) + amt);
+    } else if (t.type === 'income') {
+      incomeByMonth.set(m, incomeByMonth.get(m) + amt);
+    }
+  }
+
+  // Plancher fixe : récurrences actives de dépense (hors apports d'investissement, exclus des
+  // budgets comme partout ailleurs) en équivalent mensuel. Les récurrences annuelles sont ignorées :
+  // ce n'est pas un coût mensuel (elles ont leur propre onglet "Budgets annuels").
+  const floors = new Map();
+  for (const r of recurring) {
+    if (!r.active || r.type !== 'expense' || r.investmentId || !r.categoryId) continue;
+    const factor = r.frequency === 'monthly' ? 1 : r.frequency === 'weekly' ? 52 / 12 : 0;
+    if (!factor) continue;
+    const amt = toBase(Number(r.amount) || 0, walletCurrency[r.walletId] || baseCurrency, rates, baseCurrency) * factor;
+    floors.set(r.categoryId, (floors.get(r.categoryId) || 0) + amt);
+  }
+
+  const currentLimits = new Map(budgets.filter((b) => b.month === monthKey).map((b) => [b.categoryId, b.limit || 0]));
+  const rows = [];
+  for (const c of categories) {
+    if (c.type !== 'expense') continue;
+    const amounts = months.map((m) => spend.get(`${m}|${c.id}`) || 0);
+    const s = suggestBudgetFromHistory(amounts, floors.get(c.id) || 0);
+    if (!s) continue;
+    rows.push({ categoryId: c.id, label: c.name, parentId: c.parentId || null, currentLimit: currentLimits.get(c.id) || 0, ...s });
+  }
+  rows.sort((a, b) => b.suggested - a.suggested);
+  const averageIncome = [...incomeByMonth.values()].reduce((s, v) => s + v, 0) / months.length;
+  return { ...base, insufficient: false, rows, averageIncome };
+}
+
 export async function getExchangeRates() {
   const { rates, baseCurrency } = await ctx();
   return { rates, baseCurrency };
@@ -460,16 +656,88 @@ export async function getUnconfirmedRates() {
   return rates.filter((r) => r.confirmed === false);
 }
 
-/** Somme des soldes de portefeuilles actifs (liquidités), hors investissements/dettes. */
+/** Somme des soldes de portefeuilles actifs ACCESSIBLES (courants + épargne), hors investissements/
+    dettes. Les portefeuilles bloqués sont exclus : on ne peut pas y toucher avant leur date de
+    déblocage, donc ce n'est ni un fonds d'urgence ni un budget d'achat. Sert aux outils (fonds
+    d'urgence, impact d'un achat) — PAS au « reste à vivre », qui ne compte que les portefeuilles
+    courants (voir computeEndOfMonthForecast). */
 export async function computeLiquidBalance(cutoffDate = null) {
   const { wallets, transactions, rates, baseCurrency } = await ctx();
   const balances = walletBalancesAsOf(wallets, transactions, cutoffDate);
   let total = 0;
   for (const w of wallets) {
-    if (w.archived) continue;
+    if (w.archived || walletUsage(w) === 'blocked') continue;
     total += toBase(balances.get(w.id) || 0, w.currency, rates, baseCurrency);
   }
   return { total, currency: baseCurrency };
+}
+
+/** Affectation de l'argent d'un portefeuille d'épargne/bloqué entre PLUSIEURS objectifs (une voiture ET
+    une maison dans le même compte d'épargne). Un objectif a, dans chaque portefeuille lié, une part :
+        part = goal.allocations[walletId] (montant de départ saisi)
+             + versements étiquetés de CET objectif (virements portant savingsGoalId, vers ce portefeuille)
+             − retraits étiquetés de cet objectif (depuis ce portefeuille).
+    Ce qui reste du solde du portefeuille, non affecté à un objectif actif, est « libre » (solde initial
+    non affecté, intérêts, versements faits directement depuis la fiche du portefeuille). Un objectif
+    archivé libère sa part. L'argent est toujours celui du portefeuille : rien n'est compté deux fois
+    dans le patrimoine.
+    Renvoie { goals: Map(goalId → { linked, saved, wallets: [{ id, name, usage, unlockDate, allocated }] }),
+              wallets: Map(walletId → { balance, allocated, free, goals: [{ goalId, name, amount }] }) }.
+    Un objectif sans portefeuille lié (ancien suivi manuel) garde linked: false et son ancien montant
+    saisi à la main (goal.currentAmount), jamais de l'argent réel du ledger. */
+export async function computeSavingsAllocations() {
+  const { wallets, transactions } = await ctx();
+  const goals = await dbGetAll(STORES.SAVINGS_GOALS);
+  const balances = walletBalancesAsOf(wallets, transactions);
+  const walletById = new Map(wallets.map((w) => [w.id, w]));
+  const goalById = new Map(goals.map((g) => [g.id, g]));
+
+  // alloc.get(goalId).get(walletId) = part de l'objectif dans ce portefeuille
+  const alloc = new Map();
+  for (const goal of goals) {
+    const perWallet = new Map();
+    for (const id of goal.walletIds || []) perWallet.set(id, Number((goal.allocations || {})[id]) || 0);
+    alloc.set(goal.id, perWallet);
+  }
+  for (const t of transactions) {
+    if (!t.savingsGoalId || t.type !== 'transfer') continue;
+    const goal = goalById.get(t.savingsGoalId);
+    if (!goal) continue;
+    const perWallet = alloc.get(goal.id);
+    const amt = Number(t.amount) || 0;
+    if (perWallet.has(t.targetWalletId)) perWallet.set(t.targetWalletId, perWallet.get(t.targetWalletId) + amt);
+    else if (perWallet.has(t.walletId)) perWallet.set(t.walletId, perWallet.get(t.walletId) - amt);
+  }
+
+  const goalsResult = new Map();
+  const walletsResult = new Map();
+  const ensureWallet = (id) => {
+    if (!walletsResult.has(id)) walletsResult.set(id, { balance: balances.get(id) || 0, allocated: 0, free: 0, goals: [] });
+    return walletsResult.get(id);
+  };
+  for (const goal of goals) {
+    const perWallet = alloc.get(goal.id);
+    const detail = [...perWallet.entries()].filter(([id]) => walletById.has(id)).map(([id, amount]) => {
+      const w = walletById.get(id);
+      return { id, name: w.name, usage: walletUsage(w), unlockDate: w.unlockDate || null, allocated: Math.max(0, amount) };
+    });
+    const linked = (goal.walletIds || []).length > 0;
+    goalsResult.set(goal.id, { linked, saved: linked ? detail.reduce((s, d) => s + d.allocated, 0) : (goal.currentAmount || 0), wallets: detail });
+    if (!goal.archived) {
+      for (const d of detail) {
+        const w = ensureWallet(d.id);
+        w.allocated += d.allocated;
+        w.goals.push({ goalId: goal.id, name: goal.name, amount: d.allocated });
+      }
+    }
+  }
+  for (const w of wallets) {
+    if (walletUsage(w) === 'current') continue;
+    const entry = ensureWallet(w.id);
+    entry.free = entry.balance - entry.allocated;
+  }
+  for (const entry of walletsResult.values()) entry.free = entry.balance - entry.allocated;
+  return { goals: goalsResult, wallets: walletsResult };
 }
 
 /** Dépenses/recettes réelles du mois pour CHAQUE catégorie d'un type donné (y compris à 0). */
@@ -513,9 +781,11 @@ export async function computeEndOfMonthForecast() {
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
   const balances = walletBalancesAsOf(wallets, transactions);
 
+  // Seuls les portefeuilles COURANTS : l'argent mis de côté (épargne/bloqué) n'est pas à dépenser,
+  // donc il ne doit ni gonfler le « reste à vivre » ni le solde prévisionnel de fin de mois.
   let current = 0;
   for (const w of wallets) {
-    if (w.archived) continue;
+    if (!isDailyWallet(w)) continue;
     current += toBase(balances.get(w.id) || 0, w.currency, rates, baseCurrency);
   }
 
@@ -663,7 +933,7 @@ export async function computeFinancialHealthScore(monthKey = currentMonthKey()) 
   const savingsRate = summary.income > 0 ? summary.netSavings / summary.income : 0;
   const savingsScore = Math.max(0, Math.min(100, (savingsRate / 0.2) * 100));
 
-  const grossAssets = composition.liquid + composition.invested + composition.receivables;
+  const grossAssets = composition.liquid + composition.savings + composition.blocked + composition.invested + composition.receivables;
   const debtRatio = grossAssets > 0 ? composition.debts / grossAssets : (composition.debts > 0 ? 1 : 0);
   const debtScore = Math.max(0, Math.min(100, 100 - debtRatio * 100));
 

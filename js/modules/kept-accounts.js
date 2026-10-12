@@ -7,9 +7,10 @@
    depuis Paramètres (voir settings.js applyOptionalModuleVisibility()).
    ========================================================================== */
 
-import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit } from '../db.js';
+import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit, getSetting } from '../db.js';
 import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { openProofExportModal, PRINT_ICON } from '../proof-export.js';
 import { t } from '../i18n.js';
 
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
@@ -23,6 +24,70 @@ function accountBalance(account, entries) {
   return (account.initialBalance || 0) + total;
 }
 
+/** Fiche à exporter (PDF/Excel) pour ce compte gardé : voir proof-export.js pour le format. Les
+    montants du tableau sont signés (+ entrée / − sortie) pour rester sommables dans Excel, et le
+    solde est recalculé après chaque mouvement à partir du solde initial. */
+async function buildKeptAccountProof(account) {
+  const [allEntries, profile] = await Promise.all([dbGetAll(STORES.KEPT_ACCOUNT_ENTRIES), getSetting('userProfile', {})]);
+  const own = allEntries
+    .filter((e) => e.accountId === account.id)
+    .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt || '').localeCompare(b.createdAt || ''));
+  const cur = account.currency;
+  const money = (amount) => ({ amount, currency: cur });
+  const declarant = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || t('Utilisateur');
+  const totalIn = own.filter((e) => e.type === 'in').reduce((s, e) => s + (e.amount || 0), 0);
+  const totalOut = own.filter((e) => e.type !== 'in').reduce((s, e) => s + (e.amount || 0), 0);
+
+  let running = account.initialBalance || 0;
+  const rows = [[{ date: (account.createdAt || '').slice(0, 10) }, t('Solde initial'), '', '', money(running)]];
+  for (const e of own) {
+    const signed = e.type === 'in' ? (e.amount || 0) : -(e.amount || 0);
+    running += signed;
+    rows.push([{ date: e.date }, e.type === 'in' ? t('Entrée') : t('Sortie'), e.note || '', money(signed), money(running)]);
+  }
+
+  return {
+    title: t('Fiche de compte gardé'),
+    subtitle: account.ownerName,
+    signatures: [t('Le gardien — {name}', { name: declarant }), t("Le propriétaire de l'argent — {name}", { name: account.ownerName })],
+    blocks: [
+      {
+        type: 'rows',
+        heading: t('Informations générales'),
+        rows: [
+          [t("Nom du propriétaire de l'argent"), account.ownerName],
+          [t('Devise'), cur],
+          [t('Statut'), account.archived ? t('Archivé') : t('Actif')],
+          [t('Date de création'), { date: (account.createdAt || '').slice(0, 10) }],
+          [t('Solde initial'), money(account.initialBalance || 0)],
+          ...(account.note ? [[t('Note'), account.note]] : []),
+        ],
+      },
+      {
+        type: 'rows',
+        heading: t('Synthèse'),
+        rows: [
+          [t('Total des entrées'), money(totalIn)],
+          [t('Total des sorties'), money(totalOut)],
+          [t('Solde actuel'), money(accountBalance(account, allEntries))],
+        ],
+      },
+      {
+        type: 'table',
+        heading: t('Historique des mouvements'),
+        columns: [
+          { label: t('Date'), align: 'left', weight: 2.4 },
+          { label: t('Type'), align: 'left', weight: 2.4 },
+          { label: t('Note'), align: 'left', weight: 3.8 },
+          { label: `${t('Montant')} (${cur})`, align: 'right', weight: 2.8 },
+          { label: `${t('Solde après')} (${cur})`, align: 'right', weight: 2.8 },
+        ],
+        rows,
+      },
+    ],
+  };
+}
+
 function accountCardHtml(account, balance) {
   return `
     <div class="summary-card" data-account-id="${account.id}">
@@ -32,6 +97,7 @@ function accountCardHtml(account, balance) {
           <div style="font-weight:700;font-size:14.5px;">${escapeHtml(account.ownerName)}</div>
         </div>
         <div class="card-actions">
+          <button type="button" class="icon-btn" data-action="export" aria-label="${t('Exporter / imprimer')}" title="${t('Exporter / imprimer')}">${PRINT_ICON}</button>
           <button type="button" class="icon-btn" data-action="edit" aria-label="${t('Modifier')}" title="${t('Modifier')}">${EDIT_ICON}</button>
           <button type="button" class="icon-btn" data-action="archive" aria-label="${account.archived ? t('Désarchiver') : t('Archiver')}" title="${account.archived ? t('Désarchiver') : t('Archiver')}">${ARCHIVE_ICON}</button>
           <button type="button" class="icon-btn" data-action="delete" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
@@ -42,19 +108,20 @@ function accountCardHtml(account, balance) {
     </div>`;
 }
 
-function accountFormHtml(account) {
+function accountFormHtml(account, defaultCurrency = 'EUR') {
   return `
     <form id="kept-account-form">
       <div class="form-row"><label>${t("Nom du propriétaire de l'argent")}</label><input type="text" name="ownerName" required maxlength="60" value="${escapeHtml(account?.ownerName || '')}" placeholder="${t('Ex: Petit frère, Maman…')}"></div>
-      <div class="form-row"><label>${t('Devise')}</label>${currencySelectHtml(account?.currency || 'EUR')}</div>
+      <div class="form-row"><label>${t('Devise')}</label>${currencySelectHtml(account?.currency || defaultCurrency)}</div>
       <div class="form-row"><label>${account ? t('Solde initial') : t('Solde de départ')}</label><input type="number" step="0.01" name="initialBalance" value="${account?.initialBalance ?? 0}"></div>
       <div class="form-row"><label>${t('Note (optionnel)')}</label><input type="text" name="note" maxlength="140" value="${escapeHtml(account?.note || '')}"></div>
       <button type="submit" class="btn btn-primary btn-block">${account ? t('Enregistrer') : t('Créer le compte')}</button>
     </form>`;
 }
 
-function openAccountModal(account = null) {
-  const modal = openModal(accountFormHtml(account), { title: account ? t('Modifier le compte gardé') : t('Nouveau compte gardé') });
+async function openAccountModal(account = null) {
+  const defaultCurrency = account?.currency || await getSetting('baseCurrency', 'EUR');
+  const modal = openModal(accountFormHtml(account, defaultCurrency), { title: account ? t('Modifier le compte gardé') : t('Nouveau compte gardé') });
   wireCurrencySelect(modal.el);
   modal.el.querySelector('#kept-account-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -124,6 +191,7 @@ async function renderAccountDetail(container, account) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
+    if (!(safeNumber(parseFloat(fd.get('amount'))) > 0)) { showToast(t('Saisissez un montant supérieur à 0.')); return; }
     const entry = {
       id: uuid(),
       accountId: account.id,
@@ -147,7 +215,7 @@ async function renderAccountDetail(container, account) {
       const ok = await confirmDialog(t('Supprimer ce mouvement ?'), { danger: true, confirmText: t('Supprimer') });
       if (!ok) return;
       await dbDelete(STORES.KEPT_ACCOUNT_ENTRIES, entryId);
-      await logAudit({ entityType: 'keptAccountEntry', entityId, action: 'delete', before: target });
+      await logAudit({ entityType: 'keptAccountEntry', entityId: entryId, action: 'delete', before: target });
       showToast(t('Mouvement supprimé.'));
       notifyDataChanged('keptAccounts');
       await renderAccountDetail(container, account);
@@ -190,6 +258,8 @@ export function initKeptAccountsModule() {
 
     if (btn.dataset.action === 'open') {
       openAccountDetailModal(account);
+    } else if (btn.dataset.action === 'export') {
+      openProofExportModal(() => buildKeptAccountProof(account));
     } else if (btn.dataset.action === 'edit') {
       openAccountModal(account);
     } else if (btn.dataset.action === 'archive') {

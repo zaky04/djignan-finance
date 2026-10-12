@@ -6,8 +6,8 @@
    de fin de mois).
    ========================================================================== */
 
-import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit, getSetting } from '../db.js';
-import { computeCategoryActuals, computeEndOfMonthForecast, computeEnvelopeCarryover, computeAnnualCategoryActuals } from '../ledger.js';
+import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, dbWriteBatch, logAudit, getSetting } from '../db.js';
+import { computeCategoryActuals, computeEndOfMonthForecast, computeEnvelopeCarryover, computeAnnualCategoryActuals, computeBudgetSuggestions, isDailyWallet } from '../ledger.js';
 import { ensureInvestmentCategoryId } from './investments.js';
 import {
   uuid, formatCurrency, formatDate, formatMonthLabel, formatPercent, escapeHtml, todayISO, localISODate,
@@ -101,11 +101,14 @@ async function renderMonthlyTab(container) {
     ? t('Solde actuel : {amount} · {count} échéance(s) à venir ce mois-ci', { amount: formatCurrency(forecast.current, forecast.currency), count: forecast.upcoming.length })
     : t('Solde actuel : {amount}', { amount: formatCurrency(forecast.current, forecast.currency) });
   container.innerHTML = `
-    <div style="display:flex;align-items:center;gap:4px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;gap:4px;margin-bottom:14px;flex-wrap:wrap;">
       <button type="button" class="icon-btn" id="bud-prev-month" aria-label="${t('Mois précédent')}">‹</button>
       <strong style="min-width:130px;text-align:center;display:inline-block;">${formatMonthLabel(monthKey)}</strong>
       <button type="button" class="icon-btn" id="bud-next-month" aria-label="${t('Mois suivant')}">›</button>
-      ${canCopyPrevious ? `<button type="button" class="btn btn-ghost" id="bud-copy-prev" style="margin-left:auto;">${t('Reprendre les budgets du mois dernier')}</button>` : ''}
+      <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
+        ${canCopyPrevious ? `<button type="button" class="btn btn-ghost" id="bud-copy-prev">${t('Reprendre les budgets du mois dernier')}</button>` : ''}
+        <button type="button" class="btn btn-ghost" id="bud-suggest">${t('Suggérer des budgets')}</button>
+      </span>
     </div>
     <div class="hero-card" style="margin-bottom:18px;">
       <div class="hero-card-label">${t('Solde prévisionnel de fin de mois')}</div>
@@ -129,6 +132,7 @@ async function renderMonthlyTab(container) {
 
   container.querySelector('#bud-prev-month').onclick = () => { monthKey = monthKeyOffset(monthKey, -1); renderMonthlyTab(container); };
   container.querySelector('#bud-next-month').onclick = () => { monthKey = monthKeyOffset(monthKey, 1); renderMonthlyTab(container); };
+  container.querySelector('#bud-suggest').addEventListener('click', () => openBudgetSuggestions(monthKey));
   container.querySelector('#bud-copy-prev')?.addEventListener('click', async () => {
     for (const b of prevMonthBudgets) {
       await dbPut(STORES.BUDGETS, { id: uuid(), categoryId: b.categoryId, month: monthKey, limit: b.limit });
@@ -142,12 +146,114 @@ async function renderMonthlyTab(container) {
       const categoryId = input.dataset.limitInput;
       const limit = safeNumber(parseFloat(input.value));
       const existing = monthBudgets.find((b) => b.categoryId === categoryId);
+      if (!(limit > 0)) {
+        // Champ vidé, 0 ou négatif (le navigateur laisse taper « -100 » et déclenche quand même
+        // l'événement) : pas de budget. On retire l'enregistrement au lieu d'en garder un à 0 ou négatif.
+        if (existing) await dbDelete(STORES.BUDGETS, existing.id);
+        showToast(t('Budget mis à jour.'));
+        notifyDataChanged('budgets');
+        return;
+      }
       const record = existing ? { ...existing, limit } : { id: uuid(), categoryId, month: monthKey, limit };
       await dbPut(STORES.BUDGETS, record);
       showToast(t('Budget mis à jour.'));
       notifyDataChanged('budgets');
     });
   });
+}
+
+/** Modale « Suggérer des budgets » : propose un plafond par catégorie d'après les habitudes de
+    dépense (voir computeBudgetSuggestions, ledger.js). Chaque ligne est cochable et modifiable ;
+    deux façons d'appliquer — remplir seulement les catégories sans budget, ou tout appliquer en
+    remplaçant les budgets existants (annulable depuis le toast, écriture atomique). */
+export async function openBudgetSuggestions(targetMonthKey = monthKey) {
+  const data = await computeBudgetSuggestions(targetMonthKey);
+  if (data.insufficient || !data.rows.length) {
+    showToast(t("Pas assez d'historique pour suggérer des budgets (il faut au moins 2 mois complets de dépenses)."));
+    return;
+  }
+  const cur = data.currency;
+  const trendIcon = {
+    up: `<span class="bsug-trend is-up" title="${escapeHtml(t('Dépenses en hausse'))}" aria-label="${escapeHtml(t('Dépenses en hausse'))}">▲</span>`,
+    down: `<span class="bsug-trend is-down" title="${escapeHtml(t('Dépenses en baisse'))}" aria-label="${escapeHtml(t('Dépenses en baisse'))}">▼</span>`,
+    flat: '',
+  };
+  const rowsHtml = data.rows.map((r) => `
+    <div class="bsug-row">
+      <input type="checkbox" data-bsug-check="${r.categoryId}" ${r.irregular ? '' : 'checked'} aria-label="${escapeHtml(r.label)}">
+      <div>
+        <div class="bsug-label">${escapeHtml(r.label)}
+          ${r.hasFixedPart ? `<span class="badge">${t('récurrent')}</span>` : ''}
+          ${r.irregular ? `<span class="badge">${t('irrégulier')}</span>` : ''}
+          ${trendIcon[r.trend]}
+        </div>
+        <div class="bsug-sub">${t('Moyenne 3 derniers mois : {amount}', { amount: formatCurrency(r.avg3, cur) })}${r.currentLimit > 0 ? ` · ${t('Actuel : {amount}', { amount: formatCurrency(r.currentLimit, cur) })}` : ''}</div>
+      </div>
+      <input type="number" min="0" step="any" class="bsug-input" data-bsug-input="${r.categoryId}" value="${r.suggested}">
+    </div>`).join('');
+
+  const modal = openModal(`
+    <p class="bsug-intro">${t("Basé sur vos {count} derniers mois de dépenses — les mois récents comptent davantage. Modifiez les montants si besoin avant d'appliquer.", { count: data.monthsUsed })}</p>
+    ${data.unconfirmedRates.length ? `<div class="alert alert-warn">${t('Taux de change non confirmé pour {codes} : les montants convertis de ces suggestions peuvent être faux.', { codes: data.unconfirmedRates.join(', ') })}</div>` : ''}
+    <div class="bsug-list">${rowsHtml}</div>
+    <div class="bsug-summary" id="bsug-summary"></div>
+    <div class="bsug-actions">
+      <button type="button" class="btn btn-primary" id="bsug-fill-empty">${t('Remplir les budgets vides')}</button>
+      <button type="button" class="btn btn-ghost" id="bsug-apply-all">${t('Tout appliquer (remplace les budgets existants)')}</button>
+    </div>`, { title: t('Suggestions de budget — {month}', { month: formatMonthLabel(targetMonthKey) }) });
+
+  const checkboxes = [...modal.el.querySelectorAll('[data-bsug-check]')];
+  const inputOf = (categoryId) => modal.el.querySelector(`[data-bsug-input="${categoryId}"]`);
+  const summary = modal.el.querySelector('#bsug-summary');
+
+  function refreshSummary() {
+    let total = 0;
+    for (const cb of checkboxes) {
+      if (cb.checked) total += safeNumber(parseFloat(inputOf(cb.dataset.bsugCheck).value));
+    }
+    const over = data.averageIncome > 0 && total > data.averageIncome;
+    summary.classList.toggle('is-over', over);
+    summary.innerHTML = `<div>${t('Total des budgets cochés : {amount}', { amount: formatCurrency(total, cur) })}${data.averageIncome > 0 ? ` · ${t('Revenu mensuel moyen : {amount}', { amount: formatCurrency(data.averageIncome, cur) })}` : ''}</div>${over ? `<div>${t('⚠ Le total dépasse votre revenu mensuel moyen.')}</div>` : ''}`;
+  }
+  modal.el.addEventListener('input', refreshSummary);
+  modal.el.addEventListener('change', refreshSummary);
+  refreshSummary();
+
+  async function apply(overwrite) {
+    const existing = new Map((await dbGetAll(STORES.BUDGETS)).filter((b) => b.month === targetMonthKey).map((b) => [b.categoryId, b]));
+    const ops = [];
+    const undoOps = [];
+    for (const cb of checkboxes) {
+      if (!cb.checked) continue;
+      const categoryId = cb.dataset.bsugCheck;
+      const limit = safeNumber(parseFloat(inputOf(categoryId).value));
+      if (!(limit > 0)) continue;
+      const prev = existing.get(categoryId);
+      if (prev && prev.limit > 0 && !overwrite) continue;
+      if (prev) {
+        ops.push({ store: STORES.BUDGETS, type: 'put', value: { ...prev, limit } });
+        undoOps.push({ store: STORES.BUDGETS, type: 'put', value: prev });
+      } else {
+        const record = { id: uuid(), categoryId, month: targetMonthKey, limit };
+        ops.push({ store: STORES.BUDGETS, type: 'put', value: record });
+        undoOps.push({ store: STORES.BUDGETS, type: 'delete', value: record.id });
+      }
+    }
+    if (!ops.length) { showToast(t('Rien à appliquer.')); return; }
+    await dbWriteBatch(ops);
+    modal.close();
+    notifyDataChanged('budgets');
+    showToast(t('{count} budget(s) appliqué(s).', { count: ops.length }), {
+      actionLabel: t('Annuler'),
+      onAction: async () => {
+        await dbWriteBatch(undoOps);
+        notifyDataChanged('budgets');
+        showToast(t('Budgets rétablis.'));
+      },
+    });
+  }
+  modal.el.querySelector('#bsug-fill-empty').addEventListener('click', () => apply(false));
+  modal.el.querySelector('#bsug-apply-all').addEventListener('click', () => apply(true));
 }
 
 /* ==========================================================================
@@ -200,6 +306,12 @@ async function renderAnnualTab(container) {
       const categoryId = input.dataset.limitInput;
       const limit = safeNumber(parseFloat(input.value));
       const existing = yearBudgets.find((b) => b.categoryId === categoryId);
+      if (!(limit > 0)) {
+        if (existing) await dbDelete(STORES.BUDGETS, existing.id);
+        showToast(t('Budget mis à jour.'));
+        notifyDataChanged('budgets');
+        return;
+      }
       const record = existing ? { ...existing, limit } : { id: uuid(), categoryId, month: yearKey, period: 'annual', limit };
       await dbPut(STORES.BUDGETS, record);
       showToast(t('Budget annuel mis à jour.'));
@@ -406,7 +518,9 @@ function openRecurringModal(r = null) {
   let currentKind = r?.investmentId ? 'investment' : (r?.type || 'expense');
 
   async function populate() {
-    const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
+    // Portefeuilles courants uniquement — sauf celui déjà lié à la récurrence qu'on modifie, pour que
+    // son édition ne vide pas silencieusement la sélection (voir isDailyWallet, ledger.js).
+    const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => isDailyWallet(w) || w.id === r?.walletId);
     walletSelect.innerHTML = wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('') || `<option value="">${t("Créez un portefeuille d'abord")}</option>`;
     if (r?.walletId) walletSelect.value = r.walletId;
 
@@ -455,6 +569,7 @@ function openRecurringModal(r = null) {
     const fd = new FormData(form);
     if (!fd.get('walletId')) { showToast(t("Créez au moins un portefeuille avant d'ajouter une récurrence.")); return; }
     if (currentKind === 'investment' && !investmentSelect.value) { showToast(t("Choisissez un investissement, ou créez-en un d'abord.")); return; }
+    if (!(safeNumber(parseFloat(fd.get('amount'))) > 0)) { showToast(t('Saisissez un montant supérieur à 0.')); return; }
     const before = r ? { ...r } : null;
     const record = {
       id: r?.id || uuid(),

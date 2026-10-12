@@ -42,10 +42,13 @@ export async function seedDemoData() {
   // t(...) sur les libellés génériques (pas "Orange Money", un vrai nom de marque, ni "Cousin
   // Amadou" plus bas, un nom de personne) — même principe que DEFAULT_CATEGORIES : traduit
   // seulement au moment de la création de ce jeu de données de démonstration.
-  const walletMobileMoney = { id: uuid(), name: 'Orange Money', type: 'mobile_money', currency: 'XOF', initialBalance: 42000, archived: false, createdAt: now };
+  const walletMobileMoney = { id: uuid(), name: 'Orange Money', type: 'mobile_money', currency: 'XOF', initialBalance: 80000, archived: false, createdAt: now };
   const walletBank = { id: uuid(), name: t('Compte courant'), type: 'bank', currency: 'XOF', initialBalance: 185000, archived: false, createdAt: now };
-  const walletCash = { id: uuid(), name: t('Espèces'), type: 'cash', currency: 'XOF', initialBalance: 12000, archived: false, createdAt: now };
-  await dbBulkPut(STORES.WALLETS, [walletMobileMoney, walletBank, walletCash]);
+  const walletCash = { id: uuid(), name: t('Espèces'), type: 'cash', currency: 'XOF', initialBalance: 40000, archived: false, createdAt: now };
+  // Portefeuille d'usage « Épargne » : absent de tous les écrans du quotidien, lié à l'objectif
+  // d'épargne ci-dessous (voir walletUsage, ledger.js, et savings.js).
+  const walletSavings = { id: uuid(), name: t("Livret d'épargne"), type: 'savings', usage: 'savings', unlockDate: null, currency: 'XOF', initialBalance: 120000, archived: false, createdAt: now };
+  await dbBulkPut(STORES.WALLETS, [walletMobileMoney, walletBank, walletCash, walletSavings]);
 
   // wipeUserData() ci-dessus vide aussi CATEGORIES (créées une seule fois par seedDefaultsIfNeeded()
   // au tout premier boot, voir app.js) — on ne peut pas compter dessus ici. DEFAULT_CATEGORIES (db.js)
@@ -93,13 +96,13 @@ export async function seedDemoData() {
   ]);
 
   await dbBulkPut(STORES.SAVINGS_GOALS, [{
-    id: uuid(), name: t("Fonds d'urgence"), targetAmount: 500000, currentAmount: 120000, currency: 'XOF',
+    id: uuid(), name: t("Fonds d'urgence"), targetAmount: 500000, currentAmount: 0, walletIds: [walletSavings.id], allocations: { [walletSavings.id]: 120000 }, currency: 'XOF',
     targetDate: null, archived: false, createdAt: now,
   }]);
 
   const investmentId = uuid();
   await dbBulkPut(STORES.INVESTMENTS, [{
-    id: investmentId, name: t('Épargne actions'), assetClass: 'actions', currency: 'XOF',
+    id: investmentId, name: t('Épargne actions'), description: t("Exemple de démonstration : portefeuille d'actions de la zone UEMOA, alimenté régulièrement."), reference: '', assetClass: 'actions', currency: 'XOF',
     capitalInvested: 200000, createdAt: daysAgoTimestamp(58),
   }]);
   await dbBulkPut(STORES.INVESTMENT_ENTRIES, [

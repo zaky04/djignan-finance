@@ -3,8 +3,8 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, dbGetAllByIndex, logAudit, getSetting, setSetting } from '../db.js';
-import { getAllWalletBalances, computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthlyBudgetSummary, computeEndOfMonthForecast } from '../ledger.js';
-import { uuid, formatCurrency, escapeHtml, todayISO, currentMonthKey, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
+import { getAllWalletBalances, computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions, computeSavingsAllocations, walletUsage, isDailyWallet, withdrawalLockedUntil } from '../ledger.js';
+import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, currentMonthKey, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { renderExpensesByCategoryChart } from '../charts.js';
 import { t } from '../i18n.js';
@@ -26,6 +26,8 @@ async function renderWealthHero() {
 
   const compositionRows = [
     { label: t('Liquidités'), value: composition.liquid, color: '#4f5bff' },
+    { label: t('Épargne'), value: composition.savings, color: '#7c3aed' },
+    { label: t('Bloqué'), value: composition.blocked, color: '#64748b' },
     { label: t('Investissements'), value: composition.invested, color: '#16a34a' },
     { label: t('Créances'), value: composition.receivables, color: '#0891b2' },
     { label: t('Dettes'), value: composition.debts, color: '#e11d48' },
@@ -72,8 +74,13 @@ const WALLET_TYPES = {
   savings: { label: 'Épargne spécifique', icon: '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2c-4 3-9 3.5-9 3.5V12c0 6 4 9.5 9 10.5 5-1 9-4.5 9-10.5V5.5S16 5 12 2Z"/></svg>' },
 };
 
-function walletFormHtml(wallet, defaultCurrency) {
+// Rôle d'un portefeuille (voir walletUsage, ledger.js) — les clés sont stockées en base
+// (wallet.usage), les libellés traduits à l'usage.
+const WALLET_USAGES = { current: 'Courant', savings: 'Épargne', blocked: 'Bloqué' };
+
+function walletFormHtml(wallet, defaultCurrency, presetUsage = null) {
   const isEdit = !!wallet;
+  const usage = wallet ? walletUsage(wallet) : (presetUsage || 'current');
   return `
     <form id="wallet-form">
       <div class="form-row">
@@ -85,6 +92,18 @@ function walletFormHtml(wallet, defaultCurrency) {
         <select name="type">
           ${Object.entries(WALLET_TYPES).map(([key, meta]) => `<option value="${key}" ${wallet?.type === key ? 'selected' : ''}>${t(meta.label)}</option>`).join('')}
         </select>
+      </div>
+      <div class="form-row">
+        <label>${t('Usage du portefeuille')}</label>
+        <select name="usage">
+          ${Object.entries(WALLET_USAGES).map(([key, label]) => `<option value="${key}" ${usage === key ? 'selected' : ''}>${t(label)}</option>`).join('')}
+        </select>
+        <p style="font-size:12px;color:var(--text-muted);margin:4px 0 0;">${t("Courant : utilisable au quotidien. Épargne ou Bloqué : absent de tous les écrans du quotidien — on y verse et on en retire uniquement depuis la fiche du portefeuille.")}</p>
+      </div>
+      <div class="form-row" data-field="unlockRow" ${usage === 'blocked' ? '' : 'hidden'}>
+        <label>${t('Date de déblocage')}</label>
+        <input type="date" name="unlockDate" value="${escapeHtml(wallet?.unlockDate || '')}">
+        <p style="font-size:12px;color:var(--text-muted);margin:4px 0 0;">${t("Aucun retrait n'est possible avant cette date.")}</p>
       </div>
       <div class="form-row">
         <label>${t('Devise')}</label>
@@ -102,19 +121,57 @@ function walletFormHtml(wallet, defaultCurrency) {
     </form>`;
 }
 
-async function openWalletModal(wallet = null, { onDone = null } = {}) {
-  const defaultCurrency = wallet ? wallet.currency : await getSetting('baseCurrency', 'EUR');
-  const modal = openModal(walletFormHtml(wallet, defaultCurrency), { title: wallet ? t('Modifier le portefeuille') : t('Nouveau portefeuille'), onClose: onDone });
+async function openWalletModal(wallet = null, { onDone = null, preset = null } = {}) {
+  const defaultCurrency = wallet ? wallet.currency : (preset?.currency || await getSetting('baseCurrency', 'EUR'));
+  const modal = openModal(walletFormHtml(wallet, defaultCurrency, preset?.usage), { title: wallet ? t('Modifier le portefeuille') : t('Nouveau portefeuille'), onClose: onDone });
   wireCurrencySelect(modal.el);
-  modal.el.querySelector('#wallet-form').addEventListener('submit', async (e) => {
+  const form = modal.el.querySelector('#wallet-form');
+  const usageSelect = form.elements.usage;
+  const unlockRow = form.querySelector('[data-field="unlockRow"]');
+  const syncUnlockRow = () => {
+    unlockRow.hidden = usageSelect.value !== 'blocked';
+    form.elements.unlockDate.required = usageSelect.value === 'blocked';
+  };
+  usageSelect.addEventListener('change', syncUnlockRow);
+  syncUnlockRow();
+
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const currency = readCurrencyValue(e.target);
     const before = wallet ? { ...wallet } : null;
+    const usage = fd.get('usage');
+    const unlockDate = usage === 'blocked' ? (fd.get('unlockDate') || '') : '';
+    if (usage === 'blocked' && !unlockDate) { showToast(t('Indiquez la date de déblocage.')); return; }
+
+    // Un portefeuille lié à un objectif d'épargne actif doit rester Épargne/Bloqué : le repasser en
+    // courant le ferait réapparaître dans les écrans du quotidien tout en comptant dans la
+    // progression de l'objectif.
+    if (wallet && usage === 'current' && walletUsage(wallet) !== 'current') {
+      const goal = (await dbGetAll(STORES.SAVINGS_GOALS)).find((g) => !g.archived && (g.walletIds || []).includes(wallet.id));
+      if (goal) {
+        showToast(t('Ce portefeuille est lié à l\'objectif d\'épargne « {name} » : déliez-le d\'abord.', { name: goal.name }));
+        return;
+      }
+    }
+
+    // Un portefeuille qui cesse d'être courant disparaît des écrans du quotidien : une récurrence
+    // active qui le débite/crédite continuerait sinon à le faire en silence, sans que l'utilisateur
+    // puisse la voir ni la corriger depuis un sélecteur — on la lui fait d'abord changer.
+    if (wallet && usage !== 'current' && walletUsage(wallet) === 'current') {
+      const linked = (await dbGetAll(STORES.RECURRING)).filter((r) => r.active && r.walletId === wallet.id);
+      if (linked.length) {
+        showToast(t('Ce portefeuille est utilisé par {count} récurrence(s) active(s) : changez-les ou désactivez-les d\'abord.', { count: linked.length }));
+        return;
+      }
+    }
+
     const record = {
       id: wallet?.id || uuid(),
       name: fd.get('name').trim(),
       type: fd.get('type'),
+      usage,
+      unlockDate: unlockDate || null,
       currency,
       initialBalance: safeNumber(parseFloat(fd.get('initialBalance'))),
       lowBalanceThreshold: safeNumber(parseFloat(fd.get('lowBalanceThreshold'))),
@@ -142,15 +199,20 @@ async function ensureExchangeRateRow(currency) {
   }
 }
 
+const LOCK_ICON = '<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M18 8h-1V6a5 5 0 0 0-10 0v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2Zm-6 9a2 2 0 1 1 0-4 2 2 0 0 1 0 4Zm3.1-9H8.9V6a3.1 3.1 0 0 1 6.2 0v2Z"/></svg>';
+
 function walletCardHtml(w) {
   const meta = WALLET_TYPES[w.type] || WALLET_TYPES.bank;
+  const usage = walletUsage(w);
+  const lockedUntil = withdrawalLockedUntil(w);
+  const usageBadge = usage === 'current' ? '' : `<span class="badge badge-accent" style="margin-left:6px;">${usage === 'blocked' ? LOCK_ICON + ' ' : ''}${escapeHtml(t(WALLET_USAGES[usage]))}</span>`;
   return `
     <div class="summary-card" data-wallet-id="${w.id}">
       <div class="card-title-row">
         <div style="display:flex;align-items:center;gap:10px;">
           <div class="tx-icon">${meta.icon}</div>
           <div>
-            <div class="summary-card-label">${escapeHtml(t(meta.label))} · ${escapeHtml(w.currency)}</div>
+            <div class="summary-card-label">${escapeHtml(t(meta.label))} · ${escapeHtml(w.currency)}${usageBadge}</div>
             <div style="font-weight:700;font-size:14.5px;">${escapeHtml(w.name)}</div>
           </div>
         </div>
@@ -164,7 +226,163 @@ function walletCardHtml(w) {
         </div>
       </div>
       <div class="summary-card-value amount" data-value="${w.balance}">${formatCurrency(w.balance, w.currency)}</div>
+      ${usage === 'blocked' ? `<div class="tx-sub" style="margin-top:4px;">${lockedUntil ? t('Bloqué jusqu\'au {date}', { date: formatDate(lockedUntil) }) : t('Déblocage atteint — retraits possibles')}</div>` : ''}
+      ${usage !== 'current' ? `<button type="button" class="btn btn-ghost btn-block" data-action="open" style="margin-top:10px;">${t('Ouvrir le portefeuille')}</button>` : ''}
     </div>`;
+}
+
+/* ---------- Fiche d'un portefeuille Épargne / Bloqué : verser, retirer, intérêts ---------- */
+const INTEREST_CATEGORY_NAME_VARIANTS = ['Intérêts', 'Interest'];
+
+/** Catégorie des intérêts/gains crédités directement sur un portefeuille d'épargne. Mêmes variantes
+    FR/EN que ensureInvestmentCategoryId (investments.js) : une note créée en anglais ne doit pas
+    faire naître une seconde catégorie à côté de celle déjà existante en français. */
+async function ensureInterestCategoryId() {
+  const categories = await dbGetAll(STORES.CATEGORIES);
+  const existing = categories.find((c) => c.type === 'income' && INTEREST_CATEGORY_NAME_VARIANTS.includes(c.name));
+  if (existing) return existing.id;
+  const category = { id: uuid(), name: t('Intérêts'), type: 'income', parentId: null, createdAt: new Date().toISOString() };
+  await dbAdd(STORES.CATEGORIES, category);
+  return category.id;
+}
+
+/** Ouvre le formulaire de mouvement d'un portefeuille non courant. `mode` : 'deposit' (verser depuis
+    un portefeuille courant), 'withdraw' (retirer vers un portefeuille courant — refusé avant la date
+    de déblocage d'un portefeuille bloqué) ou 'interest' (intérêts/gain crédités directement).
+    Exportée : l'objectif d'épargne lié à ce portefeuille l'utilise aussi (savings.js). */
+export async function openWalletMoveModal(wallet, mode = 'deposit', { onDone = null, goal = null } = {}) {
+  const allWallets = await dbGetAll(STORES.WALLETS);
+  const dailyWallets = allWallets.filter((w) => isDailyWallet(w) && w.currency === wallet.currency && w.id !== wallet.id);
+  let currentMode = mode;
+
+  const modal = openModal(`
+    <form id="wallet-move-form">
+      <div class="segmented" data-field="move-mode">
+        <button type="button" class="segmented-btn" data-value="deposit">${t('Verser')}</button>
+        <button type="button" class="segmented-btn" data-value="withdraw">${t('Retirer des fonds')}</button>
+        <button type="button" class="segmented-btn" data-value="interest">${t('Intérêts / gain')}</button>
+      </div>
+      <div class="form-row"><label>${t('Montant')} (${escapeHtml(wallet.currency)})</label><input type="number" step="0.01" min="0" name="amount" required></div>
+      <div class="form-row" data-field="otherWalletRow">
+        <label data-field="otherWalletLabel"></label>
+        <select name="otherWalletId"></select>
+      </div>
+      <div class="form-row"><label>${t('Date')}</label><input type="date" name="date" value="${todayISO()}" required></div>
+      <div class="form-row"><label>${t('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
+      <p id="wallet-move-hint" style="font-size:12.5px;color:var(--text-muted);margin:0 0 12px;"></p>
+      <button type="submit" class="btn btn-primary btn-block">${t('Enregistrer')}</button>
+    </form>`, { title: goal ? t('{wallet} — objectif « {goal} »', { wallet: wallet.name, goal: goal.name }) : t('Portefeuille — {name}', { name: wallet.name }), onClose: onDone });
+
+  const form = modal.el.querySelector('#wallet-move-form');
+  const hintEl = modal.el.querySelector('#wallet-move-hint');
+  const otherRow = modal.el.querySelector('[data-field="otherWalletRow"]');
+  const otherLabel = modal.el.querySelector('[data-field="otherWalletLabel"]');
+
+  function syncMode() {
+    modal.el.querySelectorAll('.segmented-btn').forEach((b) => b.classList.toggle('is-active', b.dataset.value === currentMode));
+    otherRow.hidden = currentMode === 'interest';
+    form.elements.otherWalletId.required = currentMode !== 'interest';
+    otherLabel.textContent = currentMode === 'deposit' ? t('Depuis le portefeuille') : t('Vers le portefeuille');
+    form.elements.otherWalletId.innerHTML = dailyWallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
+      || `<option value="">${t('Aucun portefeuille courant dans cette devise')}</option>`;
+    const lockedUntil = withdrawalLockedUntil(wallet);
+    hintEl.textContent = currentMode === 'withdraw' && lockedUntil
+      ? t('Portefeuille bloqué jusqu\'au {date} : retrait impossible.', { date: formatDate(lockedUntil) })
+      : currentMode === 'interest' ? t("Crédite directement ce portefeuille (intérêts, gain) — compté comme revenu.") : '';
+  }
+  modal.el.querySelectorAll('.segmented-btn').forEach((b) => b.addEventListener('click', () => { currentMode = b.dataset.value; syncMode(); }));
+  syncMode();
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const amount = safeNumber(parseFloat(fd.get('amount')));
+    if (!(amount > 0)) { showToast(t('Saisissez un montant supérieur à 0.')); return; }
+    const date = fd.get('date') || todayISO();
+    const note = (fd.get('note') || '').trim().slice(0, 140);
+    const otherWalletId = fd.get('otherWalletId');
+    if (currentMode !== 'interest' && !otherWalletId) { showToast(t('Aucun portefeuille courant disponible dans cette devise.')); return; }
+
+    if (currentMode === 'withdraw') {
+      const lockedUntil = withdrawalLockedUntil(wallet);
+      if (lockedUntil) { showToast(t('Portefeuille bloqué jusqu\'au {date} : retrait impossible.', { date: formatDate(lockedUntil) })); return; }
+      const balance = (await getAllWalletBalances()).find((w) => w.id === wallet.id)?.balance || 0;
+      if (amount > balance + 0.005) { showToast(t('Solde insuffisant : {amount} disponible.', { amount: formatCurrency(balance, wallet.currency) })); return; }
+      // Plusieurs objectifs partagent ce portefeuille : on ne peut retirer que SA part pour un objectif,
+      // et seulement le montant LIBRE (non affecté) depuis la fiche du portefeuille — sinon on mangerait
+      // l'argent d'un autre objectif sans le voir.
+      const alloc = await computeSavingsAllocations();
+      if (goal) {
+        const mine = alloc.goals.get(goal.id)?.wallets.find((w) => w.id === wallet.id)?.allocated || 0;
+        if (amount > mine + 0.005) { showToast(t("Cet objectif n'a que {amount} dans ce portefeuille.", { amount: formatCurrency(mine, wallet.currency) })); return; }
+      } else {
+        const free = alloc.wallets.get(wallet.id)?.free ?? balance;
+        if (amount > free + 0.005) { showToast(t("Seulement {amount} est libre : le reste est affecté à des objectifs d'épargne.", { amount: formatCurrency(Math.max(0, free), wallet.currency) })); return; }
+      }
+    }
+
+    const tx = {
+      id: uuid(),
+      type: currentMode === 'interest' ? 'income' : 'transfer',
+      walletId: currentMode === 'deposit' ? otherWalletId : wallet.id,
+      targetWalletId: currentMode === 'deposit' ? wallet.id : (currentMode === 'withdraw' ? otherWalletId : null),
+      categoryId: currentMode === 'interest' ? await ensureInterestCategoryId() : null,
+      amount,
+      date,
+      note: note || (currentMode === 'deposit' ? t('Versement — {name}', { name: wallet.name }) : currentMode === 'withdraw' ? t('Retrait — {name}', { name: wallet.name }) : t('Intérêts / gain')),
+      tags: [],
+      reconciled: false,
+      // L'étiquette d'objectif ne concerne que les versements/retraits (pas les intérêts, qui restent
+      // libres dans le portefeuille).
+      savingsGoalId: currentMode === 'interest' ? null : (goal?.id || null),
+      createdAt: new Date().toISOString(),
+    };
+    await dbAdd(STORES.TRANSACTIONS, tx);
+    await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: t('Mouvement de portefeuille épargne/bloqué') });
+    modal.close();
+    showToast(t('Mouvement enregistré.'));
+    notifyDataChanged('all');
+  });
+}
+
+/** Fiche d'un portefeuille Épargne/Bloqué : solde, verrou éventuel, objectif lié, actions et
+    historique complet de ses mouvements. */
+export async function openWalletDetailModal(wallet) {
+  const [balances, alloc, rows] = await Promise.all([getAllWalletBalances(), computeSavingsAllocations(), getEnrichedTransactions({ walletId: wallet.id })]);
+  const balance = balances.find((w) => w.id === wallet.id)?.balance || 0;
+  const walletAlloc = alloc.wallets.get(wallet.id) || { allocated: 0, free: balance, goals: [] };
+  const lockedUntil = withdrawalLockedUntil(wallet);
+  const usage = walletUsage(wallet);
+
+  const rowHtml = (tx) => {
+    const isIn = tx.type === 'income' || (tx.type === 'transfer' && tx.targetWalletId === wallet.id);
+    const label = tx.type === 'transfer'
+      ? (isIn ? t('Versement depuis {name}', { name: tx.wallet?.name || '—' }) : t('Retrait vers {name}', { name: tx.targetWallet?.name || '—' }))
+      : (tx.category?.name || t('Intérêts / gain'));
+    return `
+      <div class="tx-row">
+        <div class="tx-main"><div class="tx-title">${escapeHtml(label)}</div><div class="tx-sub">${formatDate(tx.date)}${tx.note ? ' · ' + escapeHtml(tx.note) : ''}</div></div>
+        <div class="tx-amount amount ${isIn ? 'pos' : 'neg'}">${isIn ? '+' : '−'}${formatCurrency(tx.amount, wallet.currency)}</div>
+      </div>`;
+  };
+
+  const modal = openModal(`
+    <div class="stat-row"><span class="stat-row-label">${t('Solde actuel')}</span><strong class="amount">${formatCurrency(balance, wallet.currency)}</strong></div>
+    <div class="stat-row"><span class="stat-row-label">${t('Usage du portefeuille')}</span><span>${escapeHtml(t(WALLET_USAGES[usage]))}</span></div>
+    ${usage === 'blocked' ? `<div class="stat-row"><span class="stat-row-label">${t('Date de déblocage')}</span><span>${wallet.unlockDate ? formatDate(wallet.unlockDate) : '—'}${lockedUntil ? '' : ' ✓'}</span></div>` : ''}
+    ${walletAlloc.goals.map((g) => `<div class="stat-row"><span class="stat-row-label">${t('Objectif « {name} »', { name: escapeHtml(g.name) })}</span><span>${formatCurrency(g.amount, wallet.currency)}</span></div>`).join('')}
+    ${walletAlloc.goals.length ? `<div class="stat-row"><span class="stat-row-label">${t('Libre (non affecté)')}</span><span>${formatCurrency(Math.max(0, walletAlloc.free), wallet.currency)}</span></div>` : ''}
+    <div class="proof-actions" style="margin:14px 0;">
+      <button type="button" class="btn btn-primary" data-move="deposit">${t('Verser')}</button>
+      <button type="button" class="btn btn-ghost" data-move="withdraw" ${lockedUntil ? 'disabled' : ''}>${t('Retirer des fonds')}</button>
+      <button type="button" class="btn btn-ghost" data-move="interest">${t('Intérêts / gain')}</button>
+    </div>
+    ${lockedUntil ? `<p style="font-size:12.5px;color:var(--text-muted);margin:-6px 0 12px;">${t('Portefeuille bloqué jusqu\'au {date} : retrait impossible.', { date: formatDate(lockedUntil) })}</p>` : ''}
+    <div>${rows.length ? rows.map(rowHtml).join('') : `<div class="empty-state">${t('Aucun mouvement pour le moment.')}</div>`}</div>`, { title: wallet.name });
+
+  modal.el.querySelectorAll('[data-move]').forEach((btn) => {
+    btn.addEventListener('click', () => { modal.close(); openWalletMoveModal(wallet, btn.dataset.move); });
+  });
 }
 
 /** Récupère les taux du jour depuis un service public gratuit, sans clé d'API (open.er-api.com).
@@ -292,6 +510,8 @@ export function initWalletsModule() {
 
     if (btn.dataset.action === 'edit') {
       openWalletModal(wallet);
+    } else if (btn.dataset.action === 'open') {
+      openWalletDetailModal(wallet);
     } else if (btn.dataset.action === 'archive') {
       const txCount = (await dbGetAllByIndex(STORES.TRANSACTIONS, 'byWallet', walletId)).length;
       if (!wallet.archived && txCount === 0) {

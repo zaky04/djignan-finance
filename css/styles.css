@@ -288,6 +288,30 @@ body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
 .alert-warn { background: var(--warn-soft); color: #92620a; }
 .alert-danger { background: var(--neg-soft); color: var(--neg); }
 .alert-info { background: var(--accent-soft); color: var(--accent); }
+.alert .alert-action { margin-left: auto; flex-shrink: 0; }
+
+/* ---------- Export « preuve » PDF / Excel + description d'investissement ---------- */
+.proof-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.proof-actions .btn { flex: 1 1 140px; white-space: normal; }
+.inv-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 4px; }
+
+/* ---------- Modale « Suggérer des budgets » ---------- */
+.bsug-intro { font-size: 13px; color: var(--text-muted); margin: 0 0 12px; }
+.bsug-list { max-height: 36vh; overflow-y: auto; margin-bottom: 12px; }
+.bsug-row {
+  display: grid; grid-template-columns: auto 1fr minmax(90px, 120px); gap: 10px; align-items: center;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.bsug-label { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bsug-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.bsug-trend { font-size: 11px; }
+.bsug-trend.is-up { color: var(--neg); }
+.bsug-trend.is-down { color: var(--pos); }
+.bsug-input { width: 100%; text-align: right; }
+.bsug-summary { font-size: 13px; font-weight: 600; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-alt); margin-bottom: 12px; }
+.bsug-summary.is-over { background: var(--warn-soft); color: #92620a; }
+.bsug-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.bsug-actions .btn { flex: 1 1 200px; white-space: normal; line-height: 1.3; }
 
 .hero-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 

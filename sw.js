@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v104';
+const CACHE_VERSION = 'v118';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 // Nom volontairement SANS le préfixe "geofinance-" : le nettoyage de l'activate ci-dessous
 // supprime tout cache "geofinance-*" différent de CACHE_NAME à chaque déploiement (mécanisme de
@@ -28,6 +28,7 @@ const APP_SHELL = [
   './js/i18n.js',
   './js/charts.js',
   './js/backup.js',
+  './js/proof-export.js',
   './js/firebase-config.js',
   './js/activation-config.js',
   './js/firebase-sync.js',
@@ -117,7 +118,10 @@ self.addEventListener('fetch', (event) => {
       try {
         const formData = await request.formData();
         const file = formData.get('receipt');
-        if (file && file.size > 0) {
+        // N'importe quel site peut poster un formulaire vers cette URL : on ne garde qu'une vraie
+        // photo raster (pas de SVG, pas de gros fichier arbitraire qui remplirait le stockage).
+        const isRasterImage = file && typeof file.type === 'string' && file.type.startsWith('image/') && !file.type.includes('svg');
+        if (isRasterImage && file.size > 0 && file.size <= 15 * 1024 * 1024) {
           const cache = await caches.open(SHARE_TARGET_CACHE);
           await cache.put('shared-receipt', new Response(file, { headers: { 'Content-Type': file.type || 'image/jpeg' } }));
         }

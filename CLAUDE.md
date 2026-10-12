@@ -2989,6 +2989,319 @@ express) est lui entièrement vérifié.
 
 `CACHE_VERSION` : `v103` → `v104`.
 
+### 12 octobre 2026 — Suggestions de budget d'après les habitudes de dépense (Djignan uniquement)
+
+Demandé par l'auteur après un usage prolongé : que l'app propose un budget par catégorie d'après ses
+habitudes réelles, et s'adapte quand elles changent. Faisabilité analysée avant d'écrire du code
+(tout existait déjà : `STORES.BUDGETS` au format `{categoryId, month, limit}`, dépenses par catégorie
+déjà converties en devise de base), puis deux choix tranchés avec l'auteur : **(1)** deux façons
+d'appliquer — remplir seulement les catégories sans budget, OU tout appliquer en remplaçant les
+budgets existants ; **(2)** un rappel en début de mois en plus du bouton.
+
+**Calcul** (`ledger.js`, aucun état mémorisé : tout est recalculé à chaque appel, donc l'adaptation
+est automatique) :
+- `suggestBudgetFromHistory(amounts, floor)` — cœur **pur** (exporté, testable sans base) sur les
+  montants mensuels d'UNE catégorie, du plus ancien au plus récent. Moyenne pondérée à décroissance
+  exponentielle (demi-vie 2 mois : les mois récents comptent davantage), +5 % de marge, arrondi à
+  2 chiffres significatifs (17 340 → 17 000 ; 8 230 → 8 200). Trois garde-fous :
+  1. *Pic isolé* (un seul mois > 2× la médiane) → remplacé par la médiane, **avant** toute autre
+     analyse (sinon il faussait aussi la détection de changement et la flèche de tendance : un pic
+     ancien faisait afficher « en baisse »). Deux mois élevés = nouvelle habitude, jamais neutralisée.
+  2. *Changement de régime* : si les 2 derniers mois sont tous deux nettement au-dessus (>+20 %) ou en
+     dessous (<−20 %) de la moyenne antérieure, on s'aligne directement dessus au lieu d'attendre que
+     la pondération rattrape — sinon un loyer qui monte resterait sous-estimé des mois.
+  3. *Catégorie irrégulière* (dépense < 1 mois sur 2) : signalée, décochée par défaut, sans flèche.
+- Plancher fixe : récurrences actives de dépense de la catégorie (mensuelles ; hebdomadaires ×52/12 ;
+  annuelles ignorées — elles ont leur onglet « Budgets annuels » ; apports d'investissement exclus
+  comme partout). Une récurrence sans aucun historique suffit à produire une suggestion.
+- `computeBudgetSuggestions(monthKey)` — une seule passe sur les transactions (un seul `ctx()`, pas un
+  par mois). Fenêtre : 6 mois COMPLETS avant le mois visé (le mois en cours, partiel, n'est jamais
+  compté). Mois antérieurs à la toute première transaction ignorés (ce sont des mois sans historique,
+  pas des mois à 0 dépense) ; premier mois d'utilisation ignoré aussi s'il reste ≥ 3 autres mois
+  (souvent partiel). < 2 mois utilisables → `insufficient`. Mêmes exclusions que tous les agrégats
+  (mouvements de dette et d'investissement). Renvoie aussi le revenu mensuel moyen et les taux de
+  change non confirmés (affichés en avertissement dans la modale).
+
+**Interface** (`budgets.js`, `dashboard.js`, aucun nouvel écran) :
+- Bouton « Suggérer des budgets » dans l'en-tête de l'onglet Budgets du mois → `openBudgetSuggestions()`
+  (exportée) : modale avec, par catégorie, case à cocher, moyenne des 3 derniers mois, budget actuel
+  éventuel, montant suggéré **modifiable**, badges « récurrent »/« irrégulier » et flèche ▲/▼ de
+  tendance ; total des lignes cochées comparé au revenu moyen (avertissement si dépassé).
+  « Remplir les budgets vides » (ne touche jamais un budget déjà saisi) ou « Tout appliquer (remplace
+  les budgets existants) ». Écriture **atomique** (`dbWriteBatch`) et **annulable** depuis le toast
+  (restaure les anciennes limites / supprime les budgets créés).
+- Rappel (`maybeShowBudgetSuggestionReminder`, `dashboard.js`) : si aucun budget n'est défini pour le
+  mois en cours et qu'il y a assez d'historique, une alerte « Vos budgets pour {mois} ne sont pas
+  encore définis — Voir les suggestions » s'ajoute à la pile du tableau de bord. **Asynchrone, non
+  bloquant** (le calcul relit tout l'historique : ne retarde pas le rendu) ; `✕` l'ignore pour le mois
+  en cours (`budgetSuggestionDismissedMonth`), elle réapparaît le mois suivant ; le garde
+  `data-budget-suggest` évite un doublon si deux rendus se chevauchent.
+- En-tête du mois passé en `flex-wrap` (deux boutons côte à côte débordaient à 375 px — leçon déjà
+  documentée sur l'en-tête de Transactions).
+
+~21 nouvelles clés i18n (968 clés au total, 0 doublon).
+
+**Testé** : 14 cas du cœur pur en script Node isolé ; **11 nouvelles assertions** dans
+`test/ledger.test.html` (6 sur le cœur pur, 5 d'intégration : fenêtre de 6 mois, remboursement de
+dette de 9 999 exclu, récurrence active retenue/inactive ignorée, revenu moyen, historique
+insuffisant) — **35/35** (24 existantes + 11). Dans le navigateur, sur un historique synthétique de 6
+mois : Logement 45→60 k suivi à 63 000 (▲), Loisirs avec un pic de 95 k neutralisé à 21 000 (sans
+fausse flèche), Abonnements remonté au plancher de la récurrence (8 000, badge), Santé irrégulière
+décochée ; « Remplir les vides » avec un budget Alimentation préexistant à 40 000 → 4 budgets créés,
+Alimentation intacte ; annulation → état initial ; « Tout appliquer » → Alimentation à 54 000 ;
+annulation → retour à 40 000 ; rappel du tableau de bord affiché, sans doublon sur un second rendu,
+persistant à l'ignorer, absent dès qu'un budget existe ; message d'historique insuffisant ; FR et EN.
+Contrôle visuel à 375 px (carte modale sans double défilement, deux boutons alignés sans débordement)
+et sur bureau. Deux défauts visuels trouvés et corrigés en route : flèche « ↗ » rendue en emoji bleu
+(remplacée par ▲/▼ colorés), second bouton débordant de 14 px (`white-space: normal`).
+
+**Piège de test** : `100 × 1,05` tombe à 104,999… en flottant selon l'ordre des opérations et
+s'arrondit à 100 au lieu de 110 — d'où des assertions en plage (100–110) plutôt qu'une valeur exacte.
+
+**Volontairement pas fait** (à rediscuter si besoin) : option « viser −10 % » (objectif d'économie) —
+suggérer d'après le passé peut figer de mauvaises habitudes, mais c'est une décision produit à part ;
+non porté sur `geofinance-free` (demande limitée à Djignan).
+
+`CACHE_VERSION` : `v104` → `v105`.
+
+### 12 octobre 2026 (suite) — Export « preuve » PDF / Excel + description d'investissement obligatoire
+
+Demandé par l'auteur : pouvoir imprimer/sauvegarder ailleurs, comme **preuve physique**, un rapport PDF
+et Excel de chaque investissement, compte gardé et dette/créance ; et, pour les investissements, un
+champ **description obligatoire**.
+
+- **`js/proof-export.js`** (nouveau, ajouté à `APP_SHELL`) — module d'export commun, **sans aucune logique
+  métier** : chaque module construit son propre « modèle de document » (`buildInvestmentProof`,
+  `buildDebtProof`, `buildKeptAccountProof`, dans leur module respectif — ils connaissent leurs données
+  et leurs calculs, pas de dépendance circulaire) et le passe à `openProofExportModal()` (petite modale :
+  Télécharger le PDF / Imprimer / Excel). Chaque fiche : informations, synthèse chiffrée, historique
+  complet, date et heure de génération, coordonnées du profil, **zone(s) de signature** (une pour un
+  investissement ; deux pour une dette — débiteur/créancier — et un compte gardé — gardien/propriétaire
+  de l'argent), pied de page paginé. Le tableau répète son en-tête à chaque saut de page.
+- **PDF** : jsPDF déjà vendorisé ; mêmes espaces fines/insécables remplacées que `reports.js`
+  (`pdfAmount`), sinon « 823/500 F/CFA ».
+- **Excel = vrai .xlsx écrit à la main** (ZIP « stocké » sans compression + XML minimal, ~150 lignes) :
+  le projet n'a ni bundler ni dépendance npm, donc pas de bibliothèque Excel. Dates et montants sont de
+  **vrais nombres/dates** (triables, sommables) avec formats `#,##0` (XOF/XAF/JPY) ou `#,##0.00` et
+  `jj/mm/aaaa` ; feuille « Résumé » + une feuille par tableau ; mise en page « ajuster à la largeur » pour
+  l'impression. Nom de feuille limité à 31 caractères (limite Excel). `ZERO_DECIMAL_CURRENCIES` exporté
+  depuis `utils.js` pour ça.
+- **Imprimer** : `doc.autoPrint()` + ouverture dans un onglet ; repli sur un téléchargement si
+  `window.open` est refusé (bloqueur, WebViews natives).
+- **Investissement : `description` obligatoire** (textarea, + `reference` optionnelle : n° de titre,
+  plaque…). Affichée sur la carte ; un ancien investissement sans description porte un badge
+  « Description manquante » et l'export prévient (sans bloquer).
+- **Bug trouvé en passant et corrigé** : `kept-accounts.js` (suppression d'un mouvement) référençait une
+  variable `entityId` inexistante → `ReferenceError` après la suppression (mouvement effacé mais ni
+  toast ni rafraîchissement). Même bug dans `investments.js` (suppression d'une entrée d'historique).
+
+**Testé avec le vrai Excel** (installé sur la machine, ouvert par automatisation COM) : les 3 fichiers
+s'ouvrent sans réparation, dates et montants sont des `Double`, soldes recalculés corrects (20 000 →
+50 000 → 37 500 ; dette 400 k → 350 k → 300 k) ; archives vérifiées (`unzip -t`, CRC OK). PDF rendus en
+images (API Windows.Data.Pdf) et relus : mise en page, retour à la ligne, signatures. **Pièges de test** :
+la CSP de l'app bloque `fetch(blob:)` (donc capturer les blobs via `URL.createObjectURL`) ; jsPDF
+télécharge via `dispatchEvent`, pas `.click()` ; un nom comme « ure.pdf » dans Téléchargements est un
+artefact du navigateur de test lors de téléchargements rapprochés, le nom transmis est correct.
+
+### 12 octobre 2026 (suite 2) — Portefeuilles Courant/Épargne/Bloqué, épargne liée, prêt et dividende réinvesti
+
+Demandé par l'auteur (4 besoins liés). Questions posées avant de coder (réponses retenues) : l'argent
+d'une épargne vit dans un **portefeuille d'épargne dédié** ; **Bloqué = date de déblocage** (Épargne =
+retrait libre depuis la fiche du portefeuille) ; un portefeuille Épargne/Bloqué est **invisible
+partout au quotidien** ; un prêt peut financer **tout ou partie** d'un investissement.
+
+**1. Rôle d'un portefeuille** (`wallet.usage` : `current` par défaut — tous les anciens — | `savings` |
+`blocked` + `unlockDate`). `ledger.js` : `walletUsage()`, `isDailyWallet()` (actif ET courant),
+`withdrawalLockedUntil()`.
+- **Invisible au quotidien** : filtré (`isDailyWallet`) de Saisie express (portefeuille et cible de
+  virement), formulaire de récurrence, création et remboursement de dette, dépense partagée, achat /
+  apport / dividende / retrait d'investissement. **Volontairement laissés à tous les portefeuilles** :
+  rapprochement bancaire, filtres de liste, import CSV (relevé d'un compte d'épargne). Exception : en
+  MODIFIANT une transaction/récurrence déjà liée à un portefeuille non courant, ce portefeuille reste
+  proposé (sinon l'édition viderait la sélection).
+- **Fiche du portefeuille** (`openWalletDetailModal`/`openWalletMoveModal`, `wallets.js`) : bouton
+  « Ouvrir » sur les cartes Épargne/Bloqué ; **Verser** (depuis un courant, même devise), **Retirer des
+  fonds** (vers un courant ; refusé avant la date de déblocage d'un Bloqué, et si le solde est
+  insuffisant), **Intérêts / gain** (revenu, catégorie « Intérêts » retrouvée/créée FR/EN). Ce sont des
+  virements (`type: 'transfer'`) — jamais comptés en dépense/revenu, patrimoine inchangé — sauf les
+  intérêts (vrai revenu).
+- **Garde-fous du formulaire portefeuille** : Bloqué exige une date ; on ne peut pas rendre non courant
+  un portefeuille utilisé par une **récurrence active** (elle continuerait à le débiter en silence sans
+  qu'on puisse la voir) ni repasser en courant un portefeuille **lié à un objectif d'épargne actif**.
+- **Calculs** : le **patrimoine net compte tous les portefeuilles**. `computeEndOfMonthForecast`
+  (donc « Reste à vivre » et solde prévisionnel) ne compte **que les courants** — épargner fait baisser
+  le reste à vivre, c'est voulu. `computeLiquidBalance` (outils : fonds d'urgence, impact d'un achat) =
+  courants + épargne, **pas le bloqué**. `computeNetWorthComposition` renvoie maintenant `liquid`
+  (courant) + `savings` + `blocked` (le donut a deux nouvelles parts) ; le score de santé les compte
+  dans les actifs.
+- **Distinct du `type` de portefeuille** (banque/espèces/mobile money/investissement/« Épargne
+  spécifique », ce que c'est) — `usage` dit à QUOI il sert. Aucune migration : un champ absent = courant.
+
+**2. Épargne liée à des portefeuilles** (`savings.js` réécrit). Un objectif est lié à 1+ portefeuilles
+Épargne/Bloqué (`goal.walletIds`, même devise). **⚠️ Version corrigée le jour même (voir « suite 3 »
+ci-dessous) : un portefeuille PEUT servir plusieurs objectifs à la fois** (voiture + maison sur le même
+livret) — la première version, « un portefeuille = un seul objectif actif », était fausse.
+L'argent reste dans le patrimoine, aucun double comptage. **Épargner / Récupérer** = virements via la
+fiche du portefeuille (choix du portefeuille si plusieurs). Un formulaire propose de créer un
+portefeuille d'épargne à la volée. **Anciens objectifs** (suivi manuel) : badge « Non lié », ancien
+montant conservé à l'affichage, boutons remplacés par « Lier à un portefeuille » ; en liant, l'ancien
+montant est remis à 0 (il n'a jamais été de l'argent du ledger). Les transactions portent
+`savingsGoalId` (traçabilité).
+
+**3. Investissement financé par un prêt** (`investments.js`, `debts.js`). Case « Financer une partie (ou la
+totalité) par un prêt » : montant, prêteur, taux, échéance ; **seule la part restante est débitée des
+portefeuilles**. Le prêt = une dette liée (`createLinkedDebt` étendu : `investmentId`, taux, échéance,
+note d'audit) **sans transaction d'ouverture** (l'argent va de la banque au vendeur sans passer par un
+portefeuille) ; `inv.loanDebtId`. À l'achat le patrimoine net ne bouge pas (actif +, dette +). La fiche
+affiche le restant dû et la **valeur nette (valeur − prêt restant)**, avec un bouton **Rembourser le
+prêt** (réutilise `openPaymentModal`, désormais exporté, débit d'un portefeuille courant). La carte de
+dette indique « Finance l'investissement X ». Supprimer l'investissement **détache** le prêt sans
+l'effacer (on doit toujours l'argent à la banque). L'export de l'investissement ajoute le financement et
+le tableau des remboursements. Intérêts du prêt non comptés dans le ROI (les remboursements de dette
+sont en principal seulement dans l'app) — limite assumée.
+
+**4. Dividende réinvesti.** Destinations d'un dividende : un portefeuille courant, **cet investissement**
+ou **un autre de la même devise**, avec répartition possible entre plusieurs destinations. Une part
+réinvestie ne passe par aucun portefeuille : le dividende reste compté comme **perçu** (ROI) et crée un
+**apport** sur la destination (`sourceEntryId` vers le dividende d'origine, **supprimé en cascade** avec
+lui, avec confirmation qui le dit). Seules les parts portefeuille créent une recette.
+
+**Testé** : `test/ledger.test.html` **47/47** (35 + 12 : rôle par défaut, `isDailyWallet`, composition
+épargne/bloqué, virement courant→épargne sans effet sur le patrimoine, reste à vivre = courants
+seulement, liquidités sans le bloqué, progression d'un objectif lié, ancien objectif non lié, verrou
+avant/après la date, Épargne jamais verrouillée). **Dans le navigateur** (démo + portefeuille bloqué) :
+sélecteurs du quotidien limités aux 3 courants (Saisie express, récurrence, dette, remboursement,
+investissement, dividende) ; versement/retrait/solde insuffisant/verrou/intérêts ; objectif lié,
+exclusivité, « Épargner » ; achat 1 M avec prêt de 600 k (400 k débités, aucune transaction d'ouverture,
+patrimoine inchangé), remboursement de 100 k depuis la fiche (restant 500 k, patrimoine inchangé) ;
+dividende 10 000 → 4 000 portefeuille + 6 000 réinvestis, 5 000 vers un autre investissement sans
+transaction de portefeuille, suppression en cascade ; garde-fous (récurrence active, objectif lié, date
+manquante) ; édition d'un virement d'épargne ; reste à vivre = soldes courants seulement ; FR/EN.
+
+**Non fait / à rediscuter** : portage sur `geofinance-free` ; intérêts d'un prêt dans le ROI ;
+rapprochement bancaire et filtres de liste listent encore tous les portefeuilles (choix délibéré).
+(« Prêt à la création seulement » : levé le jour même, voir « suite 3 ».)
+
+`CACHE_VERSION` : `v104` → `v107` (v105 suggestions de budget, v106 export, v107 portefeuilles/épargne/prêt).
+
+### 12 octobre 2026 (suite 3) — Un portefeuille d'épargne, plusieurs objectifs ; prêts en cours de vie
+
+Deux corrections de l'auteur sur la suite 2 : « un portefeuille épargne peut contenir plusieurs
+objectifs » et « le prêt peut être choisi en cours (augmenter mon capital, faire une réparation, et je
+n'ai pas de fonds) ».
+
+**Épargne : parts par objectif** (`ledger.js`, `savings.js`, `wallets.js`). `computeSavingsGoalProgress`
+est **supprimée**, remplacée par `computeSavingsAllocations()` →
+`{ goals: Map(goalId → {linked, saved, wallets:[…allocated]}), wallets: Map(walletId → {balance,
+allocated, free, goals:[…]}) }`. Modèle : `goal.walletIds` + `goal.allocations {walletId: base}` ; les
+virements d'épargne portent `savingsGoalId`. **Part d'un objectif dans un portefeuille = base + dépôts
+étiquetés − retraits étiquetés** ; **« libre » = solde − Σ parts des objectifs actifs** (un objectif
+archivé libère sa part). Le formulaire d'objectif propose, par portefeuille, une case et une « Part de
+cet objectif » (plafonnée à libre + sa part actuelle). `openWalletMoveModal(wallet, mode, {goal})` :
+un retrait refuse le verrou de date, le solde, puis **la part de l'objectif** (ou le montant libre quand
+on retire depuis la fiche sans objectif) ; la fiche du portefeuille détaille les parts et le libre.
+Garde-fou : un portefeuille lié à un objectif actif ne peut pas repasser en « courant ».
+
+**Prêts en cours de vie** (`investments.js`, `debts.js`). Un investissement peut avoir **plusieurs prêts**
+(`loansFor(inv, debts, payments)`, qui lit aussi l'ancien `inv.loanDebtId`). Dans l'historique, un
+**apport** peut être financé par un prêt (« augmentation de capital, réparation… ») : montant, prêteur,
+taux, échéance ; seule la part restante est débitée d'un portefeuille (entièrement financé → pas de
+ligne portefeuille, aucune transaction), la dette est créée via `createLinkedDebt` (sans transaction
+d'ouverture) et `entry.loanDebtId` la relie à l'apport. La carte affiche « Prêts (n) — X restant » ;
+« Rembourser » ouvre un sélecteur quand plusieurs prêts sont ouverts ; la preuve exportée liste tous
+les prêts et remboursements ; supprimer l'investissement les détache tous.
+
+**Bug de calcul corrigé au passage — `investmentValueAsOf` (`ledger.js`).** Avec au moins une
+valorisation, la valeur restait figée à la dernière valorisation : un apport saisi ENSUITE ne montait
+jamais la valeur, et faisait donc baisser le patrimoine net du montant apporté (un apport de 280 000
+financé par prêt donnait −280 000 de patrimoine et une moins-value fictive). Désormais **valeur = dernière
+valorisation + apports − retraits datés STRICTEMENT après elle** (un apport du jour même de la
+valorisation y est déjà compris). Cela corrigeait aussi tous les apports faits sans prêt.
+
+**Bug pré-existant corrigé** (`transactions.js`) : modifier une transaction depuis la liste reconstruisait
+l'enregistrement à zéro et perdait `debtId`, `investmentId`, `investmentMovementType`, `savingsGoalId`
+(un remboursement de dette devenait une dépense ordinaire). L'enregistrement part maintenant de
+`{ ...editTransaction }`.
+
+**Testé** : `test/ledger.test.html` **55/55** (47 + 6 allocations partagées + 2 valeur après apport).
+Dans le navigateur : deux objectifs sur un même livret (sur-part refusée, retrait au-delà de la part
+refusé, retrait libre refusé à 0 libre) ; apport de 200 000 dont 150 000 par prêt (50 000 débités) puis
+80 000 entièrement par un second prêt (aucune transaction) → « Prêts (2) 230 000 restant », patrimoine
+net inchangé à 943 500 ; sélecteur de remboursement ; modification de la note d'un remboursement conserve
+`debtId` ; export Excel avec deux prêts.
+
+`CACHE_VERSION` : `v107` → `v109` (v108 allocations/prêts en cours, v109 valeur d'investissement).
+
+### 12 octobre 2026 (suite 4) — Audit complet : fonctionnalités, bugs, sécurité
+
+Demandé par l'auteur : « teste toutes les fonctionnalités, les bugs et la sécurité ». Méthode : tests
+dynamiques dans le navigateur sur des données de démo (vérificateur d'invariants : références orphelines,
+NaN, montants ≤ 0, patrimoine net avant/après chaque flux), pas seulement une relecture de code.
+
+**Sécurité — vérifié sain** : XSS stocké (charge `"><img onerror>` injectée dans TOUS les champs texte de
+tous les stores, 12 vues, 9 onglets, ~30 modales, formulaires d'édition, recherche, exports : 0 injection,
+0 erreur) ; XLSX (XML échappé) ; CSP (pas de `unsafe-inline` côté script, `object-src 'none'`) ; blocage
+anti-brute-force du PIN (5 échecs → 30 s, y compris avec le BON code, persistant après rechargement) ;
+écran d'activation (mauvais codes refusés) ; sauvegarde chiffrée (mauvais mot de passe, fichier altéré
+refusés, aucune donnée en clair dans le fichier) ; aller-retour avec justificatif photo ; `pinHash` forgé
+ignoré à l'import ; formules CSV neutralisées.
+
+**Bugs trouvés et corrigés** :
+1. **Modifier une transaction changeait sa catégorie en silence** (`transactions.js`) — `setType()`
+   remplit les catégories en asynchrone sans que personne n'attende : en édition, la valeur d'origine était
+   posée sur un `<select>` encore vide, puis les options arrivaient et sélectionnaient la 1re. Toute
+   modification (même d'une note) passait la catégorie à « Santé ». `setType` renvoie maintenant sa promesse
+   et l'ouverture l'attend.
+2. **Montants à 0 acceptés** (`min="0"` laisse passer 0) : transaction, dette/créance, apport/dividende/retrait
+   d'investissement, mouvement de compte gardé, dépense partagée, récurrence. Gardes JS ajoutées (une
+   valorisation à 0 reste permise : perte totale).
+3. **Remboursement supérieur au restant dû** (`debts.js`) : acceptait de rembourser plus que dû (transaction
+   de portefeuille sans contrepartie, dette négative). Refusé avec message.
+4. **Limite de budget vidée, nulle ou négative** (`budgets.js`) : le champ déclenche `change` même pour
+   « -100 » ; un budget négatif ou à 0 était enregistré. ≤ 0 = pas de budget (enregistrement supprimé),
+   mensuel et annuel.
+5. **Import de sauvegarde non atomique** (`db.js`) : chaque store était vidé puis rempli séparément ; une ligne
+   invalide faisait échouer l'import au milieu et laissait une base à moitié ancienne / à moitié nouvelle.
+   Désormais : validation complète d'abord (clé primaire, champs critiques via `REQUIRED_FIELDS` : date ISO,
+   montant fini, devise…), puis UNE transaction IndexedDB multi-stores (tout ou rien). Un fichier forgé avec
+   une transaction à date `null` faisait aussi planter le tableau de bord — refusé maintenant.
+   ⚠️ Les nouveaux stores ou champs obligatoires ajoutés plus tard doivent rester cohérents avec
+   `REQUIRED_FIELDS`, sinon un import légitime serait refusé.
+6. **Import CSV** (`backup.js`) : dates impossibles (`31/02/2026`, `2026-13-45`) enregistrées telles quelles ;
+   `1e999` lu comme 1999 ; montant `99999999999999999999` accepté (plafond `MAX_IMPORTED_AMOUNT` = 1e12) ; le
+   format Djignan acceptait date illisible, montant 0 et virement sans portefeuille cible.
+7. **Devise par défaut = EUR en dur** (`shared.js`, `kept-accounts.js`) : une dépense partagée payée par
+   « moi » échouait (« Créez d'abord un portefeuille en EUR ») pour tout utilisateur en XOF. Devise de base
+   maintenant.
+8. **Rappel de sauvegarde hebdomadaire sur une base vide** (`backup.js`) : s'empilait sur l'assistant de
+   configuration dès le tout premier lancement. Ignoré s'il n'y a ni portefeuille ni transaction.
+9. **Partage entrant** (`sw.js`) : n'importe quel site peut poster un formulaire vers `/share-target`. Le SW
+   ne garde plus qu'une image raster (pas de SVG/HTML), ≤ 15 Mo, non vide.
+10. **Données de démo** : soldes initiaux relevés (Espèces 40 000, Orange Money 80 000) — la démo affichait
+    des portefeuilles en négatif.
+
+**Vérifié correct** : cycle complet d'une dette (création avec mouvement, refus du surpaiement, remboursements,
+passage à « soldée », patrimoine inchangé) ; investissement (création avec prêt, apports financés par prêt,
+dividende réparti portefeuille + réinvesti, valorisation, retrait, remboursement d'un prêt parmi deux,
+suppression d'une entrée en cascade, suppression de l'investissement qui détache les prêts) ; récurrences
+(ancrage fin de mois 31/07 → 31/08 → 30/09 → 31/10, hebdomadaire, inactive ignorée, apport automatique,
+orpheline désactivée) ; partage de dépenses (je paie / un tiers paie / cascade) ; comptes gardés (jamais dans
+le patrimoine) ; portefeuilles Bloqué/Épargne (date obligatoire, retrait verrouillé, solde insuffisant) ;
+rapports (2 PDF + 3 CSV) ; vues avec base VIDE (12 vues, aucun NaN) ; traduction EN (toutes les vues et
+modales, 0 résidu français hors données de démo) ; assistant de premier lancement (langue → restauration →
+PIN avec confirmation différente refusée → 7 étapes) ; CSV aller-retour sans doublons.
+
+**Tests** : `test/ledger.test.html` **64/64** (55 + 9 : import sain, ligne sans id, date null, montant non
+numérique, nom non texte, atomicité, stores non tableau, `pinHash` forgé). Les fixtures de dettes ont
+maintenant un `personName` (requis par la validation d'import).
+
+**Non traité / à savoir** : un participant « Moi » supprimé laisse ses dépenses partagées avec un nom
+inconnu (comportement documenté dans la confirmation) ; `firebase-sync.js` non modifié (revu, sain) ; le
+code d'activation reste un filtre de distribution, pas une sécurité cryptographique ; non porté sur
+`geofinance-free`.
+
+`CACHE_VERSION` : `v109` → `v118`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
@@ -3366,7 +3679,7 @@ philosophie du projet) qui :
   rapide) — pas de dépendance à la console.
 
 **Pour l'utiliser** : ouvrir `test/ledger.test.html` dans un navigateur (ex: servi par `serve.ps1`
-comme le reste de l'app) après tout changement dans `ledger.js`. 24 assertions, toutes vertes
+comme le reste de l'app) après tout changement dans `ledger.js`. 64 assertions, toutes vertes
 actuellement (2 ajoutées le 14 août pour couvrir la tolérance de dérive flottante, voir §6).
 
 **Piège rencontré en l'écrivant, à connaître pour la suite** : le Service Worker met en cache

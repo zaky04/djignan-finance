@@ -4,10 +4,11 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbDelete, dbAdd, dbWriteBatch, logAudit, getSetting } from '../db.js';
-import { getExchangeRates, computeDebtHistory } from '../ledger.js';
+import { getExchangeRates, computeDebtHistory, isDailyWallet } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, percentage, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { renderNetWorthTrendChart } from '../charts.js';
+import { openProofExportModal, PRINT_ICON } from '../proof-export.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // initDebtsModule() (handler de suppression) — voir le même piège documenté dans dashboard.js/
 // transactions.js.
@@ -27,15 +28,19 @@ function remaining(debt, payments) {
     shared.js, où la transaction de la dépense partagée elle-même couvre déjà l'argent qui a
     réellement bougé). Le remboursement passe ensuite par le flux existant (openPaymentModal /
     bouton "Rembourser"), qui lui crée bien une vraie transaction. */
-export async function createLinkedDebt({ type, personName, principal, currency, startDate, note, sharedExpenseId }) {
+export async function createLinkedDebt({ type, personName, principal, currency, startDate, note, sharedExpenseId, investmentId, interestRate, dueDate, auditNote }) {
   const record = {
     id: uuid(), type, personName, principal, currency,
-    interestRate: 0, startDate, dueDate: null, status: 'active',
+    interestRate: interestRate || 0, startDate, dueDate: dueDate || null, status: 'active',
     note: note || '', openingTransactionId: null, sharedExpenseId: sharedExpenseId || null,
+    // Prêt contracté pour financer un investissement (investments.js) : l'argent ne passe par AUCUN
+    // portefeuille à l'ouverture (il va directement de la banque au vendeur), donc pas de transaction
+    // d'ouverture — seuls les remboursements, eux, débitent un portefeuille courant.
+    investmentId: investmentId || null,
     createdAt: new Date().toISOString(),
   };
   await dbPut(STORES.DEBTS, record);
-  await logAudit({ entityType: 'debt', entityId: record.id, action: 'create', after: record, note: tr('Issue du partage de dépenses') });
+  await logAudit({ entityType: 'debt', entityId: record.id, action: 'create', after: record, note: auditNote || tr('Issue du partage de dépenses') });
   return record;
 }
 
@@ -92,7 +97,73 @@ export async function ensureDebtCategoryId(debtType, txType) {
   return category.id;
 }
 
-function debtCardHtml(d, payments) {
+/** Fiche à exporter (PDF/Excel) pour cette dette/créance : voir proof-export.js pour le format.
+    Le tableau part de l'ouverture et suit le restant dû après chaque remboursement. */
+async function buildDebtProof(d) {
+  const [allPayments, profile] = await Promise.all([dbGetAll(STORES.DEBT_PAYMENTS), getSetting('userProfile', {})]);
+  const own = allPayments.filter((p) => p.debtId === d.id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const isDebt = d.type === 'debt';
+  const cur = d.currency;
+  const money = (amount) => ({ amount, currency: cur });
+  const paid = own.reduce((s, p) => s + p.amount, 0);
+  const rem = Math.max(0, (d.principal || 0) - paid);
+  const declarant = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || tr('Utilisateur');
+
+  let running = d.principal || 0;
+  const rows = [[{ date: d.startDate }, isDebt ? tr('Ouverture de la dette') : tr("Ouverture de la créance"), d.note || '', money(d.principal || 0), money(running)]];
+  for (const p of own) {
+    running = Math.max(0, running - p.amount);
+    rows.push([{ date: p.date }, tr('Remboursement'), p.note || '', money(p.amount), money(running)]);
+  }
+
+  return {
+    title: isDebt ? tr('Fiche de dette') : tr('Fiche de créance'),
+    subtitle: d.personName,
+    signatures: isDebt
+      ? [tr('Le débiteur — {name}', { name: declarant }), tr('Le créancier — {name}', { name: d.personName })]
+      : [tr('Le créancier — {name}', { name: declarant }), tr('Le débiteur — {name}', { name: d.personName })],
+    blocks: [
+      {
+        type: 'rows',
+        heading: tr('Informations générales'),
+        rows: [
+          [tr('Type'), isDebt ? tr('Dette (je dois)') : tr('Créance (on me doit)')],
+          [tr('Nom de la personne / organisme'), d.personName],
+          [tr('Devise'), cur],
+          [tr('Montant initial'), money(d.principal || 0)],
+          ...(d.interestRate ? [[tr("Taux d'intérêt annuel"), formatPercent(d.interestRate, 1)]] : []),
+          [tr('Date de départ'), { date: d.startDate }],
+          ...(d.dueDate ? [[tr('Échéance'), { date: d.dueDate }]] : []),
+          [tr('Statut'), d.status === 'paid' ? tr('Soldée') : tr('En cours')],
+          ...(d.note ? [[tr('Note'), d.note]] : []),
+        ],
+      },
+      {
+        type: 'rows',
+        heading: tr('Synthèse'),
+        rows: [
+          [tr('Total remboursé'), money(paid)],
+          [tr('Restant dû'), money(rem)],
+          [tr('Taux de remboursement'), formatPercent(percentage(paid, d.principal), 0)],
+        ],
+      },
+      {
+        type: 'table',
+        heading: tr('Historique des remboursements'),
+        columns: [
+          { label: tr('Date'), align: 'left', weight: 2.4 },
+          { label: tr('Opération'), align: 'left', weight: 3.4 },
+          { label: tr('Note'), align: 'left', weight: 3.4 },
+          { label: `${tr('Montant')} (${cur})`, align: 'right', weight: 2.8 },
+          { label: `${tr('Restant dû')} (${cur})`, align: 'right', weight: 2.8 },
+        ],
+        rows,
+      },
+    ],
+  };
+}
+
+function debtCardHtml(d, payments, investmentName = null) {
   const paid = (debt_paid_of(d, payments));
   const rem = Math.max(0, (d.principal || 0) - paid);
   const pct = percentage(paid, d.principal);
@@ -104,8 +175,10 @@ function debtCardHtml(d, payments) {
           <span class="badge ${isDebt ? 'badge-neg' : 'badge-pos'}">${isDebt ? tr('Dette') : tr('Créance')}</span>
           <div style="font-weight:700;font-size:14.5px;margin-top:6px;">${escapeHtml(d.personName)}</div>
           ${d.note ? `<div class="tx-sub">${escapeHtml(d.note)}</div>` : ''}
+          ${investmentName ? `<div class="tx-sub">${tr('Finance l\'investissement « {name} »', { name: escapeHtml(investmentName) })}</div>` : ''}
         </div>
         <div class="card-actions">
+          <button type="button" class="icon-btn" data-action="export" aria-label="${tr('Exporter / imprimer')}" title="${tr('Exporter / imprimer')}">${PRINT_ICON}</button>
           <button type="button" class="icon-btn" data-action="pay" aria-label="${tr('Enregistrer un remboursement')}" title="${tr('Enregistrer un remboursement')}">${PAY_ICON}</button>
           <button type="button" class="icon-btn" data-action="edit" aria-label="${tr('Modifier')}" title="${tr('Modifier')}">${EDIT_ICON}</button>
           <button type="button" class="icon-btn" data-action="delete" aria-label="${tr('Supprimer')}" title="${tr('Supprimer')}">${DELETE_ICON}</button>
@@ -141,6 +214,7 @@ function paidDebtRowHtml(d, paidDate) {
       </div>
       <div class="tx-amount amount ${isDebt ? 'neg' : 'pos'}">${formatCurrency(d.principal, d.currency)}</div>
       <div class="card-actions">
+        <button type="button" class="icon-btn" data-action="export" aria-label="${tr('Exporter / imprimer')}" title="${tr('Exporter / imprimer')}">${PRINT_ICON}</button>
         <button type="button" class="icon-btn" data-action="delete" aria-label="${tr('Supprimer')}" title="${tr('Supprimer')}">${DELETE_ICON}</button>
       </div>
     </div>`;
@@ -202,7 +276,7 @@ async function openDebtModal(d = null) {
   if (movesCheckbox) {
     let allWallets = [];
     const refreshWalletOptions = async () => {
-      if (!allWallets.length) allWallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
+      if (!allWallets.length) allWallets = (await dbGetAll(STORES.WALLETS)).filter(isDailyWallet);
       walletSelect.innerHTML = walletOptionsHtml(allWallets, readCurrencyValue(form));
     };
     const syncWalletVisibility = () => { walletRow.hidden = !movesCheckbox.checked; };
@@ -237,6 +311,8 @@ async function openDebtModal(d = null) {
       openingTransactionId: d?.openingTransactionId || null,
     };
 
+    if (!(record.principal > 0)) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
+
     if (movesMoneyNow) {
       const txType = currentType === 'debt' ? 'income' : 'expense';
       const openingTx = {
@@ -266,8 +342,8 @@ async function openDebtModal(d = null) {
   });
 }
 
-async function openPaymentModal(d) {
-  const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
+export async function openPaymentModal(d) {
+  const wallets = (await dbGetAll(STORES.WALLETS)).filter(isDailyWallet);
   const modal = openModal(`
     <form id="payment-form">
       <div class="form-row"><label>${tr('Montant remboursé')}</label><input type="number" step="0.01" min="0" name="amount" required autofocus></div>
@@ -283,6 +359,12 @@ async function openPaymentModal(d) {
     const walletId = fd.get('walletId');
     if (!walletId) { showToast(tr("Créez d'abord un portefeuille en {currency}.", { currency: d.currency })); return; }
     const payment = { id: uuid(), debtId: d.id, amount: safeNumber(parseFloat(fd.get('amount'))), date: fd.get('date'), note: (fd.get('note') || '').trim().slice(0, 140) };
+    if (!(payment.amount > 0)) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
+    // Rembourser plus que le restant dû fabriquerait une transaction de portefeuille sans contrepartie
+    // (la dette passerait en négatif) : on refuse plutôt que de fausser le solde.
+    const paidBefore = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === d.id);
+    const owed = remaining(d, paidBefore);
+    if (payment.amount > owed + 0.005) { showToast(tr('Le remboursement ({amount}) dépasse le restant dû ({owed}).', { amount: formatCurrency(payment.amount, d.currency), owed: formatCurrency(owed, d.currency) })); return; }
 
     const paymentTxType = d.type === 'debt' ? 'expense' : 'income';
     const paymentTx = {
@@ -409,13 +491,14 @@ async function renderSimulator(container) {
 export async function renderDebts() {
   const container = document.getElementById('debts-content');
   if (!container) return;
-  const [debts, payments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
+  const [debts, payments, investments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS), dbGetAll(STORES.INVESTMENTS)]);
+  const investmentNames = new Map(investments.map((i) => [i.id, i.name]));
 
   const activeDebts = debts.filter((d) => d.status !== 'paid');
   const paidDebts = debts.filter((d) => d.status === 'paid');
 
   const cardsHtml = activeDebts.length
-    ? `<div class="grid-cards" style="margin-bottom:20px;">${activeDebts.map((d) => debtCardHtml(d, payments)).join('')}</div>`
+    ? `<div class="grid-cards" style="margin-bottom:20px;">${activeDebts.map((d) => debtCardHtml(d, payments, investmentNames.get(d.investmentId) || null)).join('')}</div>`
     : `<div class="empty-state">${tr('Aucune dette ni créance active.')}</div>`;
 
   const hasDebts = debts.some((d) => d.type === 'debt');
@@ -459,6 +542,8 @@ export function initDebtsModule() {
 
     if (btn.dataset.action === 'pay') {
       openPaymentModal(d);
+    } else if (btn.dataset.action === 'export') {
+      openProofExportModal(() => buildDebtProof(d));
     } else if (btn.dataset.action === 'edit') {
       openDebtModal(d);
     } else if (btn.dataset.action === 'delete') {

@@ -1,19 +1,33 @@
 /* ==========================================================================
    Djignan Financial System — Module Épargne
-   Objectifs personnalisés avec jauge de progression circulaire. Les
-   objectifs sont des enveloppes de suivi manuel (indépendantes des
-   portefeuilles) pour rester simples et éviter tout double comptage dans
-   le patrimoine net (voir js/ledger.js).
+   Un objectif d'épargne est LIÉ à un ou plusieurs portefeuilles d'usage
+   « Épargne » ou « Bloqué » (voir walletUsage, ledger.js) : l'argent épargné
+   est de l'argent réel, dans ces portefeuilles, donc déjà compté dans le
+   patrimoine net — l'objectif n'ajoute rien de plus (aucun double comptage).
+   - UN portefeuille peut servir PLUSIEURS objectifs (une voiture ET une
+     maison dans le même compte d'épargne) : chaque objectif a sa PART dans
+     le portefeuille (computeSavingsAllocations, ledger.js) ; ce qui n'est
+     affecté à aucun objectif actif est « libre ».
+   - Progression = somme des parts de l'objectif dans ses portefeuilles liés.
+   - Épargner = virement d'un portefeuille COURANT vers un portefeuille lié,
+     étiqueté avec l'objectif (augmente SA part) ; récupérer = virement
+     inverse, limité à sa part (refusé avant la date de déblocage d'un
+     portefeuille bloqué). Les deux passent par la fiche du portefeuille
+     (openWalletMoveModal, wallets.js) : ces portefeuilles n'apparaissent dans
+     aucun écran du quotidien.
+   Les anciens objectifs (suivi manuel, sans portefeuille) restent affichés
+   avec leur ancien montant jusqu'à ce qu'on les lie à un portefeuille.
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbDelete, logAudit, getSetting } from '../db.js';
-import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, percentage, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
+import { computeSavingsAllocations, walletUsage, withdrawalLockedUntil } from '../ledger.js';
+import { uuid, formatCurrency, formatDate, escapeHtml, percentage, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { openWalletMoveModal, openWalletModal } from './wallets.js';
 import { t } from '../i18n.js';
 
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
-const ADD_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>';
 const ARCHIVE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 4h18v4H3V4Zm1 6h16v10H4V10Zm4 3v2h8v-2H8Z"/></svg>';
 
 function gaugeSvg(pct, color) {
@@ -27,9 +41,14 @@ function gaugeSvg(pct, color) {
     </svg>`;
 }
 
-function goalCardHtml(g) {
-  const pct = percentage(g.currentAmount, g.targetAmount);
+function goalCardHtml(g, progress) {
+  const info = progress.get(g.id) || { linked: false, saved: g.currentAmount || 0, wallets: [] };
+  const pct = percentage(info.saved, g.targetAmount);
   const color = pct >= 100 ? 'var(--pos)' : 'var(--accent)';
+  const walletLines = info.wallets.map((w) => {
+    const locked = w.usage === 'blocked' && withdrawalLockedUntil({ usage: w.usage, unlockDate: w.unlockDate });
+    return `<div class="tx-sub">${escapeHtml(w.name)} : ${formatCurrency(w.allocated, g.currency)}${locked ? ` · ${t('bloqué jusqu\'au {date}', { date: formatDate(w.unlockDate) })}` : ''}</div>`;
+  }).join('');
   return `
     <div class="summary-card" data-goal-id="${g.id}">
       <div style="display:flex;gap:14px;align-items:center;">
@@ -38,13 +57,18 @@ function goalCardHtml(g) {
           <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;">${pct.toFixed(0)}%</div>
         </div>
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:700;font-size:14.5px;">${escapeHtml(g.name)}</div>
-          <div class="tx-sub amount" data-value="${g.currentAmount}">${formatCurrency(g.currentAmount, g.currency)} / ${formatCurrency(g.targetAmount, g.currency)}</div>
+          <div style="font-weight:700;font-size:14.5px;">${escapeHtml(g.name)}${info.linked ? '' : ` <span class="badge badge-neg">${t('Non lié')}</span>`}</div>
+          <div class="tx-sub amount" data-value="${info.saved}">${formatCurrency(info.saved, g.currency)} / ${formatCurrency(g.targetAmount, g.currency)}</div>
           ${g.targetDate ? `<div class="tx-sub">${t('Échéance : {date}', { date: formatDate(g.targetDate) })}</div>` : ''}
         </div>
       </div>
-      <div class="card-actions" style="justify-content:flex-end;margin-top:10px;">
-        <button type="button" class="icon-btn" data-action="contribute" aria-label="${t('Ajouter une contribution')}" title="${t('Ajouter une contribution')}">${ADD_ICON}</button>
+      ${walletLines ? `<div style="margin-top:10px;">${walletLines}</div>` : ''}
+      ${info.linked ? '' : `<p style="font-size:12.5px;color:var(--text-muted);margin:10px 0 0;">${t("Cet objectif est encore suivi à la main : liez-le à un portefeuille d'épargne pour qu'il reflète l'argent réel.")}</p>`}
+      <div class="card-actions" style="justify-content:flex-end;margin-top:10px;flex-wrap:wrap;">
+        ${info.linked
+          ? `<button type="button" class="btn btn-ghost" data-action="deposit">${t('Épargner')}</button>
+             <button type="button" class="btn btn-ghost" data-action="withdraw">${t('Récupérer')}</button>`
+          : `<button type="button" class="btn btn-primary" data-action="edit">${t('Lier à un portefeuille')}</button>`}
         <button type="button" class="icon-btn" data-action="edit" aria-label="${t('Modifier')}" title="${t('Modifier')}">${EDIT_ICON}</button>
         <button type="button" class="icon-btn" data-action="archive" aria-label="${g.archived ? t('Désarchiver') : t('Archiver')}" title="${g.archived ? t('Désarchiver') : t('Archiver')}">${ARCHIVE_ICON}</button>
         <button type="button" class="icon-btn" data-action="delete" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
@@ -57,9 +81,15 @@ function goalFormHtml(g, defaultCurrency) {
     <form id="goal-form">
       <div class="form-row"><label>${t("Nom de l'objectif")}</label><input type="text" name="name" required maxlength="60" value="${escapeHtml(g?.name || '')}" placeholder="${t("Ex: Fonds d'urgence, Voyage, Apport immobilier…")}"></div>
       <div class="form-row"><label>${t('Montant cible')}</label><input type="number" step="0.01" min="0" name="targetAmount" required value="${g?.targetAmount ?? ''}"></div>
-      <div class="form-row"><label>${t('Montant déjà épargné')}</label><input type="number" step="0.01" min="0" name="currentAmount" value="${g?.currentAmount ?? 0}"></div>
       <div class="form-row"><label>${t('Devise')}</label>${currencySelectHtml(g?.currency || defaultCurrency)}</div>
       <div class="form-row"><label>${t('Date cible (optionnel)')}</label><input type="date" name="targetDate" value="${g?.targetDate || ''}"></div>
+      <div class="form-row">
+        <label>${t("Portefeuilles d'épargne liés")}</label>
+        <div id="goal-wallet-choices"></div>
+        <button type="button" class="btn btn-ghost" id="goal-create-wallet" style="margin-top:6px;">${t("+ Créer un portefeuille d'épargne")}</button>
+        <p style="font-size:12px;color:var(--text-muted);margin:6px 0 0;">${t("L'argent épargné vit dans ces portefeuilles (usage Épargne ou Bloqué, même devise) et compte dans votre patrimoine. Un même portefeuille peut servir plusieurs objectifs : indiquez la part qui revient à celui-ci.")}</p>
+      </div>
+      ${g && !(g.walletIds || []).length && g.currentAmount ? `<p class="alert alert-warn" style="margin-bottom:12px;">${t("L'ancien montant saisi à la main ({amount}) sera remplacé par le solde réel des portefeuilles liés.", { amount: formatCurrency(g.currentAmount, g.currency) })}</p>` : ''}
       <button type="submit" class="btn btn-primary btn-block">${g ? t('Enregistrer') : t("Créer l'objectif")}</button>
     </form>`;
 }
@@ -68,15 +98,94 @@ async function openGoalModal(g = null) {
   const defaultCurrency = g ? g.currency : await getSetting('baseCurrency', 'EUR');
   const modal = openModal(goalFormHtml(g, defaultCurrency), { title: g ? t("Modifier l'objectif") : t("Nouvel objectif d'épargne") });
   wireCurrencySelect(modal.el);
-  modal.el.querySelector('#goal-form').addEventListener('submit', async (e) => {
+  const form = modal.el.querySelector('#goal-form');
+  const choicesEl = modal.el.querySelector('#goal-wallet-choices');
+  // Sélection et parts saisies, conservées si l'utilisateur change de devise ou revient d'une
+  // création de portefeuille (le formulaire est re-rendu).
+  const checked = new Set(g?.walletIds || []);
+  const typedShares = new Map();
+  // Parts actuelles de cet objectif (départ + versements − retraits) : on les réaffiche telles quelles
+  // à l'édition, et on retrouve la partie « étiquetée » pour ne réécrire que le montant de départ.
+  const currentShare = new Map();
+  const baseShare = new Map(Object.entries(g?.allocations || {}).map(([id, v]) => [id, Number(v) || 0]));
+  let allocation = null;
+
+  async function renderWalletChoices() {
+    choicesEl.querySelectorAll('[name="walletIds"]').forEach((cb) => { if (cb.checked) checked.add(cb.value); else checked.delete(cb.value); });
+    choicesEl.querySelectorAll('[data-share-input]').forEach((input) => typedShares.set(input.dataset.shareInput, input.value));
+    const currency = readCurrencyValue(form);
+    const wallets = await dbGetAll(STORES.WALLETS);
+    allocation = await computeSavingsAllocations();
+    for (const w of allocation.goals.get(g?.id)?.wallets || []) currentShare.set(w.id, w.allocated);
+    const eligible = wallets.filter((w) => !w.archived && walletUsage(w) !== 'current' && w.currency === currency);
+    choicesEl.innerHTML = eligible.length
+      ? eligible.map((w) => {
+          const mine = g && !g.archived ? (currentShare.get(w.id) || 0) : 0;
+          const free = Math.max(0, (allocation.wallets.get(w.id)?.free ?? 0) + mine);
+          const isChecked = checked.has(w.id);
+          const value = typedShares.has(w.id) ? typedShares.get(w.id) : String(currentShare.get(w.id) || 0);
+          return `<div style="padding:6px 0;">
+            <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;">
+              <input type="checkbox" name="walletIds" value="${w.id}" ${isChecked ? 'checked' : ''}>
+              ${escapeHtml(w.name)} <span class="badge">${escapeHtml(t(walletUsage(w) === 'blocked' ? 'Bloqué' : 'Épargne'))}</span>
+            </label>
+            <div style="display:flex;align-items:center;gap:8px;margin:4px 0 0 28px;font-size:12.5px;color:var(--text-muted);" ${isChecked ? '' : 'hidden'} data-share-row="${w.id}">
+              ${t('Part de cet objectif')} <input type="number" step="0.01" min="0" data-share-input="${w.id}" value="${escapeHtml(value)}" style="width:120px;padding:6px 8px;">
+              <span>${t('Libre : {amount}', { amount: formatCurrency(free, currency) })}</span>
+            </div>
+          </div>`;
+        }).join('')
+      : `<p style="font-size:13px;color:var(--text-muted);margin:0;">${t("Aucun portefeuille d'épargne ou bloqué dans cette devise. Créez-en un ci-dessous.")}</p>`;
+    choicesEl.querySelectorAll('[name="walletIds"]').forEach((cb) => cb.addEventListener('change', () => {
+      choicesEl.querySelector(`[data-share-row="${cb.value}"]`).hidden = !cb.checked;
+    }));
+  }
+  modal.el.querySelectorAll('[data-currency-select], [data-currency-other]').forEach((el) => {
+    el.addEventListener('change', renderWalletChoices);
+    el.addEventListener('input', renderWalletChoices);
+  });
+  await renderWalletChoices();
+
+  modal.el.querySelector('#goal-create-wallet').addEventListener('click', () => {
+    openWalletModal(null, { preset: { usage: 'savings', currency: readCurrencyValue(form) }, onDone: renderWalletChoices });
+  });
+
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const walletIds = [...form.querySelectorAll('[name="walletIds"]:checked')].map((cb) => cb.value);
+    if (!walletIds.length) { showToast(t("Liez au moins un portefeuille d'épargne ou bloqué.")); return; }
+
+    // Part de l'objectif dans chaque portefeuille lié. Ce qui est saisi est la part TOTALE voulue ; on
+    // n'enregistre que le montant de DÉPART (part − versements/retraits déjà étiquetés), le reste étant
+    // recalculé depuis les virements (computeSavingsAllocations). Plafonnée à ce qui est libre dans le
+    // portefeuille (+ la part actuelle de cet objectif) : on ne peut pas s'attribuer l'argent d'un autre.
+    const allocations = {};
+    const wallets = await dbGetAll(STORES.WALLETS);
+    for (const id of walletIds) {
+      const wanted = safeNumber(parseFloat(form.querySelector(`[data-share-input="${id}"]`)?.value));
+      const mine = g && !g.archived ? (currentShare.get(id) || 0) : 0;
+      const free = Math.max(0, (allocation.wallets.get(id)?.free ?? 0) + mine);
+      if (wanted < 0 || wanted > free + 0.005) {
+        const w = wallets.find((x) => x.id === id);
+        showToast(t('Part trop élevée dans « {name} » : {amount} libre.', { name: w?.name || '', amount: formatCurrency(free, readCurrencyValue(form)) }));
+        return;
+      }
+      const tagged = (currentShare.get(id) || 0) - (baseShare.get(id) || 0);
+      allocations[id] = wanted - tagged;
+    }
+
     const before = g ? { ...g } : null;
     const record = {
       id: g?.id || uuid(),
       name: fd.get('name').trim(),
       targetAmount: safeNumber(parseFloat(fd.get('targetAmount'))),
-      currentAmount: safeNumber(parseFloat(fd.get('currentAmount'))),
+      // Ancien suivi manuel : une fois lié, la progression vient des portefeuilles (voir
+      // computeSavingsAllocations, ledger.js) — on remet l'ancien montant à 0 plutôt que de le
+      // laisser traîner dans l'enregistrement sans plus jamais être lu.
+      currentAmount: 0,
+      walletIds,
+      allocations,
       currency: readCurrencyValue(e.target),
       targetDate: fd.get('targetDate') || null,
       archived: g?.archived || false,
@@ -90,35 +199,36 @@ async function openGoalModal(g = null) {
   });
 }
 
-function openContributeModal(g) {
-  const modal = openModal(`
-    <form id="contribute-form">
-      <div class="form-row"><label>${t('Montant à ajouter')}</label><input type="number" step="0.01" name="amount" required autofocus></div>
-      <div class="form-row"><label>${t('Date')}</label><input type="date" name="date" value="${todayISO()}"></div>
-      <button type="submit" class="btn btn-primary btn-block">${t('Ajouter')}</button>
-    </form>`, { title: t('Contribution — {name}', { name: g.name }) });
-  modal.el.querySelector('#contribute-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const amount = safeNumber(parseFloat(new FormData(e.target).get('amount')));
-    const before = { ...g };
-    g.currentAmount = (g.currentAmount || 0) + amount;
-    await dbPut(STORES.SAVINGS_GOALS, g);
-    await logAudit({ entityType: 'savingsGoal', entityId: g.id, action: 'update', before, after: g, note: t('Contribution de {amount}', { amount }) });
-    modal.close();
-    showToast(t('Contribution ajoutée.'));
-    notifyDataChanged('savings');
+/** Choisit un des portefeuilles liés quand l'objectif en a plusieurs (un seul → renvoyé tel quel). */
+async function pickLinkedWallet(g, mode) {
+  const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => (g.walletIds || []).includes(w.id));
+  if (!wallets.length) return null;
+  if (wallets.length === 1) return wallets[0];
+  return new Promise((resolve) => {
+    let done = false;
+    const modal = openModal(`
+      <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px;">${mode === 'deposit' ? t('Dans quel portefeuille épargner ?') : t('Depuis quel portefeuille récupérer ?')}</p>
+      <div class="proof-actions" style="flex-direction:column;">${wallets.map((w) => `<button type="button" class="btn btn-ghost" data-pick="${w.id}">${escapeHtml(w.name)}</button>`).join('')}</div>`,
+    { title: g.name, onClose: () => { if (!done) resolve(null); } });
+    modal.el.querySelectorAll('[data-pick]').forEach((btn) => btn.addEventListener('click', () => {
+      done = true;
+      modal.close();
+      resolve(wallets.find((w) => w.id === btn.dataset.pick));
+    }));
   });
 }
 
 export async function renderSavings() {
   const container = document.getElementById('savings-content');
   if (!container) return;
-  const goals = await dbGetAll(STORES.SAVINGS_GOALS);
+  const [goals, allocation] = await Promise.all([dbGetAll(STORES.SAVINGS_GOALS), computeSavingsAllocations()]);
+  const progress = allocation.goals;
   const active = goals.filter((g) => !g.archived);
   const archived = goals.filter((g) => g.archived);
+  const card = (g) => goalCardHtml(g, progress);
 
   container.innerHTML = active.length || archived.length
-    ? active.map(goalCardHtml).join('') + (archived.length ? `<div style="grid-column:1/-1;font-size:12.5px;color:var(--text-faint);font-weight:700;margin-top:8px;">${t('ARCHIVÉS')}</div>${archived.map(goalCardHtml).join('')}` : '')
+    ? active.map(card).join('') + (archived.length ? `<div style="grid-column:1/-1;font-size:12.5px;color:var(--text-faint);font-weight:700;margin-top:8px;">${t('ARCHIVÉS')}</div>${archived.map(card).join('')}` : '')
     : `<div class="empty-state">${t("Aucun objectif d'épargne. Créez-en un pour visualiser votre progression.")}</div>`;
 }
 
@@ -133,8 +243,9 @@ export function initSavingsModule() {
     const g = goals.find((x) => x.id === card?.dataset.goalId);
     if (!g) return;
 
-    if (btn.dataset.action === 'contribute') {
-      openContributeModal(g);
+    if (btn.dataset.action === 'deposit' || btn.dataset.action === 'withdraw') {
+      const wallet = await pickLinkedWallet(g, btn.dataset.action);
+      if (wallet) openWalletMoveModal(wallet, btn.dataset.action, { goal: g });
     } else if (btn.dataset.action === 'edit') {
       openGoalModal(g);
     } else if (btn.dataset.action === 'archive') {
@@ -145,7 +256,7 @@ export function initSavingsModule() {
       showToast(g.archived ? t('Objectif archivé.') : t('Objectif désarchivé.'));
       notifyDataChanged('savings');
     } else if (btn.dataset.action === 'delete') {
-      const ok = await confirmDialog(t('Supprimer définitivement l\'objectif "{name}" ?', { name: g.name }), { danger: true, confirmText: t('Supprimer') });
+      const ok = await confirmDialog(t('Supprimer définitivement l\'objectif "{name}" ? Les portefeuilles liés et l\'argent qu\'ils contiennent ne sont pas touchés.', { name: g.name }), { danger: true, confirmText: t('Supprimer') });
       if (ok) {
         await dbDelete(STORES.SAVINGS_GOALS, g.id);
         await logAudit({ entityType: 'savingsGoal', entityId: g.id, action: 'delete', before: g });
