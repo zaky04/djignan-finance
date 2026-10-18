@@ -114,7 +114,7 @@ function navigateTo(view) {
 }
 
 async function openMoreSheet() {
-  const moduleStates = await Promise.all(OPTIONAL_MODULES.map(async (m) => [m.view, await getSetting(m.key, false)]));
+  const moduleStates = await Promise.all(OPTIONAL_MODULES.map(async (m) => [m.view, await getSetting(m.key, !!m.defaultEnabled)]));
   const disabledViews = new Set(moduleStates.filter(([, enabled]) => !enabled).map(([view]) => view));
   const simple = (await getUiMode()) === 'simple';
   // Mode simple : les écrans de base + les modules optionnels que l'utilisateur a lui-même activés.
@@ -432,7 +432,7 @@ async function maybeShowOnboarding() {
           <form id="ob-modules-form">
             ${OPTIONAL_MODULES.map((mod) => `
               <label style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:14px;cursor:pointer;">
-                <input type="checkbox" name="${mod.key}">
+                <input type="checkbox" name="${mod.key}" ${mod.defaultEnabled ? 'checked' : ''}>
                 ${escapeHtml(t(mod.label))}
               </label>
               <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">${escapeHtml(t(mod.description))}</p>`).join('')}

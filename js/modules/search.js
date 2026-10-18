@@ -143,6 +143,17 @@ function resultRowHtml(item) {
     </button>`;
 }
 
+/** Aide affichée tant que rien n'est tapé : ce qu'on peut chercher ET des questions prêtes à toucher
+    (la réponse en langage naturel, voir nl-query.js, resterait sinon une fonction que personne ne trouve). */
+const EXAMPLE_QUESTIONS = ['Combien ai-je dépensé ce mois ?', 'Qui me doit de l\'argent ?', 'Quel est mon solde ?', 'Ma plus grosse dépense ce mois ?'];
+function searchHelpHtml() {
+  return `<div class="empty-state">
+    <p style="margin:0 0 10px;">${tr("Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.")}</p>
+    <p style="margin:0 0 8px;font-weight:600;">${tr('Ou posez une question :')}</p>
+    <div class="qa-chips" style="justify-content:center;">${EXAMPLE_QUESTIONS.map((q) => `<button type="button" class="qa-chip search-example">${escapeHtml(tr(q))}</button>`).join('')}</div>
+  </div>`;
+}
+
 export function openGlobalSearch() {
   document.querySelectorAll('.modal-backdrop[data-modal="search"]').forEach((el) => el.remove());
 
@@ -154,7 +165,7 @@ export function openGlobalSearch() {
     <div class="modal-card search-modal" role="dialog" aria-modal="true" aria-label="${tr('Rechercher')}">
       <div class="search-input-row">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M10 2a8 8 0 1 0 4.9 14.3l5.4 5.4 1.4-1.4-5.4-5.4A8 8 0 0 0 10 2Zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12Z"/></svg>
-        <input type="text" id="search-input" placeholder="${tr('Rechercher une transaction, un portefeuille, une dette…')}" autocomplete="off">
+        <input type="text" id="search-input" placeholder="${tr('Rechercher, ou poser une question (ex : combien ai-je dépensé ce mois ?)')}" autocomplete="off">
         <button type="button" class="icon-btn" id="search-filters-toggle" aria-label="${tr('Filtres avancés')}" title="${tr('Filtres avancés (montant, dates)')}">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 5h16v2H4V5Zm3 6h10v2H7v-2Zm3 6h4v2h-4v-2Z"/></svg>
         </button>
@@ -178,9 +189,7 @@ export function openGlobalSearch() {
         <span style="font-size:11.5px;color:var(--text-faint);">${tr("S'applique aux transactions uniquement")}</span>
       </div>
       <div id="search-answer" class="search-answer" aria-live="polite" hidden></div>
-      <div id="search-results" class="search-results">
-        <div class="empty-state">${tr("Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.")}</div>
-      </div>
+      <div id="search-results" class="search-results">${searchHelpHtml()}</div>
     </div>`;
   root.appendChild(backdrop);
 
@@ -259,7 +268,7 @@ export function openGlobalSearch() {
     showAnswer();
     const q = norm(input.value).trim();
     if (!q) {
-      resultsEl.innerHTML = `<div class="empty-state">${tr("Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.")}</div>`;
+      resultsEl.innerHTML = searchHelpHtml();
       return;
     }
     // L'index (collectSearchIndex(), plusieurs lectures IndexedDB) peut encore être en cours de
@@ -277,6 +286,8 @@ export function openGlobalSearch() {
   [walletEl, categoryEl, typeEl].forEach((el) => el.addEventListener('change', runSearch));
   [amountMinEl, amountMaxEl, dateFromEl, dateToEl].forEach((el) => el.addEventListener('input', runSearch));
   resultsEl.addEventListener('click', (e) => {
+    const example = e.target.closest('.search-example');
+    if (example) { input.value = example.textContent; input.dispatchEvent(new Event('input')); input.focus(); return; }
     const btn = e.target.closest('.search-result');
     if (!btn) return;
     close();

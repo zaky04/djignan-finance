@@ -607,6 +607,7 @@ export const DASHBOARD_PANEL_LABELS = {
   debtsBalance: 'Solde créances & dettes',
   favorites: 'Favoris',
   forecast: 'Prévision de trésorerie',
+  recap: 'Bilan du mois',
 };
 
 /** Modules optionnels de l'app : masqués par défaut, activables ici ou pendant l'onboarding
@@ -625,6 +626,9 @@ export const OPTIONAL_MODULES = [
   },
   {
     key: 'tontinesEnabled',
+    // Visible dès l'installation (désactivable ici) : une fonction cachée derrière un réglage n'est
+    // jamais découverte — signalé par l'auteur qui ne trouvait pas l'onglet.
+    defaultEnabled: true,
     label: 'Tontines',
     description: "Ajoute un onglet pour suivre une tontine (cotisation) : qui a payé ce tour, qui reçoit le pot, et vos propres versements, enregistrés dans votre portefeuille. L'appli ne manipule aucun argent.",
     navId: 'nav-tontines',
@@ -636,12 +640,12 @@ export async function applyOptionalModuleVisibility() {
   for (const mod of OPTIONAL_MODULES) {
     if (!mod.navId) continue;
     const navBtn = document.getElementById(mod.navId);
-    if (navBtn) navBtn.hidden = !(await getSetting(mod.key, false));
+    if (navBtn) navBtn.hidden = !(await getSetting(mod.key, !!mod.defaultEnabled));
   }
 }
 
 async function renderFeaturesSection(container) {
-  const states = await Promise.all(OPTIONAL_MODULES.map((mod) => getSetting(mod.key, false)));
+  const states = await Promise.all(OPTIONAL_MODULES.map((mod) => getSetting(mod.key, !!mod.defaultEnabled)));
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>${t('Fonctionnalités optionnelles')}</h3></div>
@@ -665,7 +669,16 @@ async function renderFeaturesSection(container) {
 /** Rappels planifiés : uniquement dans l'APK Android (plugin de notifications locales) — voir
     native-reminders.js. Dans la PWA et l'exécutable, la section n'apparaît pas. */
 async function renderNativeRemindersSection(container) {
-  if (!isNativeReminderSupported()) { container.innerHTML = ''; return; }
+  // Hors de l'APK, la section reste VISIBLE et dit comment obtenir la fonction (une section masquée ne se
+  // découvre jamais).
+  if (!isNativeReminderSupported()) {
+    container.innerHTML = `
+      <div class="panel" style="margin-bottom:16px;">
+        <div class="panel-header"><h3>${t('Rappels planifiés')}</h3></div>
+        <p style="font-size:12.5px;color:var(--text-muted);margin:0;">${t("Rappel la veille et le jour même (9 h) des factures, échéances de dettes et cotisations de tontine, même appli fermée. Disponible dans l'application Android (APK) : une page web ne peut pas programmer de notification sans serveur. Ici, les rappels s'affichent à l'ouverture de l'appli.")}</p>
+      </div>`;
+    return;
+  }
   const enabled = await getSetting('nativeRemindersEnabled', false);
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">

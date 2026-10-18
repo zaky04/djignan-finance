@@ -6,6 +6,7 @@ import { formatCurrency, formatDate, formatMonthLabel, formatPercent, escapeHtml
 import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates, computeMonthlyTypeHistory, getCategoriesByType, computeBudgetSuggestions } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderMultiTrendChart } from '../charts.js';
 import { loadCashflowForecast } from '../forecast.js';
+import { loadMonthlyRecap, recapHighlights, shareRecapImage } from '../monthly-recap.js';
 import { STORES, dbGetAll, getSetting, setSetting } from '../db.js';
 import { openBudgetSuggestions } from './budgets.js';
 import { openQuickAdd } from './transactions.js';
@@ -19,7 +20,7 @@ import { getCloudAutoBackupAlert } from '../firebase-sync.js';
 // transaction comme une fonction au lieu de traduire, TypeError immédiat).
 import { t as tr } from '../i18n.js';
 
-export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true, safeToSpend: true, netWorth: true, debtsBalance: true, favorites: true, forecast: true };
+export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true, safeToSpend: true, netWorth: true, debtsBalance: true, favorites: true, forecast: true, recap: true };
 export const BUDGET_ALERT_THRESHOLD_DEFAULTS = { warn: 70, danger: 90 };
 
 // État des filtres des courbes de variation mensuelle (année + catégorie) — au niveau module pour
@@ -270,12 +271,24 @@ const FORECAST_KIND_LABELS = { recurring: 'Récurrent', debt: 'Dette à rembours
 async function renderForecast(panelEl) {
   const forecast = await loadCashflowForecast(forecastDays);
   const cur = forecast.currency;
-  // Rien de connu à venir : le panneau n'apporterait qu'une ligne plate.
-  if (!forecast.events.length) { panelEl.hidden = true; return; }
   panelEl.hidden = false;
   panelEl.querySelectorAll('#forecast-days [data-days]').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.days) === forecastDays));
 
   const headline = document.getElementById('forecast-headline');
+  const chartWrap = document.getElementById('forecast-chart-wrap');
+  const emptyCta = document.getElementById('forecast-empty-cta');
+  // Rien de connu à venir : on garde le panneau VISIBLE (sinon la fonction reste introuvable) avec
+  // l'explication de ce qui l'alimente, au lieu de le masquer.
+  const empty = !forecast.events.length;
+  chartWrap.hidden = empty;
+  emptyCta.hidden = !empty;
+  if (empty) {
+    headline.className = '';
+    headline.textContent = tr('Rien de prévu pour les {days} prochains jours.', { days: forecastDays });
+    document.getElementById('forecast-note').textContent = tr("La prévision se remplit avec vos récurrences (loyer, abonnements), les échéances de vos dettes et créances, et vos tontines — elle ne prévoit pas les dépenses courantes.");
+    document.getElementById('forecast-events').innerHTML = '';
+    return;
+  }
   if (forecast.firstNegativeDate) {
     headline.className = 'neg';
     headline.textContent = tr('⚠ Solde négatif prévu le {date} (plus bas : {amount}).', { date: formatDate(forecast.firstNegativeDate), amount: formatCurrency(forecast.minBalance, cur) });
@@ -302,15 +315,35 @@ async function renderForecast(panelEl) {
     </div>`).join('');
 }
 
+/* ---------- Bilan du mois (voir monthly-recap.js) : visible aussi en mode simple, où Rapports est masqué ---------- */
+let dashboardRecapMonth = null;
+
+async function renderRecapPanel(panelEl) {
+  // Le mois en cours s'il a déjà des opérations, sinon le mois précédent (début de mois).
+  let monthKey = currentMonthKey();
+  let recap = await loadMonthlyRecap(monthKey);
+  if (!recap.hasData) { monthKey = monthKeyOffset(monthKey, -1); recap = await loadMonthlyRecap(monthKey); }
+  if (!recap.hasData) { panelEl.hidden = true; dashboardRecapMonth = null; return; }
+  dashboardRecapMonth = monthKey;
+  panelEl.hidden = false;
+  document.getElementById('recap-dash-title').textContent = tr('Bilan — {month}', { month: formatMonthLabel(monthKey) });
+  document.getElementById('recap-dash-lines').innerHTML = recapHighlights(recap).slice(0, 3).map((line) => `<li>${escapeHtml(line)}</li>`).join('');
+}
+
 /* ---------- Favoris : un toucher = l'opération d'aujourd'hui (voir quick-templates.js) ---------- */
 let favoriteItems = new Map();
 
 async function renderFavorites(panelEl) {
   const [templates, wallets] = await Promise.all([getTemplates(), dbGetAll(STORES.WALLETS)]);
   favoriteItems = new Map(templates.map((x) => [x.id, x]));
-  panelEl.hidden = !templates.length;
+  // Toujours visible : sans favori, le panneau explique comment en créer (sinon la fonction reste cachée).
+  panelEl.hidden = false;
   const container = document.getElementById('dashboard-favorites');
   if (!container) return;
+  if (!templates.length) {
+    container.innerHTML = `<p class="tx-sub" style="margin:0;">${tr("Aucun favori pour l'instant. Dans « Saisie express », remplissez une opération que vous refaites souvent (ex : « Taxi », 1 500) puis touchez « ☆ Garder comme favori ».")}</p>`;
+    return;
+  }
   container.innerHTML = templates.map((x) => {
     const cur = wallets.find((w) => w.id === x.walletId)?.currency || 'EUR';
     const amount = x.amount > 0 ? ` · ${escapeHtml(formatCurrency(x.amount, cur))}` : '';
@@ -343,6 +376,11 @@ async function onFavoriteClick(event) {
     chaque renderDashboard()), contrairement au reste du tableau de bord. */
 export function initDashboardModule() {
   document.getElementById('dashboard-favorites')?.addEventListener('click', onFavoriteClick);
+  document.getElementById('recap-dash-share')?.addEventListener('click', async () => {
+    if (!dashboardRecapMonth) return;
+    const outcome = await shareRecapImage(await loadMonthlyRecap(dashboardRecapMonth));
+    if (outcome === 'downloaded') showToast(tr("Image téléchargée : envoyez-la depuis votre galerie."));
+  });
   document.getElementById('forecast-days')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-days]');
     if (!btn) return;
@@ -511,6 +549,11 @@ export async function renderDashboard() {
   if (forecastEl) {
     if (panels.forecast) await renderForecast(forecastEl).catch((err) => { forecastEl.hidden = true; console.warn('[Prévision]', err); });
     else forecastEl.hidden = true;
+  }
+  const recapEl = document.getElementById('panel-recap');
+  if (recapEl) {
+    if (panels.recap) await renderRecapPanel(recapEl).catch((err) => { recapEl.hidden = true; console.warn('[Bilan]', err); });
+    else recapEl.hidden = true;
   }
   const favoritesEl = document.getElementById('panel-favorites');
   if (favoritesEl) {

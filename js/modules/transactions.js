@@ -331,7 +331,9 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
   smsBtn.addEventListener('click', () => { close(); openSmsImportModal(); });
 
   /* ---------- Dictée vocale ---------- */
-  if (!editTransaction && isVoiceSupported()) voiceBtn.hidden = false;
+  // Toujours visible à la création : un bouton qui disparaît selon le navigateur donne l'impression que la
+  // fonction n'existe pas. Là où la dictée est impossible, il explique pourquoi au lieu de se cacher.
+  voiceBtn.hidden = !!editTransaction;
   let voiceController = null;
   const voiceLabel = voiceBtn.querySelector('span');
   function stopVoiceUi() {
@@ -341,6 +343,10 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
   }
   voiceBtn.addEventListener('click', async () => {
     if (voiceController) { voiceController.stop(); return; }
+    if (!isVoiceSupported()) {
+      showToast(tr("La dictée n'est pas disponible dans cette application ou ce navigateur (application Android/Windows, iPhone installé, Firefox). Utilisez Chrome ou Edge dans le navigateur, ou saisissez à la main."), { duration: 7000 });
+      return;
+    }
     if (!(await getSetting('voiceConsent', false))) {
       const ok = await confirmDialog(
         tr("La dictée utilise la reconnaissance vocale de votre navigateur (Google sur Chrome, Apple sur Safari) : l'audio peut être envoyé à ce service pour être transcrit. Djignan ne l'enregistre pas. Continuer ?"),

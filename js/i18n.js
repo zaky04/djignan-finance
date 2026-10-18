@@ -1613,4 +1613,21 @@ const EN = {
   'Biométrie activée': 'Biometrics enabled',
   'Biométrie désactivée': 'Biometrics disabled',
   'Restauré (annulation)': 'Restored (undo)',
+
+  // ---------- Fonctions rendues visibles par défaut (retour de l'auteur : « je ne les vois pas ») ----------
+  'Rien de prévu pour les {days} prochains jours.': 'Nothing planned for the next {days} days.',
+  'La prévision se remplit avec vos récurrences (loyer, abonnements), les échéances de vos dettes et créances, et vos tontines — elle ne prévoit pas les dépenses courantes.': 'The forecast fills up with your recurring items (rent, subscriptions), the due dates of your debts and receivables, and your tontines — it does not predict everyday spending.',
+  'Ajouter une récurrence (loyer, abonnement…) →': 'Add a recurring item (rent, subscription…) →',
+  'Bilan du mois': 'Monthly recap',
+  'Bilan — {month}': 'Recap — {month}',
+  'Voir le détail': 'See details',
+  "Aucun favori pour l'instant. Dans « Saisie express », remplissez une opération que vous refaites souvent (ex : « Taxi », 1 500) puis touchez « ☆ Garder comme favori ».": 'No favourites yet. In "Quick add", fill in a transaction you repeat often (e.g. "Taxi", 1,500) then tap "☆ Keep as favourite".',
+  'Ou posez une question :': 'Or ask a question:',
+  'Rechercher, ou poser une question (ex : combien ai-je dépensé ce mois ?)': 'Search, or ask a question (e.g. how much did I spend this month?)',
+  'Combien ai-je dépensé ce mois ?': 'How much did I spend this month?',
+  "Qui me doit de l'argent ?": 'Who owes me money?',
+  'Quel est mon solde ?': 'What is my balance?',
+  'Ma plus grosse dépense ce mois ?': 'My biggest expense this month?',
+  "Rappel la veille et le jour même (9 h) des factures, échéances de dettes et cotisations de tontine, même appli fermée. Disponible dans l'application Android (APK) : une page web ne peut pas programmer de notification sans serveur. Ici, les rappels s'affichent à l'ouverture de l'appli.": 'A reminder the day before and on the day itself (9 am) for bills, debt due dates and tontine contributions, even with the app closed. Available in the Android app (APK): a web page cannot schedule notifications without a server. Here, reminders show up when you open the app.',
+  "La dictée n'est pas disponible dans cette application ou ce navigateur (application Android/Windows, iPhone installé, Firefox). Utilisez Chrome ou Edge dans le navigateur, ou saisissez à la main.": 'Dictation is not available in this app or browser (Android/Windows app, installed iPhone app, Firefox). Use Chrome or Edge in the browser, or type it in.',
 };

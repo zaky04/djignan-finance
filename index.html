@@ -376,8 +376,20 @@
           </div>
           <p id="forecast-headline" style="margin:0 0 6px;font-weight:600;"></p>
           <p id="forecast-note" class="tx-sub" style="margin:0 0 10px;"></p>
-          <div class="chart-canvas-wrap" style="height:180px;"><canvas id="chart-forecast"></canvas></div>
+          <div class="chart-canvas-wrap" id="forecast-chart-wrap" style="height:180px;"><canvas id="chart-forecast"></canvas></div>
           <div id="forecast-events" class="tx-list" style="margin-top:10px;"></div>
+          <button type="button" class="link-btn" id="forecast-empty-cta" data-view-target="budgets" hidden data-i18n="Ajouter une récurrence (loyer, abonnement…) →">Ajouter une récurrence (loyer, abonnement…) →</button>
+        </div>
+
+        <div class="panel" id="panel-recap" hidden>
+          <div class="panel-header">
+            <h3 id="recap-dash-title" data-i18n="Bilan du mois">Bilan du mois</h3>
+          </div>
+          <ul id="recap-dash-lines" style="margin:0 0 12px;padding-left:18px;font-size:13.5px;line-height:1.6;"></ul>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;">
+            <button type="button" class="btn btn-primary" id="recap-dash-share" data-i18n="Partager l'image">Partager l'image</button>
+            <button type="button" class="btn btn-ghost" data-view-target="reports" id="recap-dash-more" data-i18n="Voir le détail">Voir le détail</button>
+          </div>
         </div>
 
         <div class="panel" id="panel-favorites" hidden>

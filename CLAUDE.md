@@ -3533,6 +3533,27 @@ serveur de la sauvegarde restaurée (en remplacement seulement) ; (2) Paramètre
 **réelle** du cloud (une lecture du petit document parent, délai de 8 s, valeur locale conservée hors-ligne).
 Non testé avec un vrai compte Google.
 
+### 18 octobre 2026 (suite 7) — Visibilité : plus aucune fonction cachée derrière un réglage (`CACHE_VERSION` `v128`)
+
+Retour de l'auteur : « la tontine n'est pas visible ». Cause : c'était un module **optionnel**, masqué tant qu'on ne
+l'activait pas dans Paramètres — mes tests l'avaient activé par code, donc le défaut était invisible pour moi.
+**Principe retenu : une fonction qui n'apparaît qu'après un réglage, ou seulement quand il y a des données, n'est
+jamais découverte.** Corrigé :
+- **Tontines** : `defaultEnabled: true` dans `OPTIONAL_MODULES` (`getSetting(key, !!defaultEnabled)` partout : nav,
+  menu « Plus », Paramètres, assistant). Visible aussi en mode simple. Toujours désactivable dans Paramètres.
+  « Comptes gardés » reste optionnel (non coché par défaut).
+- **Tableau de bord** : « Prévision de trésorerie » et « Favoris » ne se masquent plus quand ils n'ont rien à
+  montrer — ils expliquent ce qui les alimente (avec un lien vers les récurrences) ; nouveau panneau **« Bilan du
+  mois »** (3 phrases + « Partager l'image » + « Voir le détail »), car Rapports est masqué en mode simple.
+  Nouveaux réglages de panneau `recap` (les panneaux des installations existantes passent à `true` par défaut).
+- **Dictée** : le bouton « Dicter » est toujours visible à la création ; là où la dictée est impossible (APK, EXE,
+  iPhone installé, Firefox) il explique pourquoi au lieu de disparaître.
+- **Rappels planifiés** : la section Paramètres est toujours affichée ; hors APK elle explique que la fonction
+  nécessite l'application Android.
+- **Questions en langage naturel** : le champ de recherche l'annonce (placeholder) et propose 4 questions à toucher.
+Vérifié sur une installation existante sans aucun réglage (mode complet) puis en mode simple, avec et sans données :
+chaque fonction est visible ; `features.test.html` 117/117, `ledger.test.html` 64/64.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
