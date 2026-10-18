@@ -3349,6 +3349,30 @@ Testé : 12 Mo → 492 Ko (bruit aléatoire = pire cas) ; 4 photos de 23,4 Mo au
 l'auteur requis). Les photos déjà dans la base restent grosses localement (seul l'export les réduit).
 `CACHE_VERSION` : `v119` → `v121`.
 
+### 18 octobre 2026 (suite) — Taille de la sauvegarde visible, alerte, et réduction des photos déjà stockées
+
+Suite du correctif ci-dessus (la sauvegarde remarche ; demandé par l'auteur : voir la taille, être prévenu, et
+alléger les anciennes photos qui, restées grosses en base, étaient recompressées à CHAQUE sauvegarde).
+- `backup.js` : `estimateBackupSize()` (JSON hors photos ×1,34 + photos ×1,78, une photo non encore réduite comptée
+  à sa taille typique ≤ 450 Ko ; niveaux `ok` / `warn` ≥ 30 Mo / `critical` ≥ 60 Mo), `formatBytes()`,
+  `optimizeStoredReceipts(onProgress)` (réduit les photos > 250 Ko déjà en base, irréversible, une transaction
+  réécrite à la fois donc interruptible sans dégât, ne remplace que si le gain est ≥ 10 %).
+- Champ `receiptOptimized` sur la transaction : posé à l'enregistrement d'une photo (`transactions.js`, y compris
+  lignes scindées), par l'optimisation, et sur la copie exportée. Sans lui, le bouton restait affiché pour
+  toujours (une photo réduite fait encore souvent > 250 Ko). Édition sans nouvelle photo : drapeau conservé.
+- `settings.js` (Sauvegarde & restauration) : lignes « Taille estimée » (pastille verte/orange/rouge) et « Photos
+  de justificatifs », conseil si volumineux, bouton « Réduire les photos (N) » avec confirmation (« Annuler » ne
+  change rien), progression sur le bouton, toast du gain.
+- `firebase-sync.js` : `confirmLargeBackup()` demande confirmation avant un envoi cloud ESTIMÉ ≥ 60 Mo (bouton
+  Paramètres et rappel). Une estimation qui échoue ne bloque jamais l'envoi.
+- `styles.css` : `.badge-warn` + variable `--warn-text` (lisible en thème sombre).
+Testé (navigateur, vraies photos 3000×2000) : 17,6 Mo → 2 Mo, photos décodables en 1600×1067, annuler = rien ne
+change, second passage = 0 photo, petites photos et transactions sans photo intactes, notes conservées, niveaux
+ok/warn/critical (37 Mo, 73 Mo), `confirmLargeBackup` (ok/warn → pas de question ; critical → question,
+Annuler/Envoyer ; erreur d'estimation → envoi autorisé), aucune erreur console, 1124 clés i18n sans doublon.
+Limite : l'estimation est approximative (±30 %), pas la taille exacte envoyée.
+`CACHE_VERSION` : `v121` → `v122`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
