@@ -3321,6 +3321,34 @@ sélectionnable, menu contextuel bloqué hors champ. Le vrai geste (pincement su
 raccourci installé) reste à confirmer sur appareil. `orientation` du manifeste laissé à `any`.
 `CACHE_VERSION` : `v118` → `v119`.
 
+### 18 octobre 2026 — Sauvegarde cloud muette après plusieurs sauvegardes : photos de justificatifs non compressées
+
+Signalé par l'auteur : mot de passe de chiffrement validé, puis plus rien (ni succès, ni erreur) ; « il n'y
+avait pas de problème avant, c'est venu après plusieurs sauvegardes ». Le symptôme « après plusieurs
+sauvegardes » = la sauvegarde GROSSIT. Cause racine trouvée dans le code (pas reproductible sans le compte
+Google réel de l'auteur) :
+- `transactions.js` stockait la photo **telle que prise** (`receiptInput.files[0]`, 2-6 Mo) ; en mode scindé,
+  la même photo est copiée dans CHAQUE ligne.
+- À l'export, chaque photo passe en data URL base64 (+33 %), puis le JSON chiffré est encodé en base64 une
+  seconde fois (+33 %) : ~1,8× le poids réel, plusieurs copies en mémoire en même temps → sur mobile l'onglet
+  fige ou est tué sans message.
+- `bufToBase64` concaténait octet par octet (lent et gourmand sur des dizaines de Mo).
+- Chaque sauvegarde cloud relisait (`getDocs`) TOUT le contenu de l'ancienne sauvegarde juste pour lister les
+  morceaux à supprimer.
+- Aucun délai maximum : une écriture Firestore ne rejette jamais quand le réseau est lent/bloqué, elle reste
+  pendante → aucun message.
+
+**Corrigé** : `compressImageBlob()` (`utils.js`, côté max 1600 px, JPEG 0,72, jamais plus gros que l'original,
+original renvoyé au moindre doute) appliqué (1) à l'enregistrement d'une nouvelle photo et (2) à la COPIE
+d'export des photos déjà stockées (la base n'est pas modifiée) ; `bufToBase64` par blocs (sortie identique,
+vérifiée) ; nettoyage des anciens morceaux par numéro (`previousChunkCount` lu sur le petit document parent)
+au lieu de `getDocs` ; lots d'écriture de 4 Mo ; `withTimeout` 120 s par étape réseau ; progression affichée
+sur le bouton ; `initializeFirestore` avec `experimentalAutoDetectLongPolling`.
+Testé : 12 Mo → 492 Ko (bruit aléatoire = pire cas) ; 4 photos de 23,4 Mo au total → sauvegarde chiffrée de
+4,75 Mo, déchiffrement OK, mauvais mot de passe refusé. **Envoi Firestore réel NON testé** (compte Google de
+l'auteur requis). Les photos déjà dans la base restent grosses localement (seul l'export les réduit).
+`CACHE_VERSION` : `v119` → `v121`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
