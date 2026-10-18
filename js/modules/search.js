@@ -12,6 +12,7 @@ import { formatCurrency, formatDate, escapeHtml, debounce } from '../utils.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // collectSearchIndex() — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js/
 // reports-extras.js.
+import { isQuestion, askLocally } from '../nl-query.js';
 import { t as tr } from '../i18n.js';
 
 // Valeurs traduites à l'usage via tr(...) (voir resultRowHtml ci-dessous), jamais ici — mêmes
@@ -176,6 +177,7 @@ export function openGlobalSearch() {
         <input type="date" id="search-date-to" title="${tr('Au')}">
         <span style="font-size:11.5px;color:var(--text-faint);">${tr("S'applique aux transactions uniquement")}</span>
       </div>
+      <div id="search-answer" class="search-answer" aria-live="polite" hidden></div>
       <div id="search-results" class="search-results">
         <div class="empty-state">${tr("Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.")}</div>
       </div>
@@ -237,7 +239,24 @@ export function openGlobalSearch() {
     return true;
   }
 
+  // Question en langage naturel (« combien j'ai dépensé en taxi en septembre ? ») : réponse calculée en
+  // local au-dessus des résultats de recherche. Silencieuse si la question n'est pas comprise.
+  const answerEl = backdrop.querySelector('#search-answer');
+  let answerSeq = 0;
+  async function showAnswer() {
+    const seq = ++answerSeq;
+    const text = input.value;
+    let answer = null;
+    if (isQuestion(text)) { try { answer = await askLocally(text); } catch (err) { console.warn('[Question]', err); } }
+    if (seq !== answerSeq) return; // une frappe plus récente a déjà relancé le calcul
+    if (!answer) { answerEl.hidden = true; answerEl.innerHTML = ''; return; }
+    answerEl.hidden = false;
+    answerEl.innerHTML = `<div class="search-answer-text">${escapeHtml(answer.text)}</div>`
+      + (answer.lines?.length ? `<ul class="search-answer-lines">${answer.lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>` : '');
+  }
+
   const runSearch = debounce(() => {
+    showAnswer();
     const q = norm(input.value).trim();
     if (!q) {
       resultsEl.innerHTML = `<div class="empty-state">${tr("Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.")}</div>`;

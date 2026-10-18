@@ -9,6 +9,7 @@ import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, 
 import { notifyDataChanged } from '../state.js';
 import { renderNetWorthTrendChart } from '../charts.js';
 import { openProofExportModal, PRINT_ICON } from '../proof-export.js';
+import { openPersonLedger, summarizePeople } from './person-ledger.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // initDebtsModule() (handler de suppression) — voir le même piège documenté dans dashboard.js/
 // transactions.js.
@@ -16,6 +17,7 @@ import { t as tr } from '../i18n.js';
 
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
 const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
+const PERSON_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.4 0-8 2.2-8 5v3h16v-3c0-2.8-3.6-5-8-5Z"/></svg>';
 const PAY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>';
 
 function remaining(debt, payments) {
@@ -178,6 +180,7 @@ function debtCardHtml(d, payments, investmentName = null) {
           ${investmentName ? `<div class="tx-sub">${tr('Finance l\'investissement « {name} »', { name: escapeHtml(investmentName) })}</div>` : ''}
         </div>
         <div class="card-actions">
+          <button type="button" class="icon-btn" data-action="person" aria-label="${tr('Fiche de la personne')}" title="${tr('Fiche de la personne')}">${PERSON_ICON}</button>
           <button type="button" class="icon-btn" data-action="export" aria-label="${tr('Exporter / imprimer')}" title="${tr('Exporter / imprimer')}">${PRINT_ICON}</button>
           <button type="button" class="icon-btn" data-action="pay" aria-label="${tr('Enregistrer un remboursement')}" title="${tr('Enregistrer un remboursement')}">${PAY_ICON}</button>
           <button type="button" class="icon-btn" data-action="edit" aria-label="${tr('Modifier')}" title="${tr('Modifier')}">${EDIT_ICON}</button>
@@ -257,10 +260,11 @@ function debtFormHtml(d, defaultCurrency) {
     </form>`;
 }
 
-async function openDebtModal(d = null) {
+async function openDebtModal(d = null, { personName = '' } = {}) {
   const defaultCurrency = d ? d.currency : await getSetting('baseCurrency', 'EUR');
   const modal = openModal(debtFormHtml(d, defaultCurrency), { title: d ? tr('Modifier') : tr('Nouvelle dette / créance') });
   wireCurrencySelect(modal.el);
+  if (personName && !d) modal.el.querySelector('[name="personName"]').value = personName;
   let currentType = d?.type || 'debt';
   modal.el.querySelectorAll('.segmented-btn').forEach((b) => b.addEventListener('click', () => {
     currentType = b.dataset.value;
@@ -517,7 +521,23 @@ export async function renderDebts() {
       </div>`
     : '';
 
-  container.innerHTML = `${cardsHtml}${chartHtml}<div id="debts-simulator"></div>${paidHtml}`;
+  // « Par personne » : la page du cahier où l'on voit, d'un coup d'œil, qui doit quoi à qui.
+  const people = summarizePeople(debts, payments);
+  const peopleHtml = people.length
+    ? `<div class="panel" style="margin-bottom:20px;">
+        <div class="panel-header"><h3>${tr('Par personne')}</h3></div>
+        ${people.map((p) => {
+          const lines = Object.entries(p.balances).filter(([, v]) => v !== 0).map(([cur, v]) => v > 0
+            ? `<span class="pos">${tr('vous doit {amount}', { amount: formatCurrency(v, cur) })}</span>`
+            : `<span class="neg">${tr('vous lui devez {amount}', { amount: formatCurrency(-v, cur) })}</span>`).join(' · ');
+          return `<button type="button" class="tx-row person-row" data-person-open="${escapeHtml(p.name)}">
+            <div class="tx-main"><div class="tx-title">${escapeHtml(p.name)}</div><div class="tx-sub">${lines}</div></div>
+            <span class="tx-sub">›</span></button>`;
+        }).join('')}
+      </div>`
+    : '';
+
+  container.innerHTML = `${peopleHtml}${cardsHtml}${chartHtml}<div id="debts-simulator"></div>${paidHtml}`;
 
   if (hasDebts) {
     const { baseCurrency } = await getExchangeRates();
@@ -528,10 +548,21 @@ export async function renderDebts() {
   await renderSimulator(document.getElementById('debts-simulator'));
 }
 
+/** Fiche d'une personne : relevé, relance WhatsApp, remboursement et nouvelle dette depuis la fiche. */
+async function openPerson(personName) {
+  const [debts, payments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
+  await openPersonLedger(personName, debts, payments, {
+    onPay: (debt) => openPaymentModal(debt),
+    onNew: (name) => openDebtModal(null, { personName: name }),
+  });
+}
+
 export function initDebtsModule() {
   document.getElementById('debt-add-btn')?.addEventListener('click', () => openDebtModal());
 
   document.getElementById('debts-content')?.addEventListener('click', async (e) => {
+    const personRow = e.target.closest('[data-person-open]');
+    if (personRow) { openPerson(personRow.dataset.personOpen); return; }
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     const card = e.target.closest('[data-debt-id]');
@@ -540,7 +571,9 @@ export function initDebtsModule() {
     const d = debts.find((x) => x.id === card.dataset.debtId);
     if (!d) return;
 
-    if (btn.dataset.action === 'pay') {
+    if (btn.dataset.action === 'person') {
+      openPerson(d.personName);
+    } else if (btn.dataset.action === 'pay') {
       openPaymentModal(d);
     } else if (btn.dataset.action === 'export') {
       openProofExportModal(() => buildDebtProof(d));

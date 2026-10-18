@@ -191,6 +191,10 @@
         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.4 0-8 2.2-8 5v3h9.3a6.5 6.5 0 0 1-.3-2c0-2.8 1.6-5.2 4-6.4A15 15 0 0 0 12 14Zm7 0a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-.4 0-.8 0-1.2.1a6.5 6.5 0 0 1 2.2 4.9c0 .7-.1 1.4-.3 2H24v-2c0-2.8-2.7-5-5-5Z"/></svg>
         <span data-i18n="Comptes gardés">Comptes gardés</span>
       </button>
+      <button class="nav-item" data-view-target="tontines" id="nav-tontines" hidden>
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 3.5a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6ZM6.6 14a1.8 1.8 0 1 1 0-3.6 1.8 1.8 0 0 1 0 3.6Zm10.8 0a1.8 1.8 0 1 1 0-3.6 1.8 1.8 0 0 1 0 3.6ZM12 18.5a1.8 1.8 0 1 1 0-3.6 1.8 1.8 0 0 1 0 3.6Z"/></svg>
+        <span data-i18n="Tontines">Tontines</span>
+      </button>
     </nav>
 
     <div class="sidebar-footer">
@@ -362,6 +366,28 @@
           </div>
         </div>
 
+        <div class="panel" id="panel-forecast" hidden>
+          <div class="panel-header">
+            <h3 data-i18n="Prévision de trésorerie">Prévision de trésorerie</h3>
+            <div class="segmented" id="forecast-days" style="max-width:150px;">
+              <button type="button" class="segmented-btn is-active" data-days="30">30 j</button>
+              <button type="button" class="segmented-btn" data-days="60">60 j</button>
+            </div>
+          </div>
+          <p id="forecast-headline" style="margin:0 0 6px;font-weight:600;"></p>
+          <p id="forecast-note" class="tx-sub" style="margin:0 0 10px;"></p>
+          <div class="chart-canvas-wrap" style="height:180px;"><canvas id="chart-forecast"></canvas></div>
+          <div id="forecast-events" class="tx-list" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="panel" id="panel-favorites" hidden>
+          <div class="panel-header">
+            <h3 data-i18n="Favoris">Favoris</h3>
+          </div>
+          <p class="tx-sub" style="margin:-4px 0 10px;" data-i18n="Un toucher enregistre l'opération d'aujourd'hui (annulable).">Un toucher enregistre l'opération d'aujourd'hui (annulable).</p>
+          <div id="dashboard-favorites" class="qa-chips"></div>
+        </div>
+
         <div class="panel" id="panel-recent-transactions">
           <div class="panel-header">
             <h3 data-i18n="Transactions récentes">Transactions récentes</h3>
@@ -409,6 +435,7 @@
           <h2 data-i18n="Transactions">Transactions</h2>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
             <button id="transaction-bulk-toggle-btn" class="btn btn-ghost" data-i18n="Sélection multiple">Sélection multiple</button>
+            <button id="transaction-sms-btn" class="btn btn-ghost" data-i18n="Importer des SMS">Importer des SMS</button>
             <button id="transaction-reconcile-btn" class="btn btn-ghost" data-i18n="Rapprochement">Rapprochement</button>
             <button id="transaction-add-btn" class="btn btn-primary" data-i18n="+ Nouvelle transaction">+ Nouvelle transaction</button>
           </div>
@@ -487,6 +514,15 @@
         <div id="kept-accounts-content"></div>
       </section>
 
+      <!-- TONTINES (module optionnel) -->
+      <section id="view-tontines" class="view" data-view="tontines" hidden>
+        <div class="view-header">
+          <h2 data-i18n="Tontines">Tontines</h2>
+          <button id="tontine-add-btn" class="btn btn-primary" data-i18n="+ Nouvelle tontine">+ Nouvelle tontine</button>
+        </div>
+        <div id="tontines-content"></div>
+      </section>
+
       <!-- SETTINGS -->
       <section id="view-settings" class="view" data-view="settings" hidden>
         <div class="view-header">
@@ -510,7 +546,7 @@
       <button id="bottom-nav-add" class="bottom-nav-fab" aria-label="Saisie express" data-i18n-aria-label="Saisie express">
         <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z"/></svg>
       </button>
-      <button class="bottom-nav-item" data-view-target="budgets">
+      <button class="bottom-nav-item" data-view-target="budgets" data-slot="budgets">
         <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 3h18v4H3V3Zm0 6h12v4H3V9Zm0 6h18v6H3v-6Z"/></svg>
         <span data-i18n="Budgets">Budgets</span>
       </button>
@@ -541,6 +577,18 @@
         </button>
       </div>
       <form id="quick-add-form" class="modal-body">
+        <div id="qa-chips" class="qa-chips" data-field="chips" hidden></div>
+        <div class="qa-tools" data-field="tools">
+          <button type="button" id="qa-voice-btn" class="btn btn-ghost" hidden>
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2Z"/></svg>
+            <span data-i18n="Dicter">Dicter</span>
+          </button>
+          <button type="button" id="qa-sms-btn" class="btn btn-ghost">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2Z"/></svg>
+            <span data-i18n="Coller un SMS">Coller un SMS</span>
+          </button>
+        </div>
+        <div id="qa-voice-status" class="qa-voice-status" role="status" aria-live="polite" hidden></div>
         <div class="segmented" data-field="type">
           <button type="button" class="segmented-btn is-active" data-value="expense" data-i18n="Dépense">Dépense</button>
           <button type="button" class="segmented-btn" data-value="income" data-i18n="Recette">Recette</button>
@@ -595,6 +643,7 @@
             </div>
           </div>
         </div>
+        <button type="button" id="qa-favorite-btn" class="link-btn" style="margin-bottom:10px;" data-i18n="☆ Garder comme favori">☆ Garder comme favori</button>
         <button type="submit" class="btn btn-primary btn-block" data-i18n="Enregistrer">Enregistrer</button>
       </form>
     </div>

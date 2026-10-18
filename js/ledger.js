@@ -49,6 +49,9 @@ function toBase(amount, currency, rates, baseCurrency) {
     investmentMovementType==='withdrawal' ou à un prêt reçu (debtId, exclu symétriquement des deux
     côtés lui aussi, voir plus bas). */
 export function isInvestmentMovementExcluded(t) {
+  // Cotisation ou pot de tontine (tontines.js) : de l'argent mis de côté puis récupéré, ni une dépense
+  // ni un revenu. Sa contrepartie est comptée dans le patrimoine (voir tontinePositionAsOf).
+  if (t.tontineId) return true;
   if (!t.investmentId) return false;
   return t.type === 'expense' || t.investmentMovementType === 'withdrawal';
 }
@@ -152,6 +155,22 @@ function debtRemainingAsOf(debt, payments, cutoffDate) {
   return Math.max(0, (debt.principal || 0) - paid);
 }
 
+/** Position nette dans les tontines à une date : cotisations versées − pots reçus (en devise de base).
+    Positive avant d'avoir reçu son pot (c'est de l'épargne récupérable), négative après (il reste des
+    cotisations à verser) — l'argent sorti du portefeuille ne « disparaît » donc pas du patrimoine. Lit
+    uniquement les transactions (tontineId / tontineMovement), aucun autre store. */
+export function tontinePositionAsOf(transactions, wallets, cutoffDate, rates, baseCurrency) {
+  const currencyOf = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  let total = 0;
+  for (const t of transactions) {
+    if (!t.tontineId || (cutoffDate && t.date > cutoffDate)) continue;
+    const amt = toBase(Number(t.amount) || 0, currencyOf[t.walletId] || baseCurrency, rates, baseCurrency);
+    if (t.tontineMovement === 'pot') total -= amt;
+    else total += amt; // cotisation
+  }
+  return total;
+}
+
 /** Cœur pur (aucun accès DB) de computeNetWorth, séparé pour que computeNetWorthHistory puisse
     l'appeler en boucle sur des données déjà chargées une seule fois — voir cette fonction pour le
     contexte (elle rechargeait ctx() à chaque mois, ~7x plus lent sur un historique de plusieurs
@@ -172,6 +191,7 @@ function netWorthAt(cutoffDate, { wallets, transactions, investments, investment
     const remaining = debtRemainingAsOf(d, debtPayments, cutoffDate);
     total += (d.type === 'receivable' ? 1 : -1) * toBase(remaining, d.currency, ratesForDate, baseCurrency);
   }
+  total += tontinePositionAsOf(transactions, wallets, cutoffDate, ratesForDate, baseCurrency);
   return { total, currency: baseCurrency };
 }
 
@@ -205,6 +225,8 @@ export async function computeNetWorthComposition(cutoffDate = null) {
     if (d.type === 'receivable') receivables += remaining;
     else debtTotal += remaining;
   }
+  // La tontine est de l'épargne collective : sa position nette s'ajoute à l'épargne.
+  savings += tontinePositionAsOf(transactions, wallets, cutoffDate, ratesForDate, baseCurrency);
   return { liquid, savings, blocked, invested, receivables, debts: debtTotal, currency: baseCurrency };
 }
 
@@ -317,6 +339,33 @@ export async function computeMonthSummary(monthKey = currentMonthKey()) {
   }
   const netSavings = income - expenses;
   return { income, expenses, netSavings, cashFlow: netSavings, currency: baseCurrency };
+}
+
+/** Étiquettes techniques posées par l'appli elle-même (import SMS) : sans intérêt pour un bilan. */
+const TECHNICAL_TAGS = new Set(['sms']);
+
+/** Bilan par étiquette pour un mois : entrées, sorties et résultat (entrées − sorties), en devise de
+    base. Sert au suivi « pro / perso » : étiqueter « pro » ses opérations d'activité donne son
+    résultat du mois sans séparer les portefeuilles. Une transaction à plusieurs étiquettes compte
+    dans chacune (ces totaux ne s'additionnent donc pas). Mêmes exclusions que computeMonthSummary. */
+export async function computeTagSummary(monthKey = currentMonthKey()) {
+  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const byTag = new Map();
+  for (const t of transactions) {
+    if (!t.date || !t.date.startsWith(monthKey) || t.debtId || isInvestmentMovementExcluded(t)) continue;
+    if (t.type !== 'income' && t.type !== 'expense') continue;
+    const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
+    for (const tag of new Set((t.tags || []).filter((x) => !TECHNICAL_TAGS.has(x)))) {
+      const row = byTag.get(tag) || { tag, income: 0, expenses: 0, count: 0 };
+      if (t.type === 'income') row.income += amt; else row.expenses += amt;
+      row.count++;
+      byTag.set(tag, row);
+    }
+  }
+  const rows = [...byTag.values()].map((r) => ({ ...r, result: r.income - r.expenses }));
+  rows.sort((a, b) => (b.income + b.expenses) - (a.income + a.expenses));
+  return { rows, currency: baseCurrency };
 }
 
 /** Entrées/sorties sur une plage de dates [startDate, endDate] incluses (YYYY-MM-DD), pour les

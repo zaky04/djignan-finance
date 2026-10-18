@@ -7,13 +7,14 @@
 import {
   computeNetWorth, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeCategoryActuals,
   computeMonthlyTypeHistory, getCategoriesByType, computeMonthlyNetSavingsHistory, computeMonthlyBudgetVsActualHistory, computeNetWorthHistoryForYear,
-  computeNetWorthComposition, computeInvestmentEntryTotals,
+  computeNetWorthComposition, computeInvestmentEntryTotals, computeTagSummary,
 } from '../ledger.js';
 import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, localISODate, showToast, escapeHtml } from '../utils.js';
 import { exportTransactionsCsv, exportInvestmentEntriesCsv } from '../backup.js';
 import { STORES, dbGetAll, getSetting } from '../db.js';
 import { healthScorePanelHtml, calendarPanelHtml, wireCalendarPanel } from './reports-extras.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderMultiTrendChart, renderNetSavingsBarChart } from '../charts.js';
+import { loadMonthlyRecap, recapHighlights, recapAsText, shareRecapImage } from '../monthly-recap.js';
 import { t } from '../i18n.js';
 
 /** formatCurrency() insère des espaces insécables/fines (ex: séparateur de milliers en fr-FR) que
@@ -366,6 +367,66 @@ async function generateAnnualPdfReport() {
   showToast(t('Bilan annuel PDF généré.'));
 }
 
+/** « Bilan du mois à partager » : phrases calculées en local + image/texte à envoyer (voir
+    monthly-recap.js). Les montants peuvent être masqués avant de partager. */
+async function recapPanelHtml(monthKey) {
+  const recap = await loadMonthlyRecap(monthKey);
+  if (!recap.hasData) return '';
+  const lines = recapHighlights(recap);
+  return `
+    <div class="panel" style="margin-top:16px;" id="recap-panel">
+      <div class="panel-header"><h3>${t('Bilan du mois à partager')}</h3></div>
+      <ul style="margin:0 0 12px;padding-left:18px;font-size:13.5px;line-height:1.6;">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px;cursor:pointer;">
+        <input type="checkbox" id="recap-hide-amounts"> ${t('Masquer les montants (garder les pourcentages)')}
+      </label>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;">
+        <button type="button" class="btn btn-primary" id="recap-share-btn">${t("Partager l'image")}</button>
+        <button type="button" class="btn btn-ghost" id="recap-copy-btn">${t('Copier le texte')}</button>
+      </div>
+    </div>`;
+}
+
+function wireRecapPanel(container, monthKey) {
+  const panel = container.querySelector('#recap-panel');
+  if (!panel) return;
+  const hide = () => panel.querySelector('#recap-hide-amounts').checked;
+  panel.querySelector('#recap-hide-amounts').addEventListener('change', async () => {
+    const recap = await loadMonthlyRecap(monthKey);
+    panel.querySelector('ul').innerHTML = recapHighlights(recap, { hideAmounts: hide() }).map((l) => `<li>${escapeHtml(l)}</li>`).join('');
+  });
+  panel.querySelector('#recap-share-btn').addEventListener('click', async () => {
+    const recap = await loadMonthlyRecap(monthKey);
+    const outcome = await shareRecapImage(recap, { hideAmounts: hide() });
+    if (outcome === 'downloaded') showToast(t("Image téléchargée : envoyez-la depuis votre galerie."));
+  });
+  panel.querySelector('#recap-copy-btn').addEventListener('click', async () => {
+    const recap = await loadMonthlyRecap(monthKey);
+    try { await navigator.clipboard.writeText(recapAsText(recap, { hideAmounts: hide() })); showToast(t('Texte copié.')); }
+    catch { showToast(t("Impossible de copier : sélectionnez le texte à la main.")); }
+  });
+}
+
+/** « Par étiquette » : entrées, sorties et résultat du mois pour chaque étiquette (ex : « pro » pour
+    une activité). Masqué tant qu'aucune opération n'est étiquetée. */
+async function tagSummaryPanelHtml(monthKey) {
+  const { rows, currency } = await computeTagSummary(monthKey);
+  if (!rows.length) return '';
+  return `
+    <div class="panel" style="margin-top:16px;">
+      <div class="panel-header"><h3>${t('Résultat par étiquette')}</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin:0 0 10px;">${t("Étiquetez vos opérations (ex : « pro ») dans la Saisie express : vous voyez ici ce que chaque activité rapporte ce mois-ci. Une opération à plusieurs étiquettes compte dans chacune.")}</p>
+      ${rows.map((r) => `
+        <div class="tx-row">
+          <div class="tx-main">
+            <div class="tx-title">${escapeHtml(r.tag)}</div>
+            <div class="tx-sub">${t('Entrées : {income} · Sorties : {expenses}', { income: formatCurrency(r.income, currency), expenses: formatCurrency(r.expenses, currency) })}</div>
+          </div>
+          <div class="tx-amount amount ${r.result >= 0 ? 'pos' : 'neg'}">${r.result >= 0 ? '+' : '−'}${formatCurrency(Math.abs(r.result), currency)}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
 export async function renderReports() {
   const container = document.getElementById('reports-content');
   if (!container) return;
@@ -393,11 +454,14 @@ export async function renderReports() {
       </div>
       <button type="button" class="btn btn-primary" id="rep-annual-pdf-btn">${t('Générer le bilan annuel PDF')}</button>
     </div>
+    ${await recapPanelHtml(reportMonthKey)}
+    ${await tagSummaryPanelHtml(reportMonthKey)}
     ${await chartsSectionHtml()}
     ${await healthScorePanelHtml(reportMonthKey)}
     ${await calendarPanelHtml(reportMonthKey)}`;
 
   wireCalendarPanel(container, reportMonthKey);
+  wireRecapPanel(container, reportMonthKey);
   await renderChartsSection(container);
 
   container.querySelector('#rep-prev-month').onclick = () => { reportMonthKey = monthKeyOffset(reportMonthKey, -1); renderReports(); };

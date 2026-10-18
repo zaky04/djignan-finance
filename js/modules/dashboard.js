@@ -4,16 +4,22 @@
 
 import { formatCurrency, formatDate, formatMonthLabel, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';
 import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates, computeMonthlyTypeHistory, getCategoriesByType, computeBudgetSuggestions } from '../ledger.js';
-import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart } from '../charts.js';
-import { getSetting, setSetting } from '../db.js';
+import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderMultiTrendChart } from '../charts.js';
+import { loadCashflowForecast } from '../forecast.js';
+import { STORES, dbGetAll, getSetting, setSetting } from '../db.js';
 import { openBudgetSuggestions } from './budgets.js';
+import { openQuickAdd } from './transactions.js';
+import { getTemplates, recordTemplateNow, undoRecordedTemplate } from '../quick-templates.js';
+import { notifyDataChanged } from '../state.js';
+import { showToast } from '../utils.js';
+import { getCloudAutoBackupAlert } from '../firebase-sync.js';
 // Aliasé en tr (pas t) : ce fichier utilise déjà `t` comme nom de paramètre pour une transaction
 // (voir txRowHtml(t)) — importer la fonction de traduction sous le même nom la masquerait
 // silencieusement à l'intérieur de cette fonction (t('Sans catégorie') appellerait alors la
 // transaction comme une fonction au lieu de traduire, TypeError immédiat).
 import { t as tr } from '../i18n.js';
 
-export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true, safeToSpend: true, netWorth: true, debtsBalance: true };
+export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true, safeToSpend: true, netWorth: true, debtsBalance: true, favorites: true, forecast: true };
 export const BUDGET_ALERT_THRESHOLD_DEFAULTS = { warn: 70, danger: 90 };
 
 // État des filtres des courbes de variation mensuelle (année + catégorie) — au niveau module pour
@@ -257,10 +263,92 @@ async function refreshIncomeTrend() {
   renderNetWorthTrendChart('chart-income-trend', points, currency, tr('Entrées'));
 }
 
+/* ---------- Prévision de trésorerie 30/60 jours (voir forecast.js) ---------- */
+let forecastDays = 30;
+const FORECAST_KIND_LABELS = { recurring: 'Récurrent', debt: 'Dette à rembourser', receivable: 'Créance à encaisser', tontine: 'Cotisation de tontine', pot: 'Pot de tontine' };
+
+async function renderForecast(panelEl) {
+  const forecast = await loadCashflowForecast(forecastDays);
+  const cur = forecast.currency;
+  // Rien de connu à venir : le panneau n'apporterait qu'une ligne plate.
+  if (!forecast.events.length) { panelEl.hidden = true; return; }
+  panelEl.hidden = false;
+  panelEl.querySelectorAll('#forecast-days [data-days]').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.days) === forecastDays));
+
+  const headline = document.getElementById('forecast-headline');
+  if (forecast.firstNegativeDate) {
+    headline.className = 'neg';
+    headline.textContent = tr('⚠ Solde négatif prévu le {date} (plus bas : {amount}).', { date: formatDate(forecast.firstNegativeDate), amount: formatCurrency(forecast.minBalance, cur) });
+  } else {
+    headline.className = '';
+    headline.textContent = tr('Dans {days} jours : {end} (au plus bas {min} le {date}).', { days: forecastDays, end: formatCurrency(forecast.endBalance, cur), min: formatCurrency(forecast.minBalance, cur), date: formatDate(forecast.minDate) });
+  }
+  document.getElementById('forecast-note').textContent = tr("Calculé d'après vos récurrences, échéances de dettes et tontines — pas vos dépenses courantes (courses, transport…).");
+
+  const step = forecastDays > 30 ? 3 : 2;
+  const sampled = forecast.points.filter((_, i) => i % step === 0 || i === forecast.points.length - 1);
+  const label = (p) => formatDate(p.date, { day: '2-digit', month: 'short' });
+  const series = [{ label: tr('Solde prévu'), points: sampled.map((p) => ({ label: label(p), value: Math.round(p.balance) })) }];
+  if (forecast.points.some((p) => Math.round(p.optimistic) !== Math.round(p.balance))) {
+    series.push({ label: tr('Si tout est encaissé'), dashed: true, points: sampled.map((p) => ({ label: label(p), value: Math.round(p.optimistic) })) });
+  }
+  renderMultiTrendChart('chart-forecast', series, cur);
+
+  document.getElementById('forecast-events').innerHTML = forecast.events.slice(0, 6).map((ev) => `
+    <div class="tx-row">
+      <div class="tx-main"><div class="tx-title">${escapeHtml(ev.label)}${ev.certain ? '' : ` <span class="badge badge-warn">${tr('incertain')}</span>`}</div>
+        <div class="tx-sub">${formatDate(ev.date)} · ${tr(FORECAST_KIND_LABELS[ev.kind] || '')}</div></div>
+      <div class="tx-amount amount ${ev.amount >= 0 ? 'pos' : 'neg'}">${ev.amount >= 0 ? '+' : '−'}${formatCurrency(Math.abs(ev.amount), cur)}</div>
+    </div>`).join('');
+}
+
+/* ---------- Favoris : un toucher = l'opération d'aujourd'hui (voir quick-templates.js) ---------- */
+let favoriteItems = new Map();
+
+async function renderFavorites(panelEl) {
+  const [templates, wallets] = await Promise.all([getTemplates(), dbGetAll(STORES.WALLETS)]);
+  favoriteItems = new Map(templates.map((x) => [x.id, x]));
+  panelEl.hidden = !templates.length;
+  const container = document.getElementById('dashboard-favorites');
+  if (!container) return;
+  container.innerHTML = templates.map((x) => {
+    const cur = wallets.find((w) => w.id === x.walletId)?.currency || 'EUR';
+    const amount = x.amount > 0 ? ` · ${escapeHtml(formatCurrency(x.amount, cur))}` : '';
+    const sign = x.type === 'income' ? '+' : '−';
+    return `<button type="button" class="qa-chip" data-favorite-id="${x.id}">${sign} ${escapeHtml(x.label)}${amount}</button>`;
+  }).join('');
+}
+
+async function onFavoriteClick(event) {
+  const btn = event.target.closest('[data-favorite-id]');
+  const tpl = btn && favoriteItems.get(btn.dataset.favoriteId);
+  if (!tpl) return;
+  if (!(tpl.amount > 0)) { openQuickAdd({ prefill: tpl }); return; } // montant variable : on le demande
+  btn.disabled = true; // évite un double enregistrement par double-clic
+  const record = await recordTemplateNow(tpl);
+  if (!record) {
+    btn.disabled = false;
+    showToast(tr('Ce favori ne peut plus être enregistré (portefeuille supprimé ou archivé). Retirez-le dans Saisie express.'));
+    return;
+  }
+  notifyDataChanged('transactions');
+  showToast(tr('{label} enregistré.', { label: tpl.label }), {
+    actionLabel: tr('Annuler'),
+    onAction: async () => { await undoRecordedTemplate(record); notifyDataChanged('transactions'); showToast(tr('Annulé.')); },
+  });
+}
+
 /** Câblage une seule fois (année précédente/suivante, sélecteur de catégorie) des deux courbes de
     variation mensuelle — les éléments concernés sont statiques dans index.html (pas régénérés à
     chaque renderDashboard()), contrairement au reste du tableau de bord. */
 export function initDashboardModule() {
+  document.getElementById('dashboard-favorites')?.addEventListener('click', onFavoriteClick);
+  document.getElementById('forecast-days')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-days]');
+    if (!btn) return;
+    forecastDays = Number(btn.dataset.days) === 60 ? 60 : 30;
+    renderForecast(document.getElementById('panel-forecast')).catch((err) => console.warn('[Prévision]', err));
+  });
   document.getElementById('dash-expenses-trend-prev-year')?.addEventListener('click', () => { expensesTrendYear -= 1; refreshExpensesTrend(); });
   document.getElementById('dash-expenses-trend-next-year')?.addEventListener('click', () => { expensesTrendYear += 1; refreshExpensesTrend(); });
   document.getElementById('dash-expenses-trend-category')?.addEventListener('change', (e) => { expensesTrendCategoryId = e.target.value; refreshExpensesTrend(); });
@@ -408,7 +496,27 @@ export async function renderDashboard() {
   }
 
   renderAlerts(budgetVsActual, thresholds, unconfirmedRates, currency);
+  // Sauvegarde cloud automatique en pause ou en échec : à voir ICI, pas seulement dans Paramètres.
+  getCloudAutoBackupAlert().then((message) => {
+    const stack = document.getElementById('dashboard-alerts');
+    if (!message || !stack || stack.querySelector('[data-cloud-auto-alert]')) return;
+    const div = document.createElement('div');
+    div.className = 'alert alert-warn';
+    div.dataset.cloudAutoAlert = '1';
+    div.textContent = message;
+    stack.appendChild(div);
+  }).catch(() => {});
   if (budgetVsActual.every((r) => !(r.budget > 0))) maybeShowBudgetSuggestionReminder(monthKey).catch((err) => console.warn('[BudgetSuggest]', err));
+  const forecastEl = document.getElementById('panel-forecast');
+  if (forecastEl) {
+    if (panels.forecast) await renderForecast(forecastEl).catch((err) => { forecastEl.hidden = true; console.warn('[Prévision]', err); });
+    else forecastEl.hidden = true;
+  }
+  const favoritesEl = document.getElementById('panel-favorites');
+  if (favoritesEl) {
+    if (panels.favorites) await renderFavorites(favoritesEl);
+    else favoritesEl.hidden = true;
+  }
   if (panels.recentTransactions) renderRecentTransactions(recentTx);
   if (panels.watchCategories) renderWatchCategories(budgetVsActual);
   if (panels.upcomingBills) renderUpcomingBills(forecast.upcoming, forecast.currency);

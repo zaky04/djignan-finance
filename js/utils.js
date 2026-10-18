@@ -340,3 +340,17 @@ export function confirmDialog(message, { title, confirmText, cancelText, danger 
     modal.el.querySelector('[data-act="confirm"]').addEventListener('click', () => { decided = true; resolve(true); modal.close(); });
   });
 }
+
+/** Ouvre une adresse web hors de l'appli (WhatsApp, etc.) : navigateur du système pour l'exécutable
+    Windows (Tauri) et l'APK (Capacitor, onglet Chrome), nouvel onglet pour la PWA. Seules les adresses
+    https:// sont acceptées. */
+export function openExternalUrl(url) {
+  if (typeof url !== 'string' || !/^https:\/\//i.test(url)) return;
+  if (typeof window !== 'undefined' && window.__TAURI__?.core?.invoke) {
+    window.__TAURI__.core.invoke('open_external', { url }).catch(() => {});
+    return;
+  }
+  const browser = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() && window.Capacitor.Plugins?.Browser;
+  if (browser) { browser.open({ url }).catch(() => {}); return; }
+  window.open(url, '_blank', 'noopener');
+}

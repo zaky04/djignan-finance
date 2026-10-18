@@ -5,7 +5,10 @@
    rapprochement bancaire ("check-in").
    ========================================================================== */
 
-import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, logAudit } from '../db.js';
+import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, logAudit, getSetting, setSetting } from '../db.js';
+import { openSmsImportModal, initSmsImport } from './sms-import.js';
+import { isVoiceSupported, listenOnce, parseSpokenEntry } from '../voice-input.js';
+import { getTemplates, addTemplate, removeTemplate, computeFrequentSuggestions } from '../quick-templates.js';
 import { getEnrichedTransactions, guessCategoryId, checkUnusualExpense, isDailyWallet } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast, safeNumber, compressImageBlob } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
@@ -13,7 +16,7 @@ import { extractReceiptDataFromImage } from '../ocr.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // plusieurs fonctions (txRowHtml(t), reconTxRowHtml(t), et une const t locale dans le handler de
 // clic de initTransactionsModule) — voir le même piège documenté dans dashboard.js.
-import { t as tr, applyStaticTranslations } from '../i18n.js';
+import { t as tr, applyStaticTranslations, getLanguage } from '../i18n.js';
 
 const TX_ICONS = {
   income: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 20V6M6 12l6-6 6 6"/></svg>',
@@ -33,7 +36,7 @@ const RECEIPT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill
 /* ==========================================================================
    Modale Saisie express (création + édition)
    ========================================================================== */
-export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null } = {}) {
+export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null, prefill = null } = {}) {
   document.querySelectorAll('#modal-root .modal-backdrop[data-modal="quick-add"]').forEach((el) => el.remove());
   const tpl = document.getElementById('tpl-modal-quick-add');
   const root = document.getElementById('modal-root');
@@ -46,6 +49,8 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null 
   applyStaticTranslations();
 
   function close() {
+    // Une dictée en cours s'arrête avec la fenêtre (sinon le micro resterait ouvert).
+    if (typeof voiceController !== 'undefined' && voiceController) voiceController.stop();
     backdrop.remove();
     document.removeEventListener('keydown', onKey);
   }
@@ -75,6 +80,14 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null 
   const receiptPreviewImg = backdrop.querySelector('#qa-receipt-preview-img');
   const receiptRemoveBtn = backdrop.querySelector('#qa-receipt-remove');
   const receiptScanBtn = backdrop.querySelector('#qa-receipt-scan');
+  const chipsEl = backdrop.querySelector('#qa-chips');
+  const toolsEl = backdrop.querySelector('[data-field="tools"]');
+  const voiceBtn = backdrop.querySelector('#qa-voice-btn');
+  const smsBtn = backdrop.querySelector('#qa-sms-btn');
+  const voiceStatusEl = backdrop.querySelector('#qa-voice-status');
+  const favoriteBtn = backdrop.querySelector('#qa-favorite-btn');
+  // Favoris, dictée et SMS servent à CRÉER une transaction : sans objet quand on en modifie une.
+  if (editTransaction) { toolsEl.hidden = true; favoriteBtn.hidden = true; }
 
   let currentType = editTransaction?.type || 'expense';
   let splitMode = false;
@@ -262,9 +275,120 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null 
     suggestDebounce = setTimeout(suggestCategoryFromNote, 250);
   });
 
+  /* ---------- Favoris : pré-remplissent le formulaire d'un toucher ---------- */
+  let chipItems = new Map();
+  async function renderChips() {
+    if (editTransaction) return;
+    const [templates, suggestions] = await Promise.all([getTemplates(), computeFrequentSuggestions()]);
+    chipItems = new Map([...templates, ...suggestions].map((x) => [x.id, x]));
+    if (!chipItems.size) { chipsEl.hidden = true; chipsEl.innerHTML = ''; return; }
+    const chip = (x) => {
+      const wallet = allWallets.find((w) => w.id === x.walletId);
+      const amount = x.amount > 0 ? ` · ${escapeHtml(formatCurrency(x.amount, wallet?.currency || 'EUR'))}` : '';
+      return `<span class="qa-chip-wrap">
+        <button type="button" class="qa-chip ${x.suggestion ? 'is-suggestion' : ''}" data-chip-id="${x.id}" title="${x.suggestion ? escapeHtml(tr('Suggestion d\'après vos habitudes')) : ''}">${x.suggestion ? '✦ ' : '★ '}${escapeHtml(x.label)}${amount}</button>
+        ${x.suggestion ? '' : `<button type="button" class="qa-chip-x" data-chip-remove="${x.id}" aria-label="${escapeHtml(tr('Retirer ce favori'))}">✕</button>`}
+      </span>`;
+    };
+    chipsEl.innerHTML = [...templates, ...suggestions].map(chip).join('');
+    chipsEl.hidden = false;
+  }
+
+  async function applyTemplate(tpl) {
+    if (splitMode) setSplitMode(false);
+    await setType(tpl.type);
+    if (allWallets.some((w) => w.id === tpl.walletId)) { walletSelect.value = tpl.walletId; refreshTargetWalletOptions(); }
+    if (tpl.categoryId && categorySelect.querySelector(`option[value="${tpl.categoryId}"]`)) {
+      categorySelect.value = tpl.categoryId;
+      categoryTouchedByUser = true;
+    }
+    form.elements.note.value = tpl.note || '';
+    form.elements.amount.value = tpl.amount > 0 ? String(tpl.amount) : '';
+    (tpl.amount > 0 ? form.querySelector('button[type="submit"]') : form.elements.amount).focus();
+  }
+
+  chipsEl.addEventListener('click', async (e) => {
+    const removeBtn = e.target.closest('[data-chip-remove]');
+    if (removeBtn) { await removeTemplate(removeBtn.dataset.chipRemove); await renderChips(); return; }
+    const chipBtn = e.target.closest('[data-chip-id]');
+    if (chipBtn && chipItems.has(chipBtn.dataset.chipId)) await applyTemplate(chipItems.get(chipBtn.dataset.chipId));
+  });
+
+  favoriteBtn.addEventListener('click', async () => {
+    const amount = safeNumber(parseFloat(form.elements.amount.value));
+    if (currentType === 'transfer' || splitMode) { showToast(tr('Un favori se crée à partir d\'une dépense ou d\'une recette simple.')); return; }
+    if (!walletSelect.value) { showToast(tr('Créez au moins un portefeuille avant de saisir une transaction.')); return; }
+    const note = form.elements.note.value.trim();
+    const categoryName = (categorySelect.selectedOptions[0]?.textContent || '').replace(/^—\s*/, '').trim();
+    if (!note && !categorySelect.value) { showToast(tr('Ajoutez un libellé ou une catégorie pour reconnaître ce favori.')); return; }
+    const result = await addTemplate({ type: currentType, walletId: walletSelect.value, categoryId: categorySelect.value || null, amount, note, label: note || categoryName });
+    if (!result) { showToast(tr('Vous avez déjà 12 favoris : retirez-en un (✕) pour en ajouter.')); return; }
+    showToast(result.created ? tr('Favori enregistré.') : tr('Favori mis à jour.'));
+    await renderChips();
+  });
+
+  /* ---------- Coller un SMS Mobile Money ---------- */
+  smsBtn.addEventListener('click', () => { close(); openSmsImportModal(); });
+
+  /* ---------- Dictée vocale ---------- */
+  if (!editTransaction && isVoiceSupported()) voiceBtn.hidden = false;
+  let voiceController = null;
+  const voiceLabel = voiceBtn.querySelector('span');
+  function stopVoiceUi() {
+    voiceController = null;
+    voiceBtn.classList.remove('is-listening');
+    voiceLabel.textContent = tr('Dicter');
+  }
+  voiceBtn.addEventListener('click', async () => {
+    if (voiceController) { voiceController.stop(); return; }
+    if (!(await getSetting('voiceConsent', false))) {
+      const ok = await confirmDialog(
+        tr("La dictée utilise la reconnaissance vocale de votre navigateur (Google sur Chrome, Apple sur Safari) : l'audio peut être envoyé à ce service pour être transcrit. Djignan ne l'enregistre pas. Continuer ?"),
+        { confirmText: tr('Continuer') },
+      );
+      if (!ok) return;
+      await setSetting('voiceConsent', true);
+    }
+    const { promise, controller } = listenOnce({
+      lang: getLanguage(),
+      onInterim: (text) => { voiceStatusEl.textContent = `« ${text} »`; },
+    });
+    voiceController = controller;
+    voiceBtn.classList.add('is-listening');
+    voiceLabel.textContent = tr('Arrêter');
+    voiceStatusEl.hidden = false;
+    voiceStatusEl.textContent = tr('Je vous écoute… Dites par exemple : « 2 500 taxi ».');
+    try {
+      const heard = await promise;
+      const parsed = parseSpokenEntry(heard, getLanguage());
+      voiceStatusEl.textContent = `« ${heard} »`;
+      if (parsed.amount == null) { showToast(tr("Montant non compris — répétez ou saisissez-le à la main.")); return; }
+      if (splitMode) setSplitMode(false);
+      if (currentType === 'transfer' || parsed.type !== currentType) await setType(parsed.type);
+      form.elements.amount.value = String(parsed.amount);
+      if (parsed.note) {
+        form.elements.note.value = parsed.note;
+        form.elements.note.dispatchEvent(new Event('input'));
+      }
+      showToast(tr('Dicté : {amount} — vérifiez avant d\'enregistrer.', { amount: parsed.amount }));
+    } catch (err) {
+      const messages = {
+        'not-allowed': tr("Accès au micro refusé : autorisez-le dans les réglages du navigateur."),
+        'service-not-allowed': tr("Accès au micro refusé : autorisez-le dans les réglages du navigateur."),
+        'no-speech': tr("Je n'ai rien entendu. Réessayez."),
+        'network': tr('La reconnaissance vocale a besoin de la connexion internet.'),
+      };
+      voiceStatusEl.hidden = true;
+      showToast(messages[err.code] || tr("La dictée n'a pas fonctionné. Saisissez à la main."));
+    } finally {
+      stopVoiceUi();
+    }
+  });
+
   (async () => {
     await populateWallets();
     await setType(currentType);
+    renderChips().catch((err) => console.warn('[Favoris]', err));
     form.elements.date.value = editTransaction?.date || todayISO();
     form.elements.amount.value = editTransaction?.amount ?? '';
     form.elements.note.value = editTransaction?.note || '';
@@ -285,6 +409,8 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null 
       else categorySelect.value = editTransaction.categoryId || '';
       splitToggleRow.hidden = true;
     }
+    // Favori sans montant fixe touché depuis le tableau de bord : formulaire pré-rempli, montant à saisir.
+    if (prefill && !editTransaction) await applyTemplate(prefill);
     // Photo reçue via le partage entrant (Web Share Target, voir applyShareTarget() dans app.js) :
     // injectée dans le vrai <input type="file"> via DataTransfer plutôt que dans une variable à
     // part, pour réutiliser tel quel tout le circuit existant (aperçu, retrait, résolution du
@@ -510,7 +636,7 @@ function openReconciliationModal() {
 /* ==========================================================================
    Liste des transactions (vue complète, filtrable)
    ========================================================================== */
-const filters = { monthKey: currentMonthKey(), walletId: '', categoryId: '', type: '', reconciled: '' };
+const filters = { monthKey: currentMonthKey(), walletId: '', categoryId: '', type: '', reconciled: '', tag: '' };
 let bulkMode = false;
 const selectedIds = new Set();
 let visibleIds = [];
@@ -557,6 +683,7 @@ async function renderList() {
     categoryId: filters.categoryId || null,
     type: filters.type || null,
   });
+  if (filters.tag) rows = rows.filter((r) => (r.tags || []).includes(filters.tag));
   if (filters.reconciled === 'yes') rows = rows.filter((r) => r.reconciled);
   if (filters.reconciled === 'no') rows = rows.filter((r) => !r.reconciled);
   visibleIds = rows.map((r) => r.id);
@@ -688,7 +815,9 @@ async function renderBulkBar() {
 async function renderFiltersBar() {
   const bar = document.getElementById('transactions-filters');
   if (!bar) return;
-  const [wallets, categories] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES)]);
+  const [wallets, categories, allTx] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.TRANSACTIONS)]);
+  const tagList = [...new Set(allTx.flatMap((x) => x.tags || []))].sort((a, b) => a.localeCompare(b));
+  if (filters.tag && !tagList.includes(filters.tag)) filters.tag = '';
 
   bar.innerHTML = `
     <div style="display:flex;align-items:center;gap:4px;">
@@ -704,6 +833,7 @@ async function renderFiltersBar() {
       <option value="expense" ${filters.type === 'expense' ? 'selected' : ''}>${tr('Dépenses')}</option>
       <option value="transfer" ${filters.type === 'transfer' ? 'selected' : ''}>${tr('Transferts')}</option>
     </select>
+    ${tagList.length ? `<select id="tx-filter-tag"><option value="">${tr('Toutes étiquettes')}</option>${tagList.map((tg) => `<option value="${escapeHtml(tg)}" ${filters.tag === tg ? 'selected' : ''}>${escapeHtml(tg)}</option>`).join('')}</select>` : ''}
     <select id="tx-filter-reconciled">
       <option value="">${tr('Rapprochement : toutes')}</option>
       <option value="yes" ${filters.reconciled === 'yes' ? 'selected' : ''}>${tr('Pointées')}</option>
@@ -716,6 +846,8 @@ async function renderFiltersBar() {
   bar.querySelector('#tx-filter-category').onchange = (e) => { filters.categoryId = e.target.value; renderList(); };
   bar.querySelector('#tx-filter-type').onchange = (e) => { filters.type = e.target.value; renderList(); };
   bar.querySelector('#tx-filter-reconciled').onchange = (e) => { filters.reconciled = e.target.value; renderList(); };
+  const tagSelect = bar.querySelector('#tx-filter-tag');
+  if (tagSelect) tagSelect.onchange = (e) => { filters.tag = e.target.value; renderList(); };
 }
 
 export async function renderTransactions() {
@@ -726,6 +858,7 @@ export async function renderTransactions() {
 export function initTransactionsModule() {
   document.getElementById('transaction-add-btn')?.addEventListener('click', () => openQuickAdd());
   document.getElementById('transaction-reconcile-btn')?.addEventListener('click', () => openReconciliationModal());
+  initSmsImport();
   document.getElementById('transaction-bulk-toggle-btn')?.addEventListener('click', () => toggleBulkMode(!bulkMode));
 
   document.getElementById('transactions-list')?.addEventListener('click', async (e) => {

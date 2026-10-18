@@ -14,6 +14,7 @@ import {
   currentMonthKey, monthKeyOffset, percentage, budgetProgressClass, openModal, confirmDialog, showToast, safeNumber,
 } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { advanceDate } from '../recurrence.js';
 import { t } from '../i18n.js';
 
 const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
@@ -723,33 +724,6 @@ async function renderRulesTab(container) {
 /* ==========================================================================
    Génération automatique des transactions dues (appelée au démarrage)
    ========================================================================== */
-function advanceDate(dateStr, frequency, anchorDay) {
-  const [y, m, day] = dateStr.split('-').map(Number);
-  if (frequency === 'weekly') {
-    const d = new Date(y, m - 1, day);
-    d.setDate(d.getDate() + 7);
-    return localISODate(d);
-  }
-  // Mensuel/annuel : on avance en mois/année calendaires, PAS en ajoutant à la date précédente
-  // via setMonth/setFullYear (ces derniers débordent silencieusement sur le mois suivant quand
-  // le jour d'origine — 29, 30, 31 — n'existe pas dans le mois cible, ex: 31 janvier + 1 mois
-  // devient le 3 mars au lieu du 28/29 février : un mois entier de récurrence est alors sauté et
-  // toutes les échéances suivantes restent décalées en permanence). `anchorDay` est le jour du
-  // mois voulu par l'utilisateur (ex: loyer le 31) : on clampe seulement quand le mois cible est
-  // trop court, et on revient à `anchorDay` dès que le mois suivant le permet à nouveau, comme
-  // le ferait une vraie échéance de facturation.
-  const targetDay = anchorDay ?? day;
-  let targetYear = y;
-  let targetMonth = m - 1;
-  if (frequency === 'yearly') targetYear += 1;
-  else targetMonth += 1;
-  targetYear += Math.floor(targetMonth / 12);
-  targetMonth = ((targetMonth % 12) + 12) % 12;
-  const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-  const d = new Date(targetYear, targetMonth, Math.min(targetDay, lastDayOfTargetMonth));
-  return localISODate(d);
-}
-
 export async function generateDueRecurring() {
   const recurring = await dbGetAll(STORES.RECURRING);
   const todayStr = todayISO();

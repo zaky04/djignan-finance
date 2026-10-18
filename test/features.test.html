@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Djignan — tests des fonctions de saisie rapide, carnet et tontines</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; }
+  #summary { font-weight: 700; margin: 12px 0; padding: 10px 14px; border-radius: 8px; }
+  #summary.pass { background: rgba(22,163,74,.15); } #summary.fail { background: rgba(225,29,72,.15); }
+  li { list-style: none; padding: 3px 8px; font-size: 13px; } li.pass { color: #16a34a; } li.fail { background: rgba(225,29,72,.12); color: #e11d48; }
+  .detail { color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Djignan — tests : SMS Mobile Money, dictée, fiche personne, tontines, étiquettes</h1>
+<p class="detail">Les SMS ci-dessous sont des exemples <strong>inventés</strong> (aucun corpus officiel d'opérateur n'a servi) : ils vérifient la logique d'analyse, pas la couverture de chaque opérateur. Base IndexedDB isolée.</p>
+<div id="summary">Exécution…</div>
+<ul id="results"></ul>
+
+<script type="module">
+window.__GEOFINANCE_TEST_DB_NAME__ = 'geofinance-features-test-db';
+
+const { STORES, dbAdd, wipeAllData, setSetting } = await import('../js/db.js');
+const { parseMobileMoneyMessage: sms, parseMobileMoneyMessages, parseAmountToken, currencyMatchesWallet } = await import('../js/mobile-money-parser.js');
+const { parseSpokenEntry: say } = await import('../js/voice-input.js');
+const { buildPersonStatement, buildReminderMessage, whatsappUrl, normalizeName, summarizePeople } = await import('../js/modules/person-ledger.js');
+const { roundDate, currentRoundIndex, beneficiaryOf, potAmount, parseMembersText } = await import('../js/modules/tontines.js');
+const { computeNetWorth, computeMonthSummary, computeTagSummary, computeNetWorthComposition, isInvestmentMovementExcluded } = await import('../js/ledger.js');
+
+const results = [];
+const eq = (desc, actual, expected) => results.push({ desc, ok: JSON.stringify(actual) === JSON.stringify(expected), actual, expected });
+const near = (desc, actual, expected) => results.push({ desc, ok: Math.abs(actual - expected) < 0.005, actual, expected });
+const ok = (desc, cond, detail = '') => results.push({ desc, ok: !!cond, actual: detail, expected: true });
+
+const today = new Date(2026, 9, 18);
+
+// ---------- Montants ----------
+eq('montant « 5 000 »', parseAmountToken('5 000'), 5000);
+eq('montant « 5.000 » (milliers)', parseAmountToken('5.000'), 5000);
+eq('montant « 5,000.50 »', parseAmountToken('5,000.50'), 5000.5);
+eq('montant « 1 234,5 »', parseAmountToken('1 234,5'), 1234.5);
+eq('montant « 1,234,567 » (milliers répétés)', parseAmountToken('1,234,567'), 1234567);
+eq('montant ambigu « 1.2.3 » refusé', parseAmountToken('1.2.3'), null);
+
+// ---------- SMS ----------
+const a = sms('Vous avez envoyé 5 000F à Moussa Diop (+221771234567). Frais: 100F. Nouveau solde: 12 400F. ID: TX8841923', { today });
+eq('envoi : sens/montant/frais/solde', [a.direction, a.amount, a.fee, a.balance], ['out', 5000, 100, 12400]);
+eq('envoi : contrepartie, téléphone, référence', [a.counterparty, a.phone, a.reference], ['Moussa Diop', '+221771234567', 'TX8841923']);
+const b = sms('Vous avez reçu 10 000 FCFA de Awa Ndiaye. Nouveau solde: 30 000 FCFA. Ref: 8839201', { today });
+eq('réception : sens + contrepartie', [b.direction, b.amount, b.counterparty], ['in', 10000, 'Awa Ndiaye']);
+const c = sms('Retrait de 20000 FCFA effectué chez l\'agent KONE. Frais: 400 FCFA. Solde: 5 000 FCFA', { today });
+eq('retrait : nature + frais', [c.kind, c.fee, c.direction], ['withdrawal', 400, 'out']);
+const d = sms('Dépôt de 50 000 FCFA réussi. Nouveau solde: 55 000 FCFA. 15/10/2026', { today });
+eq('dépôt : nature + date JJ/MM/AAAA', [d.kind, d.direction, d.date], ['deposit', 'in', '2026-10-15']);
+const e = sms('Recharge de 1000F effectuée. Votre nouveau solde est de 4 000F', { today });
+eq('recharge : « recharge » n\'est pas lu comme « frais »', [e.kind, e.amount, e.fee, e.balance], ['airtime', 1000, 0, 4000]);
+const f = sms('You have received GHS 150.00 from KWAME ASANTE. Your new balance is GHS 1,250.50. Financial Transaction Id: 3827182', { today });
+eq('anglais : montant GHS, solde, référence', [f.direction, f.amount, f.currency, f.balance, f.reference], ['in', 150, 'GHS', 1250.5, '3827182']);
+eq('SMS sans montant (code OTP) ignoré', sms('Votre code OTP est 482913', { today }), null);
+eq('« Solde actuel » seul n\'est pas une opération', sms('Solde actuel: 5000F', { today }), null);
+eq('date invalide 31/02 ignorée', sms('Vous avez payé 1000 F à X. Le 31/02/2026', { today }).date, null);
+const many = parseMobileMoneyMessages('Vous avez envoyé 5 000F à Moussa. ID: AB12345\n\nbla bla\n\nVous avez reçu 2 000 F de Awa. ID: CD67890', { today });
+eq('plusieurs SMS collés : 2 reconnus, 1 ignoré', [many.messages.length, many.unrecognized], [2, 1]);
+ok('« F CFA » convient à XOF et XAF', currencyMatchesWallet('CFA', 'XOF') && currencyMatchesWallet('CFA', 'XAF') && !currencyMatchesWallet('CFA', 'EUR'));
+
+// ---------- Dictée ----------
+eq('dictée : « 2500 taxi »', say('2500 taxi'), { type: 'expense', amount: 2500, note: 'Taxi' });
+eq('dictée : chiffres groupés « 2 500 »', say('taxi 2 500').amount, 2500);
+eq('dictée : nombre en lettres + remplissage', say("j'ai dépensé deux mille cinq cents francs pour le taxi"), { type: 'expense', amount: 2500, note: 'Taxi' });
+eq('dictée : quatre-vingt-dix mille', say('quatre-vingt-dix mille loyer').amount, 90000);
+eq('dictée : soixante-dix mille', say('soixante-dix mille transport').amount, 70000);
+eq('dictée : recette « reçu salaire »', [say('reçu salaire 150 000').type, say('reçu salaire 150 000').amount], ['income', 150000]);
+eq('dictée : sans nombre → montant null', say('bonjour').amount, null);
+eq('dictée anglaise', say('I spent two thousand five hundred on lunch', 'en'), { type: 'expense', amount: 2500, note: 'Lunch' });
+
+// ---------- Fiche par personne ----------
+const debts = [
+  { id: 'd1', type: 'receivable', personName: 'Moussa Diop', principal: 15000, currency: 'XOF', startDate: '2026-09-01', dueDate: '2026-11-01', status: 'active', note: 'Tissu' },
+  { id: 'd2', type: 'debt', personName: 'moussa  diop', principal: 2000, currency: 'XOF', startDate: '2026-10-10', status: 'active' },
+  { id: 'd3', type: 'receivable', personName: 'Awa', principal: 3000, currency: 'XOF', startDate: '2026-10-01', status: 'paid' },
+];
+const payments = [{ id: 'p1', debtId: 'd1', amount: 5000, date: '2026-10-05' }, { id: 'p2', debtId: 'd3', amount: 3000, date: '2026-10-06' }];
+eq('noms normalisés', normalizeName('  Moussá   DIOP '), 'moussa diop');
+const st = buildPersonStatement('Moussa Diop', debts, payments);
+eq('relevé : deux dettes regroupées, solde net 8000', [st.debts.length, st.balances.XOF], [2, 8000]);
+eq('relevé : ordre chronologique et solde cumulé', st.events.map((x) => x.balanceAfter), [15000, 10000, 8000]);
+eq('relevé : prochaine échéance', st.nextDueDate, '2026-11-01');
+eq('« par personne » masque une personne soldée', summarizePeople(debts, payments).map((p) => p.name), ['Moussa Diop']);
+const msg = buildReminderMessage({ name: 'Moussa', amounts: [{ currency: 'XOF', value: 8000 }], dueDate: '2026-11-01', senderName: 'Bibiê' }, (s, v = {}) => s.replace(/\{(\w+)\}/g, (_, k) => v[k]), (n, c) => `${n} ${c}`, (x) => x);
+ok('relance : montant, échéance et signature', msg.includes('8000 XOF') && msg.includes('2026-11-01') && msg.endsWith('— Bibiê'), msg);
+eq('WhatsApp : numéro nettoyé', whatsappUrl('+225 07 00 11 22 33', 'Salut').startsWith('https://wa.me/2250700112233?text='), true);
+eq('WhatsApp : « 00 » international', whatsappUrl('00225 0700112233', 'x').startsWith('https://wa.me/2250700112233'), true);
+eq('WhatsApp : sans numéro → choix du contact', whatsappUrl('', 'x').startsWith('https://wa.me/?text='), true);
+
+// ---------- Tontines : calendrier ----------
+const tontine = { startDate: '2026-01-31', frequency: 'monthly', amount: 10000, members: [{ id: 'a' }, { id: 'me' }, { id: 'c' }, { id: 'd' }], order: ['a', 'me', 'c', 'd'] };
+eq('mensuel : 31 janvier → 28 février (pas de saut de mois)', [roundDate(tontine, 0), roundDate(tontine, 1), roundDate(tontine, 2)], ['2026-01-31', '2026-02-28', '2026-03-31']);
+eq('hebdomadaire +7 jours', roundDate({ startDate: '2026-10-01', frequency: 'weekly' }, 2), '2026-10-15');
+eq('toutes les 2 semaines', roundDate({ startDate: '2026-10-01', frequency: 'biweekly' }, 1), '2026-10-15');
+eq('tour en cours (3e tour passé)', currentRoundIndex(tontine, '2026-03-31'), 2);
+eq('avant le départ : tour 0', currentRoundIndex(tontine, '2025-12-01'), 0);
+eq('après la fin : dernier tour', currentRoundIndex(tontine, '2030-01-01'), 3);
+eq('bénéficiaire du tour 2', beneficiaryOf(tontine, 1).id, 'me');
+eq('pot = montant × membres', potAmount(tontine), 40000);
+eq('membres : doublons et lignes vides ignorés', parseMembersText('Awa ; +225 1\n\n awa \nMoussa').map((m) => m.name), ['Awa', 'Moussa']);
+
+// ---------- Effets sur les comptes (base isolée) ----------
+await wipeAllData();
+await setSetting('baseCurrency', 'XOF');
+await dbAdd(STORES.EXCHANGE_RATES, { code: 'XOF', rateToBase: 1, confirmed: true });
+await dbAdd(STORES.WALLETS, { id: 'w1', name: 'Banque', currency: 'XOF', initialBalance: 100000, createdAt: '2026-01-01T00:00:00.000Z' });
+const month = '2026-10';
+await dbAdd(STORES.TRANSACTIONS, { id: 't1', type: 'income', walletId: 'w1', amount: 50000, date: '2026-10-02', tags: ['pro'] });
+await dbAdd(STORES.TRANSACTIONS, { id: 't2', type: 'expense', walletId: 'w1', amount: 12000, date: '2026-10-03', tags: ['pro', 'sms'] });
+await dbAdd(STORES.TRANSACTIONS, { id: 't3', type: 'expense', walletId: 'w1', amount: 3000, date: '2026-10-04', tags: ['perso'] });
+const nwBefore = (await computeNetWorth()).total;
+const sumBefore = await computeMonthSummary(month);
+await dbAdd(STORES.TRANSACTIONS, { id: 't4', type: 'expense', walletId: 'w1', amount: 10000, date: '2026-10-05', tontineId: 'x', tontineMovement: 'contribution' });
+const nwAfterContribution = (await computeNetWorth()).total;
+const sumAfter = await computeMonthSummary(month);
+near('tontine : une cotisation ne change pas le patrimoine net', nwAfterContribution, nwBefore);
+near('tontine : une cotisation n\'est pas une dépense', sumAfter.expenses, sumBefore.expenses);
+ok('tontine : transaction exclue des agrégats', isInvestmentMovementExcluded({ tontineId: 'x', type: 'expense' }));
+await dbAdd(STORES.TRANSACTIONS, { id: 't5', type: 'income', walletId: 'w1', amount: 40000, date: '2026-10-06', tontineId: 'x', tontineMovement: 'pot' });
+near('tontine : recevoir le pot ne change pas le patrimoine net', (await computeNetWorth()).total, nwBefore);
+near('tontine : le pot n\'est pas un revenu', (await computeMonthSummary(month)).income, sumBefore.income);
+near('tontine : position nette (versé − reçu) sur la ligne épargne', (await computeNetWorthComposition()).savings, -30000);
+
+const tags = await computeTagSummary(month);
+const pro = tags.rows.find((r) => r.tag === 'pro');
+eq('étiquette « pro » : entrées / sorties / résultat', [pro.income, pro.expenses, pro.result], [50000, 12000, 38000]);
+ok('étiquette technique « sms » absente du bilan', !tags.rows.some((r) => r.tag === 'sms'));
+ok('transactions de tontine absentes du bilan par étiquette', !tags.rows.some((r) => r.tag === undefined));
+
+// ---------- Sauvegarde cloud automatique (logique locale, aucun réseau) ----------
+const { exportAllData, getSetting, importAllData } = await import('../js/db.js');
+const cloud = await import('../js/firebase-sync.js');
+const { notifyDataChanged } = await import('../js/state.js');
+cloud.initCloudAutoBackup();
+notifyDataChanged('transactions');
+await new Promise((r) => setTimeout(r, 150));
+eq('auto-backup désactivée : un changement ne marque rien à envoyer', await getSetting('cloudAutoBackupDirty', false), false);
+await cloud.enableCloudAutoBackup('mot-de-passe-test');
+notifyDataChanged('transactions');
+await new Promise((r) => setTimeout(r, 150));
+eq('auto-backup activée : un changement marque « à envoyer »', await getSetting('cloudAutoBackupDirty', false), true);
+const exported = await exportAllData();
+const exportedKeys = exported.stores[STORES.SETTINGS].map((r) => r.key);
+ok('le mot de passe de la sauvegarde auto n\'est JAMAIS exporté', !exportedKeys.includes('cloudAutoBackupPassphrase') && !JSON.stringify(exported).includes('mot-de-passe-test'));
+ok('l\'état de la sauvegarde auto n\'est pas exporté non plus', !exportedKeys.includes('cloudAutoBackupEnabled') && !exportedKeys.includes('cloudAutoBackupDirty'));
+await importAllData({ stores: { [STORES.SETTINGS]: [{ key: 'cloudAutoBackupPassphrase', value: 'evil' }, { key: 'cloudAutoBackupEnabled', value: true }] } }, { merge: true });
+eq('un fichier forgé ne peut pas imposer le mot de passe', await getSetting('cloudAutoBackupPassphrase'), 'mot-de-passe-test');
+// Restauration en remplacement sur le MÊME appareil : ses réglages propres (PIN, mot de passe de la
+// sauvegarde auto) ne doivent pas être effacés (régression trouvée par l'audit de vérification).
+await setSetting('pinHash', 'device-pin-hash');
+await importAllData(JSON.parse(JSON.stringify(await exportAllData())), { merge: false });
+eq('restauration « remplacer tout » : le PIN de l\'appareil est conservé', await getSetting('pinHash'), 'device-pin-hash');
+eq('restauration « remplacer tout » : le mot de passe de la sauvegarde auto aussi', await getSetting('cloudAutoBackupPassphrase'), 'mot-de-passe-test');
+eq('restauration « remplacer tout » : les réglages de la sauvegarde viennent bien du fichier', await getSetting('baseCurrency'), 'XOF');
+const alertWhenOk = await cloud.getCloudAutoBackupAlert();
+eq('aucune alerte tant que tout va bien', alertWhenOk, null);
+await setSetting('cloudAutoBackupFailures', 3);
+await setSetting('cloudAutoBackupLastError', 'réseau coupé');
+ok('3 échecs de suite : alerte visible avec la cause', (await cloud.getCloudAutoBackupAlert() || '').includes('réseau coupé'));
+await cloud.disableCloudAutoBackup();
+eq('désactivation : le mot de passe est effacé de l\'appareil', await getSetting('cloudAutoBackupPassphrase'), null);
+eq('désactivation : plus d\'alerte', await cloud.getCloudAutoBackupAlert(), null);
+eq('désactivée : runAutoBackup ne fait rien', await cloud.runAutoBackup({ force: true }), 'disabled');
+
+// ---------- Rappels planifiés Android (plugin simulé) ----------
+const rem = await import('../js/native-reminders.js');
+const nowRef = new Date(2026, 9, 18, 8, 0, 0);
+const planInput = {
+  now: nowRef,
+  wallets: [{ id: 'w1', currency: 'XOF' }],
+  recurring: [
+    { id: 'r1', active: true, name: 'Loyer', type: 'expense', amount: 80000, walletId: 'w1', nextDate: '2026-10-20' },
+    { id: 'r2', active: false, name: 'Inactif', type: 'expense', amount: 1, walletId: 'w1', nextDate: '2026-10-21' },
+    { id: 'r3', active: true, name: 'DCA', type: 'expense', amount: 1, walletId: 'w1', nextDate: '2026-10-22', investmentId: 'i1' },
+    { id: 'r4', active: true, name: 'Trop loin', type: 'expense', amount: 1, walletId: 'w1', nextDate: '2027-03-01' },
+  ],
+  debts: [
+    { id: 'd1', type: 'receivable', personName: 'Moussa', principal: 15000, currency: 'XOF', dueDate: '2026-10-19', status: 'active' },
+    { id: 'd2', type: 'debt', personName: 'Soldée', principal: 100, currency: 'XOF', dueDate: '2026-10-19', status: 'paid' },
+    { id: 'd3', type: 'debt', personName: 'Remboursée', principal: 100, currency: 'XOF', dueDate: '2026-10-19', status: 'active' },
+  ],
+  payments: [{ id: 'p1', debtId: 'd3', amount: 100, date: '2026-10-10' }],
+  tontines: [{ id: 'tn1', name: 'Quartier', currency: 'XOF', amount: 10000, frequency: 'monthly', startDate: '2026-10-25', members: [{ id: 'a' }, { id: 'me', isMe: true }], order: ['a', 'me'], payments: [] }],
+};
+const plan = rem.buildReminderPlan(planInput);
+eq('rappels : récurrence, dette impayée et tontine seulement', [...new Set(plan.map((p) => p.key.split(':')[0].replace(/-.*$/, '')))].sort(), ['debt', 'rec', 'tontine']);
+eq('rappels : la veille ET le jour même (loyer du 20)', plan.filter((p) => p.key.startsWith('rec-r1')).map((p) => p.at.toISOString().slice(0, 10) + ' ' + p.at.getHours() + 'h').length, 2);
+ok('rappels : jamais dans le passé', plan.every((p) => p.at > nowRef));
+ok('rappels : dette soldée / totalement remboursée ignorées, récurrence inactive, d\'investissement et lointaine aussi', !plan.some((p) => /d2|d3|r2|r3|r4/.test(p.key)));
+eq('rappels : 1re cotisation de tontine le 25 → rappel le 24 à 9 h', plan.find((p) => p.key.startsWith('tontine')).at.getDate(), 24);
+eq('identifiant stable et entier', [rem.reminderId('a:1') === rem.reminderId('a:1'), Number.isInteger(rem.reminderId('a:1')), rem.reminderId('a:1') !== rem.reminderId('a:0')], [true, true, true]);
+eq('hors APK : non supporté', rem.isNativeReminderSupported(), false);
+
+// Plugin Capacitor simulé : vérifie l'annulation des anciens rappels puis la reprogrammation
+const calls = [];
+window.Capacitor = { isNativePlatform: () => true, Plugins: { LocalNotifications: {
+  checkPermissions: async () => ({ display: 'granted' }),
+  requestPermissions: async () => ({ display: 'granted' }),
+  cancel: async (arg) => { calls.push(['cancel', arg.notifications.length]); },
+  schedule: async (arg) => { calls.push(['schedule', arg.notifications.length]); },
+} } };
+await wipeAllData();
+await dbAdd(STORES.WALLETS, { id: 'w1', name: 'B', currency: 'XOF', initialBalance: 0, createdAt: '2026-01-01T00:00:00.000Z' });
+const inTwoDays = new Date(); inTwoDays.setDate(inTwoDays.getDate() + 2);
+const dueIso = `${inTwoDays.getFullYear()}-${String(inTwoDays.getMonth() + 1).padStart(2, '0')}-${String(inTwoDays.getDate()).padStart(2, '0')}`;
+await dbAdd(STORES.DEBTS, { id: 'dd', type: 'receivable', personName: 'Awa', principal: 5000, currency: 'XOF', startDate: '2026-10-01', dueDate: dueIso, status: 'active' });
+eq('rappels désactivés par défaut : rien n\'est programmé', await rem.syncNativeReminders(), 0);
+const scheduled = await rem.enableNativeReminders();
+ok('activation : au moins la veille/le jour de l\'échéance programmés', scheduled >= 1, scheduled);
+await rem.syncNativeReminders();
+ok('resynchronisation : les anciens rappels sont annulés avant de reprogrammer', calls.some((c) => c[0] === 'cancel') && calls.filter((c) => c[0] === 'schedule').length >= 2, JSON.stringify(calls));
+await rem.disableNativeReminders();
+const afterDisable = calls.filter((c) => c[0] === 'cancel').length;
+eq('désactivation : plus rien de programmé', await rem.syncNativeReminders(), 0);
+ok('désactivation : annulation effectuée', afterDisable >= 2, afterDisable);
+delete window.Capacitor;
+
+// ---------- Prévision de trésorerie 30/60 jours ----------
+const { buildCashflowForecast } = await import('../js/forecast.js');
+const fcBase = {
+  today: '2026-10-18', baseCurrency: 'XOF', rates: [],
+  wallets: [
+    { id: 'w1', name: 'Banque', currency: 'XOF', initialBalance: 100000, createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'ws', name: 'Épargne', currency: 'XOF', initialBalance: 500000, usage: 'savings', createdAt: '2026-01-01T00:00:00.000Z' },
+  ],
+  transactions: [],
+  recurring: [{ id: 'r1', active: true, name: 'Loyer', type: 'expense', amount: 60000, walletId: 'w1', nextDate: '2026-10-31', frequency: 'monthly', anchorDay: 31 }],
+  debts: [
+    { id: 'd1', type: 'debt', personName: 'Banque X', principal: 30000, currency: 'XOF', dueDate: '2026-11-05', status: 'active' },
+    { id: 'd2', type: 'receivable', personName: 'Moussa', principal: 20000, currency: 'XOF', dueDate: '2026-10-25', status: 'active' },
+  ],
+  payments: [], tontines: [],
+};
+const fc = buildCashflowForecast({ ...fcBase, days: 60 });
+eq('prévision : solde de départ = portefeuilles courants seulement (pas l\'épargne)', fc.startBalance, 100000);
+eq('prévision : le loyer mensuel apparaît 2 fois sur 60 jours (31 oct, 30 nov)', fc.events.filter((e) => e.kind === 'recurring').map((e) => e.date), ['2026-10-31', '2026-11-30']);
+near('prévision : solde certain en fin de fenêtre = 100 000 − 2 loyers − dette', fc.endBalance, 100000 - 120000 - 30000);
+near('prévision : la créance à encaisser n\'entre que dans la courbe optimiste', fc.endOptimistic - fc.endBalance, 20000);
+eq('prévision : solde encore positif le 5 nov. (10 000), premier jour négatif = 30 nov. (2e loyer)', fc.firstNegativeDate, '2026-11-30');
+near('prévision : point bas', fc.minBalance, -50000);
+const fc30 = buildCashflowForecast({ ...fcBase, days: 30 });
+eq('prévision 30 j : une seule occurrence du loyer', fc30.events.filter((e) => e.kind === 'recurring').length, 1);
+ok('prévision : la créance est marquée incertaine', fc.events.find((e) => e.kind === 'receivable').certain === false);
+const fcLate = buildCashflowForecast({ ...fcBase, days: 30, recurring: [{ id: 'r9', active: true, name: 'En retard', type: 'expense', amount: 1000, walletId: 'w1', nextDate: '2026-10-01', frequency: 'monthly', anchorDay: 1 }] });
+eq('prévision : une échéance en retard pèse dès aujourd\'hui', fcLate.events[0].date, '2026-10-18');
+const fcTontine = buildCashflowForecast({ ...fcBase, days: 60, recurring: [], debts: [], tontines: [{ id: 'tn', name: 'Quartier', currency: 'XOF', amount: 10000, frequency: 'monthly', startDate: '2026-10-20', members: [{ id: 'a' }, { id: 'me', isMe: true }], order: ['me', 'a'], payments: [], pots: [] }] });
+eq('prévision tontine : cotisation certaine + pot incertain au tour où je reçois', fcTontine.events.map((e) => `${e.kind}:${e.certain}`), ['tontine:true', 'pot:false', 'tontine:true']);
+
+// ---------- Bilan du mois ----------
+const { buildMonthlyRecap, recapHighlights, recapAsText } = await import('../js/monthly-recap.js');
+const rcWallets = [{ id: 'w1', currency: 'XOF' }];
+const rcCats = [{ id: 'cA', name: 'Alimentation', type: 'expense' }, { id: 'cT', name: 'Transport', type: 'expense' }];
+const mk = (id, type, amount, date, categoryId, extra = {}) => ({ id, type, amount, date, categoryId, walletId: 'w1', ...extra });
+const rcTx = [
+  mk('a', 'income', 200000, '2026-10-02', null), mk('b', 'expense', 50000, '2026-10-05', 'cA', { note: 'Marché' }), mk('c', 'expense', 30000, '2026-10-06', 'cT'),
+  mk('d', 'expense', 40000, '2026-09-05', 'cA'), mk('e', 'expense', 10000, '2026-09-06', 'cT'),
+  mk('f', 'expense', 999999, '2026-10-07', 'cA', { debtId: 'x' }), mk('g', 'expense', 999999, '2026-10-07', 'cA', { tontineId: 'x' }),
+];
+const rc = buildMonthlyRecap({ monthKey: '2026-10', transactions: rcTx, wallets: rcWallets, categories: rcCats, budgets: [{ month: '2026-10', categoryId: 'cT', limit: 20000 }], baseCurrency: 'XOF' });
+eq('bilan : entrées / sorties / net (dette et tontine exclues)', [rc.income, rc.expenses, rc.net], [200000, 80000, 120000]);
+near('bilan : variation des dépenses vs mois dernier (+60 %)', rc.expensesDeltaPct, 60);
+near('bilan : taux d\'épargne', rc.savingsRate, 60);
+eq('bilan : catégorie principale', rc.top[0].name, 'Alimentation');
+near('bilan : Transport en hausse de 200 %', rc.top.find((r) => r.name === 'Transport').deltaPct, 200);
+eq('bilan : budget Transport dépassé détecté', rc.budgetsOver.map((b) => b.name), ['Transport']);
+const lines = recapHighlights(rc);
+ok('bilan : au plus 5 phrases, dont la hausse des dépenses', lines.length <= 5 && lines[0].includes('60 %'), JSON.stringify(lines));
+ok('bilan : « masquer les montants » ne laisse aucun chiffre d\'argent', !/\d{2,3}\s?\d{3}/.test(recapAsText(rc, { hideAmounts: true })), recapAsText(rc, { hideAmounts: true }));
+const rcNoPrev = buildMonthlyRecap({ monthKey: '2026-10', transactions: rcTx.filter((x) => x.date.startsWith('2026-10') && !x.debtId && !x.tontineId), wallets: rcWallets, categories: rcCats, baseCurrency: 'XOF' });
+ok('bilan : sans mois précédent, pas de « comme le mois dernier »', !recapHighlights(rcNoPrev).some((l) => l.includes('mois dernier')), JSON.stringify(recapHighlights(rcNoPrev)));
+ok('bilan : montants masqués → pas de « plus grosse dépense » (nom possible)', !recapHighlights(rc, { hideAmounts: true }).some((l) => l.startsWith('Plus grosse')));
+eq('bilan : mois sans donnée', buildMonthlyRecap({ monthKey: '2026-01', baseCurrency: 'XOF' }).hasData, false);
+
+// ---------- Questions en langage naturel ----------
+const { answerQuestion, isQuestion, parsePeriod } = await import('../js/nl-query.js');
+const nlData = {
+  baseCurrency: 'XOF', rates: [],
+  wallets: [{ id: 'w1', name: 'Banque', currency: 'XOF', initialBalance: 100000 }],
+  categories: [{ id: 'cT', name: 'Transport', type: 'expense' }, { id: 'cA', name: 'Alimentation', type: 'expense' }, { id: 'cS', name: 'Salaire', type: 'income' }],
+  transactions: [
+    mk('1', 'expense', 2500, '2026-09-03', 'cT', { note: 'Taxi' }), mk('2', 'expense', 4000, '2026-09-20', 'cT', { note: 'Bus' }),
+    mk('3', 'expense', 9000, '2026-10-10', 'cA', { note: 'Marché' }), mk('4', 'expense', 1500, '2026-10-12', 'cT', { note: 'Taxi matin' }),
+    mk('5', 'income', 150000, '2026-10-01', 'cS', { note: 'Salaire octobre' }), mk('6', 'expense', 50000, '2026-10-11', null, { debtId: 'z' }),
+  ],
+  debts: [{ id: 'd1', type: 'receivable', personName: 'Moussa Diop', principal: 15000, currency: 'XOF', status: 'active' }, { id: 'd2', type: 'debt', personName: 'Awa', principal: 3000, currency: 'XOF', status: 'active' }],
+  payments: [{ id: 'p', debtId: 'd1', amount: 5000, date: '2026-10-05' }],
+};
+const ask = (q) => answerQuestion(q, nlData, { today: '2026-10-18' });
+eq('question : « combien en transport en septembre » = 6 500', ask("Combien j'ai dépensé en transport en septembre ?").total, 6500);
+eq('question : mois sans mention = mois en cours', ask('Combien ai-je dépensé ?').total, 10500);
+eq('question : mot de la note « taxi » (ce mois-ci)', ask("combien j'ai dépensé en taxi ce mois ?").total, 1500);
+eq('question : « taxi » sur toute l\'année passée = 2 opérations', ask('combien en taxi cette année ?').count, 2);
+eq('question : entrées', ask("Combien j'ai reçu ce mois ?").total, 150000);
+ok('question : la dette (debtId) n\'est jamais comptée comme dépense', ask('combien ai-je dépensé en octobre ?').total === 10500);
+ok('question : plus grosse dépense', ask('quelle est ma plus grosse dépense ce mois ?').text.includes('Marché'), ask('quelle est ma plus grosse dépense ce mois ?')?.text);
+ok('question : qui me doit → Moussa 10 000 restant', ask('Qui me doit de l\'argent ?').lines[0].includes('Moussa Diop') && ask('Qui me doit de l\'argent ?').text.includes('10'), JSON.stringify(ask('Qui me doit de l\'argent ?')));
+ok('question : combien je dois → Awa', ask('combien je dois ?').lines[0].startsWith('Awa'));
+ok('question : solde total', ask('quel est mon solde ?').kind === 'balance');
+eq('question : mot introuvable → réponse explicite, pas de chiffre inventé', ask('combien en pizza ce mois ?').text.includes('Aucune opération'), true);
+eq('question incomprise → null', ask('raconte-moi une blague'), null);
+eq('anglais : spent on transport in September', answerQuestion('How much did I spend on transport in September?', nlData, { today: '2026-10-18' }).total, 6500);
+ok('détection de question', isQuestion('Combien ai-je dépensé ?') && isQuestion('who owes me') && !isQuestion('taxi'));
+eq('période : 30 derniers jours', parsePeriod('sur les 30 derniers jours', '2026-10-18').start, '2026-09-19');
+eq('période : mois dernier', [parsePeriod('le mois dernier', '2026-10-18').start, parsePeriod('le mois dernier', '2026-10-18').end], ['2026-09-01', '2026-09-30']);
+eq('période : mois futur sans année → année précédente', parsePeriod('en décembre', '2026-10-18').start, '2025-12-01');
+eq('période : semaine en cours commence le lundi', parsePeriod('cette semaine', '2026-10-18').start, '2026-10-12');
+
+// ---------- Rendu ----------
+const ul = document.getElementById('results');
+const pass = results.filter((r) => r.ok).length;
+for (const r of results) {
+  const li = document.createElement('li');
+  li.className = r.ok ? 'pass' : 'fail';
+  li.textContent = `${r.ok ? '✓' : '✗'} ${r.desc}` + (r.ok ? '' : ` — attendu ${JSON.stringify(r.expected)}, obtenu ${JSON.stringify(r.actual)}`);
+  ul.appendChild(li);
+}
+const all = pass === results.length;
+document.getElementById('summary').className = all ? 'pass' : 'fail';
+document.getElementById('summary').textContent = `${pass} / ${results.length} tests réussis`;
+document.title = `${all ? '✓' : '✗'} ${pass}/${results.length} — Djignan features tests`;
+</script>
+</body>
+</html>

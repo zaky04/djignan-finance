@@ -10,7 +10,7 @@
 // les opérations vers une base IndexedDB isolée, jamais celle de l'utilisateur. Sur une page
 // normale de l'app, ce global n'existe jamais : comportement inchangé.
 export const DB_NAME = (typeof window !== 'undefined' && window.__GEOFINANCE_TEST_DB_NAME__) || 'geofinance-db';
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 export const STORES = {
   WALLETS: 'wallets',
@@ -32,6 +32,7 @@ export const STORES = {
   CATEGORIZATION_RULES: 'categorizationRules',
   KEPT_ACCOUNTS: 'keptAccounts',
   KEPT_ACCOUNT_ENTRIES: 'keptAccountEntries',
+  TONTINES: 'tontines',
 };
 
 /** Catégories créées au tout premier boot (seedDefaultsIfNeeded(), app.js) et réutilisées telles
@@ -140,6 +141,11 @@ function upgrade(db) {
   if (!db.objectStoreNames.contains(STORES.KEPT_ACCOUNT_ENTRIES)) {
     const s = db.createObjectStore(STORES.KEPT_ACCOUNT_ENTRIES, { keyPath: 'id' });
     s.createIndex('byAccount', 'accountId');
+  }
+  // Tontines (module optionnel, js/modules/tontines.js) : cercles d'épargne rotative. Membres,
+  // ordre des tours et paiements vivent DANS le document (petit, jamais requêté par champ).
+  if (!db.objectStoreNames.contains(STORES.TONTINES)) {
+    db.createObjectStore(STORES.TONTINES, { keyPath: 'id' });
   }
 }
 
@@ -280,6 +286,13 @@ const DEVICE_LOCAL_SETTING_KEYS = new Set([
   'pinSalt', 'pinHash', 'pinIterations', 'pinLength', 'failedAttempts', 'pinThrottledUntil',
   'biometricCredentialId', 'biometricPublicKeySpki',
   'autoBackupDirHandle',
+  // Sauvegarde cloud automatique (firebase-sync.js) : le mot de passe de chiffrement ne doit JAMAIS
+  // figurer dans la sauvegarde qu'il protège, et l'état (activée, en échec, en pause) est propre à
+  // chaque appareil — un fichier de sauvegarde forgé ne doit pas non plus pouvoir l'activer.
+  'cloudAutoBackupEnabled', 'cloudAutoBackupPassphrase', 'cloudAutoBackupDirty',
+  'cloudAutoBackupFailures', 'cloudAutoBackupLastError', 'cloudAutoBackupBlocked',
+  // Rappels planifiés Android (native-reminders.js) : identifiants propres à CET appareil.
+  'nativeRemindersEnabled', 'nativeReminderIds',
 ]);
 
 export async function exportAllData() {
@@ -324,6 +337,7 @@ const REQUIRED_FIELDS = {
   [STORES.BUDGETS]: { limit: 'number' },
   [STORES.SAVINGS_GOALS]: { name: 'string' },
   [STORES.CATEGORIES]: { name: 'string' },
+  [STORES.TONTINES]: { name: 'string', amount: 'number', currency: 'string' },
 };
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}/;
 
@@ -363,6 +377,14 @@ export async function importAllData(data, { merge = false } = {}) {
     plan.push({ store, rows: cleaned });
   }
   if (!plan.length) return;
+  // Remplacement complet : les réglages propres à CET appareil (PIN, biométrie, mot de passe de la
+  // sauvegarde cloud automatique, rappels Android — voir DEVICE_LOCAL_SETTING_KEYS) ne viennent jamais
+  // d'une sauvegarde, donc ne doivent pas être effacés avec le reste : sans ça, restaurer une sauvegarde
+  // sur son propre téléphone supprimait son PIN et désactivait en silence la sauvegarde automatique.
+  // (Sur un appareil neuf il n'y a rien à préserver : le PIN reste à créer, comme voulu.)
+  const preservedSettings = !merge && plan.some((p) => p.store === STORES.SETTINGS)
+    ? (await dbGetAll(STORES.SETTINGS)).filter((r) => DEVICE_LOCAL_SETTING_KEYS.has(r.key))
+    : [];
   const db = await openDatabase();
   const t = db.transaction(plan.map((p) => p.store), 'readwrite');
   const done = new Promise((resolve, reject) => {
@@ -375,6 +397,7 @@ export async function importAllData(data, { merge = false } = {}) {
       const os = t.objectStore(store);
       if (!merge) os.clear();
       rows.forEach((row) => os.put(row));
+      if (store === STORES.SETTINGS) preservedSettings.forEach((row) => os.put(row));
     }
   } catch (err) {
     try { t.abort(); } catch { /* déjà terminée */ }

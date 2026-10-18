@@ -11,7 +11,7 @@ import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigure
 import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder, importEncryptedBackup } from './backup.js';
-import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, warmUpGoogleSignIn } from './firebase-sync.js';
+import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, warmUpGoogleSignIn, initCloudAutoBackup } from './firebase-sync.js';
 import { seedDemoData, clearDemoData } from './demo-data.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
@@ -29,11 +29,15 @@ import { renderTools, initToolsModule } from './modules/tools.js';
 import { renderReports, initReportsModule } from './modules/reports.js';
 import { renderShared, initSharedModule } from './modules/shared.js';
 import { renderKeptAccounts, initKeptAccountsModule } from './modules/kept-accounts.js';
+import { renderTontines, initTontinesModule } from './modules/tontines.js';
 import {
   renderSettings, initSettingsModule, PROFILE_FIELDS, AUTO_LOCK_OPTIONS,
   OPTIONAL_MODULES, applyOptionalModuleVisibility, DASHBOARD_PANEL_LABELS,
 } from './modules/settings.js';
 import { initSearchModule } from './modules/search.js';
+import { openSmsImportModal } from './modules/sms-import.js';
+import { getUiMode, setUiMode, applyUiMode, SIMPLE_MORE_VIEWS } from './ui-mode.js';
+import { syncNativeReminders } from './native-reminders.js';
 
 const VIEW_RENDERERS = {
   dashboard: renderDashboard,
@@ -47,21 +51,30 @@ const VIEW_RENDERERS = {
   reports: renderReports,
   shared: renderShared,
   keptAccounts: renderKeptAccounts,
+  tontines: renderTontines,
   settings: renderSettings,
 };
 
 const VIEW_TITLES = {
   dashboard: 'Tableau de bord', wallets: 'Portefeuilles', transactions: 'Transactions', budgets: 'Budgets',
   savings: 'Épargne', investments: 'Investissements', debts: 'Dettes & créances', tools: 'Outils',
-  reports: 'Rapports', shared: 'Partage de dépenses', keptAccounts: 'Comptes gardés', settings: 'Paramètres',
+  reports: 'Rapports', shared: 'Partage de dépenses', keptAccounts: 'Comptes gardés', tontines: 'Tontines', settings: 'Paramètres',
 };
 
-const MORE_VIEWS = ['wallets', 'savings', 'investments', 'debts', 'tools', 'reports', 'shared', 'keptAccounts', 'settings'];
+const MORE_VIEWS = ['wallets', 'savings', 'investments', 'debts', 'tools', 'reports', 'shared', 'keptAccounts', 'tontines', 'settings'];
 
 let lockScreenApi = null;
 let lastActivityAt = Date.now();
 
 function markActivity() { lastActivityAt = Date.now(); }
+
+// Reprogramme les rappels Android (native-reminders.js) peu après un changement de données : on attend
+// la fin d'une rafale d'écritures plutôt que de recalculer à chacune. Sans effet hors de l'APK.
+let reminderSyncTimer = null;
+function scheduleNativeReminderSync() {
+  clearTimeout(reminderSyncTimer);
+  reminderSyncTimer = setTimeout(() => syncNativeReminders(), 3000);
+}
 
 async function lockNow() {
   document.getElementById('app').hidden = true;
@@ -103,11 +116,21 @@ function navigateTo(view) {
 async function openMoreSheet() {
   const moduleStates = await Promise.all(OPTIONAL_MODULES.map(async (m) => [m.view, await getSetting(m.key, false)]));
   const disabledViews = new Set(moduleStates.filter(([, enabled]) => !enabled).map(([view]) => view));
-  const views = MORE_VIEWS.filter((v) => !disabledViews.has(v));
+  const simple = (await getUiMode()) === 'simple';
+  // Mode simple : les écrans de base + les modules optionnels que l'utilisateur a lui-même activés.
+  const simpleViews = [...SIMPLE_MORE_VIEWS.filter((v) => v !== 'settings'), ...OPTIONAL_MODULES.map((m) => m.view), 'settings'];
+  const views = (simple ? simpleViews : MORE_VIEWS).filter((v) => !disabledViews.has(v));
   const modal = openModal(
-    views.map((v) => `<button type="button" class="nav-item" style="width:100%;" data-view-target="${v}">${escapeHtml(t(VIEW_TITLES[v]))}</button>`).join(''),
+    views.map((v) => `<button type="button" class="nav-item" style="width:100%;" data-view-target="${v}">${escapeHtml(t(VIEW_TITLES[v]))}</button>`).join('')
+      + (simple ? `<button type="button" class="nav-item" style="width:100%;" data-switch-full>${escapeHtml(t('Passer en mode complet'))}</button>` : ''),
     { title: 'Plus' }
   );
+  modal.el.querySelector('[data-switch-full]')?.addEventListener('click', async () => {
+    await setUiMode('full');
+    modal.close();
+    VIEW_RENDERERS[appState.currentView]?.();
+    showToast(t('Mode complet activé.'));
+  });
   modal.el.querySelectorAll('[data-view-target]').forEach((btn) => {
     btn.addEventListener('click', () => { navigateTo(btn.dataset.viewTarget); modal.close(); });
   });
@@ -161,7 +184,8 @@ function wireGlobalChrome() {
     // modules optionnels (ex: keptAccountsEnabled) sans passer par settings.js, qui applique déjà
     // la visibilité lui-même — sans ça le bouton de nav reste dans l'état d'avant l'import jusqu'au
     // prochain rechargement de page.
-    if (scope === 'all') applyOptionalModuleVisibility();
+    if (scope === 'all') { applyOptionalModuleVisibility(); applyUiMode(); }
+    scheduleNativeReminderSync();
   });
 }
 
@@ -246,11 +270,16 @@ async function applyShareTarget() {
   if (!('caches' in window)) return;
   try {
     const cache = await caches.open(SHARE_TARGET_CACHE);
+    const textResponse = await cache.match('shared-text');
+    if (textResponse) await cache.delete('shared-text');
     const response = await cache.match('shared-receipt');
-    if (!response) return;
-    await cache.delete('shared-receipt');
-    const blob = await response.blob();
-    openQuickAdd({ sharedReceiptBlob: blob });
+    if (response) {
+      await cache.delete('shared-receipt');
+      openQuickAdd({ sharedReceiptBlob: await response.blob() });
+      return;
+    }
+    // Texte partagé sans photo : le plus souvent un SMS Mobile Money transféré depuis la messagerie.
+    if (textResponse) openSmsImportModal({ text: await textResponse.text() });
   } catch (err) {
     console.warn('[ShareTarget]', err);
   }
@@ -277,7 +306,26 @@ async function maybeShowOnboarding() {
   await setSetting('onboardingCompleted', true); // marqué avant affichage : fermer sans agir ne doit pas re-harceler à chaque déverrouillage
   if (hasWallets) return;
 
+  // Nouvelle installation : mode simple par défaut (modifiable à la 1re étape et dans Paramètres).
+  // Une installation existante n'arrive jamais ici : son affichage ne change pas tout seul.
+  await setUiMode('simple');
+
   const steps = [
+    {
+      title: t('Comment voulez-vous utiliser Djignan ?'),
+      async render(el, { next }) {
+        el.innerHTML = `
+          <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t("Vous pourrez changer à tout moment dans Paramètres.")}</p>
+          <button type="button" class="btn btn-primary btn-block" id="ob-mode-simple" style="display:block;text-align:left;white-space:normal;height:auto;padding:12px 14px;">
+            <strong>${t('Simple — comme un cahier')}</strong><br><span style="font-weight:400;font-size:12.5px;">${t('Entrées, sorties, solde, favoris, dettes et créances.')}</span>
+          </button>
+          <button type="button" class="btn btn-ghost btn-block" id="ob-mode-full" style="display:block;text-align:left;white-space:normal;height:auto;padding:12px 14px;margin-top:10px;">
+            <strong>${t('Complet')}</strong><br><span style="font-weight:400;font-size:12.5px;">${t('Budgets, épargne, investissements, rapports, outils…')}</span>
+          </button>`;
+        el.querySelector('#ob-mode-simple').addEventListener('click', async () => { await setUiMode('simple'); next(); });
+        el.querySelector('#ob-mode-full').addEventListener('click', async () => { await setUiMode('full'); next(); });
+      },
+    },
     {
       title: t('Bienvenue sur Djignan'),
       async render(el, { next }) {
@@ -709,6 +757,10 @@ async function onUnlocked() {
   // les empiler l'un sur l'autre. checkWeeklyCloudBackupReminder() ne charge le SDK Firebase que si
   // l'utilisateur clique "Sauvegarder maintenant" dans le rappel, jamais pour décider s'il s'affiche.
   setTimeout(() => checkWeeklyCloudBackupReminder(), 6000);
+  // Sauvegarde cloud automatique (opt-in) : n'écoute que les changements de données et ne charge le SDK
+  // Firebase que si elle a été activée ET qu'il y a quelque chose à envoyer.
+  initCloudAutoBackup();
+  scheduleNativeReminderSync();
 }
 
 (async function boot() {
@@ -749,6 +801,7 @@ async function onUnlocked() {
     initReportsModule();
     initSharedModule();
     initKeptAccountsModule();
+    initTontinesModule();
     initSettingsModule();
     initSearchModule();
     wireGlobalChrome();
@@ -758,6 +811,7 @@ async function onUnlocked() {
     appState.privacyHidden = await getSetting('privacyHidden', false);
     applyPrivacy(appState.privacyHidden);
     await applyOptionalModuleVisibility();
+    await applyUiMode();
 
     lockScreenApi = initLockScreen({ onUnlock: onUnlocked });
   } catch (err) {

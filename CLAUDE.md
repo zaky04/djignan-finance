@@ -3373,6 +3373,155 @@ Annuler/Envoyer ; erreur d'estimation → envoi autorisé), aucune erreur consol
 Limite : l'estimation est approximative (±30 %), pas la taille exacte envoyée.
 `CACHE_VERSION` : `v121` → `v122`.
 
+### 18 octobre 2026 (suite 2) — « Remplacer le cahier » : saisie sans friction, sauvegarde auto, carnet, tontines, mode simple
+
+Suite d'une analyse concurrentielle (YNAB, Monarch, Copilot… + marché Mobile Money) : le cahier gagne par
+l'instantanéité, la confiance (jamais « perdu ») et la simplicité. Quatre chantiers, tous testés sauf ce qui
+dépend d'un service externe (voir « Non vérifié »). Nouveaux fichiers ajoutés à `APP_SHELL` : `mobile-money-parser.js`,
+`voice-input.js`, `quick-templates.js`, `ui-mode.js`, `modules/sms-import.js`, `modules/person-ledger.js`,
+`modules/tontines.js`. `DB_VERSION` 4 → **5** (nouveau store `tontines`, additif).
+
+**1. Saisie sans friction**
+- **SMS Mobile Money** (`mobile-money-parser.js`, pur ; `modules/sms-import.js`) : on colle un ou plusieurs SMS (ou on
+  les partage vers l'appli : `manifest.json` `share_target` accepte maintenant `title`/`text`, `sw.js` les met en cache
+  sous `shared-text`, `applyShareTarget()` ouvre l'import). Analyse par **étiquette précédant chaque montant**
+  (« frais », « solde »…) et mots-clés, pas par gabarit d'opérateur : les vrais formats ne sont pas connus.
+  Rien n'est enregistré sans cases à cocher. Doublons : par référence (`externalRef` sur la transaction) ou, sans
+  référence, par portefeuille+date+type+montant (décoché, signalé « Peut-être déjà enregistré »). Frais enregistrés à
+  part (catégorie « Frais »). Retrait/dépôt d'espèces = **transfert** vers/depuis un portefeuille Espèces de même devise
+  quand il existe (ce n'est pas une dépense). `F`/`FCFA` convient à XOF comme à XAF. Vérifié : après import de 4 SMS le
+  solde Orange Money tombe sur le solde annoncé par le dernier SMS.
+- **Dictée** (`voice-input.js`) : API Web Speech du navigateur (l'audio part chez Google/Apple → consentement à la 1re
+  utilisation, réglage `voiceConsent`). Masquée dans APK/EXE. Nombres en lettres FR/EN (« quatre-vingt-dix mille »).
+- **Favoris** (`quick-templates.js`) : réglage `quickTemplates` (pas de nouveau store), max 12 ; pastilles dans la
+  Saisie express ; panneau « Favoris » du tableau de bord = un toucher enregistre (annulable) ; suggestions tirées de
+  l'historique (≥ 3 occurrences en 120 jours, montant médian).
+
+**2. Sauvegarde cloud automatique** (`firebase-sync.js`) — opt-in dans Paramètres, mot de passe saisi 2 fois.
+Envoi 90 s après la dernière modification, au plus toutes les 15 min, et quand l'appli passe en arrière-plan.
+**Ne remplace jamais un cloud plus récent** (ou jamais vu par l'appareil) : modale de fraîcheur, sauvegarde « en
+pause ». Échecs répétés (≥ 3) ou pause → alerte sur le tableau de bord (corrige la dette n°20 : échec jamais signalé).
+Le mot de passe est stocké sur l'appareil — **clés ajoutées à `DEVICE_LOCAL_SETTING_KEYS`** (`cloudAutoBackup*`) : jamais
+exportées ni importables depuis un fichier. `pushBackupToCloud` passe par une file (un seul envoi à la fois) ; un
+changement pendant l'envoi garde l'état « à envoyer » (compteur `changeSeq`). Restauration en remplacement = appareil
+identique au cloud, rien à renvoyer ; en fusion, l'union est renvoyée. Le rappel hebdomadaire cloud est désactivé quand
+l'auto est active.
+
+**3. Carnet et tontines**
+- **Fiche par personne** (`modules/person-ledger.js`, ouverte depuis `debts.js`) : regroupe dettes et créances d'une
+  même personne (noms normalisés : casse, accents, espaces), relevé chronologique avec solde cumulé, solde net par
+  devise, **relance WhatsApp** (`wa.me`, aucun service tiers ; numéro dans le réglage `personPhones`), partage du
+  relevé, remboursement et nouvelle dette depuis la fiche. Panneau « Par personne » en tête de Dettes & créances.
+  `openExternalUrl()` (`utils.js`) : https seulement, navigateur système en Tauri/Capacitor.
+- **Tontines** (module optionnel `tontinesEnabled`, `modules/tontines.js`) : calendrier (hebdo/2 semaines/mensuel avec
+  fin de mois), ordre de passage, qui a cotisé, pot, relance WhatsApp. **L'appli ne manipule aucun argent.** Les
+  cotisations et le pot de l'utilisateur sont des transactions `tontineId`/`tontineMovement` : **exclues des
+  dépenses/revenus** (via `isInvestmentMovementExcluded`, qui exclut désormais aussi tout `tontineId`) et leur position
+  nette (versé − reçu) compte dans le patrimoine, ligne « épargne » (`tontinePositionAsOf`, `ledger.js`). Vérifié :
+  patrimoine net inchangé à chaque cotisation et à la réception du pot. Supprimer une tontine supprime ses transactions.
+- **Pro / perso** : volontairement léger (hypothèse non validée auprès d'utilisateurs) — filtre par étiquette dans la
+  liste des transactions + panneau « Résultat par étiquette » dans Rapports (`computeTagSummary`, étiquette technique
+  `sms` ignorée). Pas de séparation de portefeuilles.
+
+**4. Mode simple** (`ui-mode.js`, réglage `uiMode`) : **absent = « complet »** (une installation existante ne change
+jamais), « simple » est posé au tout premier lancement (1re étape de l'assistant, modifiable dans Paramètres).
+Piloté en CSS par `body[data-ui-mode]` : masque budgets, épargne, investissements, outils, rapports, partage et les
+cartes/graphiques avancés du tableau de bord ; le 4e bouton de la barre mobile devient « Dettes ». Un module optionnel
+activé reste visible. Menu « Plus » : bouton « Passer en mode complet ».
+
+**Tests** : `test/ledger.test.html` 64/64 ; nouvelle page `test/features.test.html` **63/63** (parseurs, dictée, fiche
+personne, calendrier de tontine, effets comptables, sauvegarde auto hors réseau). ⚠️ Les SMS de test sont **inventés**.
+Vérifié dans le navigateur : import de SMS + doublons, favoris + annulation, dictée (reconnaissance simulée),
+fiche + lien WhatsApp, tontine de bout en bout, mode simple desktop/mobile, 1289 clés i18n sans doublon, aller-retour
+export/import avec le store `tontines`.
+
+**Non vérifié** (à confirmer par l'auteur) : envoi Firestore réel de la sauvegarde automatique (compte Google requis) ;
+dictée avec un vrai micro (bloqué dans le panneau de test) ; formats de SMS de **vrais** opérateurs (Orange/Wave/MTN/Moov :
+à valider avec des messages réels, ajuster les mots-clés si besoin) ; partage Android réel de texte vers l'appli ;
+enregistrement du Service Worker dans le panneau de test (échec « unknown error fetching the script », le serveur de
+test répond 500 aux requêtes HEAD — non lié à ce lot) ; `CACHE_VERSION` `v122` → `v123`.
+Pas de dépôt git dans ce dossier : rien n'a été commité.
+
+### 18 octobre 2026 (suite 3) — Rappels planifiés Android + passe de vérification
+
+**Rappels planifiés** (`js/native-reminders.js`, ajouté à `APP_SHELL`, `CACHE_VERSION` `v124`). Limite des rappels
+existants (`notifications.js`) : ils ne s'affichent que si l'appli est ouverte. Une PWA ne peut pas programmer de
+notification à une date sans serveur ; l'**APK** le peut via `@capacitor/local-notifications`. Le module programme,
+pour les 45 prochains jours, un rappel **la veille et le jour même à 9 h** pour : récurrences actives (hors apports
+d'investissement), échéances de dettes/créances non soldées, prochain tour de tontine non payé. À chaque changement de
+données (3 s après la dernière écriture) tout est **annulé puis reprogrammé** : aucun rappel orphelin après une
+suppression. Réglage `nativeRemindersEnabled` + `nativeReminderIds` : **propres à l'appareil**
+(`DEVICE_LOCAL_SETTING_KEYS`). Section « Rappels planifiés » dans Paramètres, **visible seulement dans l'APK**.
+Hors APK (plugin absent) le module ne fait rien.
+⚠️ **Pour que ça marche réellement il faut reconstruire l'APK** (projet Capacitor hors dépôt, voir §9) :
+`npm install @capacitor/local-notifications`, `npx cap sync android`, rebuild + signature. Le plugin n'a PAS été
+installé ni l'APK reconstruit dans cette session : le code est testé avec un plugin **simulé** (annulation puis
+reprogrammation vérifiées), jamais sur un téléphone.
+
+**Vérification demandée par l'auteur — ce qui a pu l'être, et ce qui ne le peut pas ici**
+- Fait : `test/features.test.html` **75/75** (dont plugin Android simulé), `test/ledger.test.html` 64/64, 1299 clés i18n
+  sans doublon, tous les modules se chargent sans nouvelle erreur de console.
+- **Format des SMS** : recherche web faite (Orange Money, Wave, MTN) — **aucune source officielle ne publie le texte
+  exact** de ces SMS, et la page d'exemples de MomoParse (PyPI) était bloquée par un contrôle anti-robot. Le parseur
+  n'a donc été confronté qu'à des messages **inventés**. À valider avec de vrais SMS ; en cas d'échec, ajuster les
+  mots-clés de `mobile-money-parser.js` et ajouter le texte (anonymisé) aux tests.
+- Impossible dans cet environnement : micro réel, envoi Firestore réel (compte Google), partage Android réel,
+  notifications Android réelles.
+
+### 18 octobre 2026 (suite 4) — Prévision de trésorerie, bilan du mois partageable, questions en langage naturel
+
+`CACHE_VERSION` `v125`. Nouveaux fichiers (tous dans `APP_SHELL`) : `recurrence.js`, `forecast.js`, `monthly-recap.js`,
+`nl-query.js`. Aucune IA, aucun envoi : tout est calculé en local par des règles.
+
+- **`recurrence.js`** : `advanceDate()` (échéance suivante d'une récurrence, avec `anchorDay`) **déplacée hors de
+  `budgets.js`** pour être partagée entre la génération automatique des récurrences et la prévision — les deux ne peuvent
+  plus diverger.
+- **Prévision de trésorerie 30/60 jours** (`forecast.js`, panneau du tableau de bord, réglage de panneau `forecast`) :
+  part du solde des portefeuilles **courants** (épargne/bloqué exclus, comme « Reste à vivre ») et déroule jour par jour
+  ce qui est CONNU : récurrences (toutes les occurrences de la fenêtre, pas seulement la prochaine), dettes à
+  rembourser, cotisations de tontine = **certain** ; créances à encaisser et pot de tontine = **incertain**, dans une
+  courbe « optimiste » séparée en pointillés. Une échéance en retard pèse dès aujourd'hui. Signale le premier jour
+  négatif et le point bas. **Les dépenses courantes non récurrentes (courses, transport…) ne sont PAS projetées** — le
+  panneau le dit explicitement. Masqué s'il n'y a rien de connu à venir.
+- **Bilan du mois** (`monthly-recap.js`, panneau dans Rapports) : jusqu'à 5 phrases par règles (variation des dépenses vs
+  mois précédent — sans comparer s'il n'y a pas de mois précédent —, épargne, catégorie principale, plus forte
+  hausse/baisse ≥ 25 % ET ≥ 5 % des dépenses, budgets dépassés, plus grosse dépense). **Image à partager** (canvas
+  1080×1350, Web Share avec fichier, sinon téléchargement) + texte à copier. Case **« Masquer les montants »** : tous les
+  montants deviennent •••, et la « plus grosse dépense » est omise (son libellé peut nommer quelqu'un). Les dettes,
+  tontines et mouvements d'investissement sont exclus comme partout. Piège corrigé : les espaces insécables du séparateur
+  de milliers coupaient « 5 000 » en deux sur l'image → découpage sur l'espace normal uniquement.
+- **Questions en langage naturel** (`nl-query.js`, dans la recherche globale : une réponse apparaît au-dessus des
+  résultats quand le texte ressemble à une question) : intentions reconnues = dépenses, entrées, plus grosse dépense,
+  solde, qui me doit / combien je dois ; périodes = aujourd'hui, hier, cette semaine (lundi), semaine dernière, ce mois,
+  mois dernier, « en septembre [2025] » (sans année = le plus récent déjà commencé), cette année, année dernière,
+  « N derniers jours » ; filtres = catégorie, sinon mots de la note/étiquette (« taxi »). **Ce qui n'est pas compris
+  renvoie `null` (la recherche normale prend le relais) ; un mot sans résultat donne « Aucune opération trouvée », jamais
+  un chiffre inventé.** FR et EN. Limites assumées : pas de comparaisons (« plus que… »), pas de filtre par portefeuille,
+  pas de calculs composés.
+
+**Vérifié** : `test/features.test.html` **114/114**, `test/ledger.test.html` 64/64, 1344 clés i18n sans doublon ni
+manque ; dans le navigateur : panneau de prévision (courbe certaine + optimiste, événements, badge « incertain »),
+bilan (panneau + image rendue et relue visuellement + variante sans montants), questions réelles dans la recherche.
+**Non vérifié** : partage de l'image via la feuille de partage d'un vrai téléphone (le panneau de test n'offre que le
+repli « téléchargement »).
+
+### 18 octobre 2026 (suite 5) — Audit de vérification complet (`CACHE_VERSION` `v126`)
+
+Passe de contrôle demandée par l'auteur sur tout le travail de la journée. Trouvé et corrigé :
+- **Bug (`db.js`, `importAllData`)** : une restauration en mode « remplacer tout » vidait AUSSI les réglages propres à
+  l'appareil (`DEVICE_LOCAL_SETTING_KEYS`) : le **code PIN** était supprimé et la sauvegarde cloud automatique /
+  les rappels Android désactivés en silence — y compris en restaurant sur son propre téléphone. Ces réglages sont
+  maintenant relus avant l'import puis réécrits (jamais d'origine fichier, donc jamais écrasés par lui). Sur un
+  appareil neuf il n'y a rien à préserver : le PIN reste à créer, comme voulu. Test de non-régression ajouté.
+- **7 textes déjà présents mais jamais traduits en anglais** (« Échéance » sur les cartes de dettes, « Activées »/
+  « Désactivées », message d'erreur de l'écran de verrouillage, notes d'audit biométrie) : ajoutés.
+Vérifié : 46 fichiers JS sans erreur de syntaxe, tous les imports résolus, tous les fichiers dans `APP_SHELL`, 1351 clés
+i18n sans doublon ni manque ; `features.test.html` **117/117**, `ledger.test.html` **64/64** ; 13 écrans × modes simple/
+complet, puis en anglais, puis à 375 px : aucune erreur, aucun « undefined/NaN », aucun débordement ; 6 fenêtres
+(import SMS, saisie express, tontine, fiche personne, menu Plus, recherche) tiennent dans l'écran mobile ; cohérence des
+données (aucune référence orpheline, patrimoine fini). Piège de l'audit : le script de contrôle du précache signale à
+tort `./?share-target=1` et `index.html` en double (chaînes du code du Service Worker, pas de la liste `APP_SHELL`).
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v122';
+const CACHE_VERSION = 'v126';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 // Nom volontairement SANS le préfixe "geofinance-" : le nettoyage de l'activate ci-dessous
 // supprime tout cache "geofinance-*" différent de CACHE_NAME à chaque déploiement (mécanisme de
@@ -36,6 +36,15 @@ const APP_SHELL = [
   './js/demo-data.js',
   './js/install-prompt.js',
   './js/notifications.js',
+  './js/mobile-money-parser.js',
+  './js/voice-input.js',
+  './js/quick-templates.js',
+  './js/ui-mode.js',
+  './js/native-reminders.js',
+  './js/recurrence.js',
+  './js/forecast.js',
+  './js/monthly-recap.js',
+  './js/nl-query.js',
   './js/modules/dashboard.js',
   './js/modules/wallets.js',
   './js/modules/transactions.js',
@@ -48,6 +57,9 @@ const APP_SHELL = [
   './js/modules/reports-extras.js',
   './js/modules/shared.js',
   './js/modules/kept-accounts.js',
+  './js/modules/tontines.js',
+  './js/modules/sms-import.js',
+  './js/modules/person-ledger.js',
   './js/modules/search.js',
   './js/modules/settings.js',
   './vendor/chart.min.js',
@@ -118,6 +130,13 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       try {
         const formData = await request.formData();
+        // Texte partagé (ex: un SMS Mobile Money transféré depuis la messagerie) : gardé tel quel,
+        // borné en taille (n'importe quel site peut poster ici) ; lu par applyShareTarget() (app.js).
+        const sharedText = [formData.get('title'), formData.get('text')].filter((v) => typeof v === 'string' && v.trim()).join('\n').slice(0, 6000);
+        if (sharedText) {
+          const textCache = await caches.open(SHARE_TARGET_CACHE);
+          await textCache.put('shared-text', new Response(sharedText, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }));
+        }
         const file = formData.get('receipt');
         // N'importe quel site peut poster un formulaire vers cette URL : on ne garde qu'une vraie
         // photo raster (pas de SVG, pas de gros fichier arbitraire qui remplirait le stockage).

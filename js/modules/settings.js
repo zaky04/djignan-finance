@@ -18,6 +18,8 @@ import { isStandalone, isIOS, isSafari, isAndroid, hasDeferredPrompt, triggerIns
 import { DASHBOARD_PANEL_DEFAULTS, BUDGET_ALERT_THRESHOLD_DEFAULTS } from './dashboard.js';
 import { escapeHtml, formatDate, CURRENCIES, openModal, confirmDialog, showToast } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
+import { getUiMode, setUiMode } from '../ui-mode.js';
+import { isNativeReminderSupported, enableNativeReminders, disableNativeReminders } from '../native-reminders.js';
 import { t, getLanguage, setLanguage } from '../i18n.js';
 
 function hiddenFileInput(accept, onFile) {
@@ -603,6 +605,8 @@ export const DASHBOARD_PANEL_LABELS = {
   safeToSpend: 'Reste à vivre',
   netWorth: 'Patrimoine net global',
   debtsBalance: 'Solde créances & dettes',
+  favorites: 'Favoris',
+  forecast: 'Prévision de trésorerie',
 };
 
 /** Modules optionnels de l'app : masqués par défaut, activables ici ou pendant l'onboarding
@@ -618,6 +622,13 @@ export const OPTIONAL_MODULES = [
     description: "Ajoute un onglet dédié pour suivre l'argent d'un proche que vous gérez (petit frère, conjointe, mère…), totalement séparé de vos portefeuilles et de votre patrimoine net.",
     navId: 'nav-kept-accounts',
     view: 'keptAccounts',
+  },
+  {
+    key: 'tontinesEnabled',
+    label: 'Tontines',
+    description: "Ajoute un onglet pour suivre une tontine (cotisation) : qui a payé ce tour, qui reçoit le pot, et vos propres versements, enregistrés dans votre portefeuille. L'appli ne manipule aucun argent.",
+    navId: 'nav-tontines',
+    view: 'tontines',
   },
 ];
 
@@ -647,6 +658,48 @@ async function renderFeaturesSection(container) {
       await setSetting(input.dataset.moduleKey, e.target.checked);
       await applyOptionalModuleVisibility();
       showToast(t('Fonctionnalité mise à jour.'));
+    });
+  });
+}
+
+/** Rappels planifiés : uniquement dans l'APK Android (plugin de notifications locales) — voir
+    native-reminders.js. Dans la PWA et l'exécutable, la section n'apparaît pas. */
+async function renderNativeRemindersSection(container) {
+  if (!isNativeReminderSupported()) { container.innerHTML = ''; return; }
+  const enabled = await getSetting('nativeRemindersEnabled', false);
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>${t('Rappels planifiés')}</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Recevez un rappel la veille et le jour même (9 h) des factures, échéances de dettes et créances, et cotisations de tontine — même appli fermée. Rien n'est envoyé : c'est le téléphone qui les programme.")}</p>
+      <button type="button" class="btn ${enabled ? 'btn-ghost' : 'btn-primary'}" id="native-reminders-btn">${enabled ? t('Désactiver les rappels planifiés') : t('Activer les rappels planifiés')}</button>
+    </div>`;
+  container.querySelector('#native-reminders-btn').addEventListener('click', async () => {
+    try {
+      if (enabled) { await disableNativeReminders(); showToast(t('Rappels planifiés désactivés.')); }
+      else { const n = await enableNativeReminders(); showToast(t('{count} rappel(s) programmé(s).', { count: n })); }
+    } catch (err) {
+      showToast(err.message || t('Opération impossible.'));
+    }
+    await renderNativeRemindersSection(container);
+  });
+}
+
+async function renderUiModeSection(container) {
+  const mode = await getUiMode();
+  container.innerHTML = `
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="panel-header"><h3>${t("Mode d'affichage")}</h3></div>
+      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Simple : entrées, sorties, solde, favoris, dettes et créances — comme un cahier. Complet : toutes les fonctions (budgets, épargne, investissements, rapports, outils…).")}</p>
+      <div class="segmented" id="ui-mode-segmented">
+        <button type="button" class="segmented-btn ${mode === 'simple' ? 'is-active' : ''}" data-mode="simple">${t('Simple')}</button>
+        <button type="button" class="segmented-btn ${mode === 'full' ? 'is-active' : ''}" data-mode="full">${t('Complet')}</button>
+      </div>
+    </div>`;
+  container.querySelectorAll('[data-mode]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await setUiMode(btn.dataset.mode);
+      container.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('is-active', b === btn));
+      showToast(t('Mode d\'affichage mis à jour.'));
     });
   });
 }
@@ -694,10 +747,12 @@ function renderDeveloperSection(container) {
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-profile"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-language"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-cloud-backup"></div><div id="settings-developer"></div>';
+  container.innerHTML = '<div id="settings-profile"></div><div id="settings-uimode"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-native-reminders"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-language"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-cloud-backup"></div><div id="settings-developer"></div>';
   await renderProfileSection(document.getElementById('settings-profile'));
+  await renderUiModeSection(document.getElementById('settings-uimode'));
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
+  await renderNativeRemindersSection(document.getElementById('settings-native-reminders'));
   await renderInstallSection(document.getElementById('settings-install'));
   await renderUpdateSection(document.getElementById('settings-update'));
   await renderDashboardConfigSection(document.getElementById('settings-dashboard'));

@@ -22,8 +22,8 @@
 import { firebaseConfig, isFirebaseConfigured, googleClientId, googleDesktopClientId, googleAndroidClientId } from './firebase-config.js';
 import { buildEncryptedPayload, decryptPayload, deserializeReceiptsForImport, markBackupDone, estimateBackupSize, formatBytes } from './backup.js';
 import { importAllData, getSetting, setSetting } from './db.js';
-import { openModal, showToast, confirmDialog, formatDate } from './utils.js';
-import { notifyDataChanged } from './state.js';
+import { openModal, showToast, confirmDialog, formatDate, escapeHtml } from './utils.js';
+import { notifyDataChanged, bus, EVENTS } from './state.js';
 import { t } from './i18n.js';
 
 /* ==========================================================================
@@ -404,8 +404,25 @@ function withTimeout(promise, ms = NETWORK_STEP_TIMEOUT_MS) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Un seul envoi à la fois : la sauvegarde automatique (ci-dessous) et le bouton manuel peuvent se
+// déclencher en même temps ; deux envois entrelacés écriraient les mêmes morceaux en parallèle.
+let pushQueue = Promise.resolve();
+
 /** `onProgress(message)` (facultatif) reçoit l'étape en cours, pour l'afficher à l'utilisateur. */
-export async function pushBackupToCloud(passphrase, onProgress = () => {}) {
+export function pushBackupToCloud(passphrase, onProgress = () => {}) {
+  const run = async () => {
+    const seqBefore = changeSeq;
+    await pushBackupToCloudNow(passphrase, onProgress);
+    // Propre seulement si rien n'a changé PENDANT l'envoi : sinon la modification faite entre-temps
+    // ne serait dans aucune sauvegarde et ne serait plus jamais signalée.
+    if (changeSeq === seqBefore) await markAutoBackupClean();
+  };
+  const result = pushQueue.then(run, run);
+  pushQueue = result.catch(() => {});
+  return result;
+}
+
+async function pushBackupToCloudNow(passphrase, onProgress) {
   const { firestoreMod } = await ensureFirebase();
   const user = firebaseAuth.currentUser;
   if (!user) throw new Error(t('Non connecté.'));
@@ -516,6 +533,9 @@ const CLOUD_BACKUP_SNOOZE_LIMIT = 3;
 export async function checkWeeklyCloudBackupReminder() {
   if (!isFirebaseConfigured) return;
   if (!(await getSetting('cloudBackupWasSignedIn', false))) return;
+  // Sauvegarde automatique active : plus de rappel hebdomadaire (un échec répété, lui, s'affiche sur le
+  // tableau de bord — voir getCloudAutoBackupAlert).
+  if (await getSetting('cloudAutoBackupEnabled', false)) return;
 
   const snoozedUntil = await getSetting('cloudBackupSnoozedUntil');
   const snoozeCount = await getSetting('cloudBackupSnoozeCount', 0);
@@ -582,7 +602,13 @@ export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
   const data = await decryptPayload(payload, passphrase);
   await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
-  notifyDataChanged('all');
+  if (merge) {
+    notifyDataChanged('all'); // l'union des deux jeux de données diffère du cloud : à renvoyer
+  } else {
+    // Remplacement complet : l'appareil devient identique au cloud, pas de renvoi à déclencher.
+    isRestoringFromCloud = true;
+    try { notifyDataChanged('all'); } finally { isRestoringFromCloud = false; }
+  }
   // Cet appareil est maintenant à jour avec le cloud tel qu'il était à updatedAt (l'horodatage
   // serveur de LA sauvegarde qu'on vient de récupérer, pas l'heure locale de fin de restauration —
   // plus précis, évite tout décalage d'horloge appareil/serveur). Voir checkCloudStaleness().
@@ -594,6 +620,10 @@ export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
   // lastCloudBackupAt (qui reste honnête sur la dernière fois qu'on a réellement poussé une
   // sauvegarde depuis cet appareil, affiché tel quel en Paramètres).
   await setSetting('cloudBackupSnoozedUntil', new Date(Date.now() + 24 * 3600 * 1000).toISOString());
+  if (!merge) {
+    await markAutoBackupClean();
+    await setSetting('cloudAutoBackupBlocked', null);
+  }
 }
 
 /* ---------- Vérification de fraîcheur au démarrage ----------
@@ -654,19 +684,28 @@ export async function checkCloudStaleness() {
   }
 }
 
+let stalenessModalOpen = false;
+
 function showCloudStalenessModal(cloudUpdatedAt) {
+  // Une seule modale à la fois : la vérification au démarrage et la sauvegarde automatique peuvent
+  // toutes deux découvrir le même retard.
+  if (stalenessModalOpen) return;
+  stalenessModalOpen = true;
   const modal = openModal(`
     <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t('Une sauvegarde plus récente existe dans le cloud, faite le {date} — probablement depuis un autre appareil. Pour éviter des doublons ou de remplacer des données par erreur, il est recommandé de la récupérer avant de continuer sur cet appareil.', { date: formatDate(cloudUpdatedAt.toISOString()) })}</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;">
       <button type="button" class="btn btn-primary" id="cloud-stale-restore-btn">${t('Restaurer maintenant')}</button>
       <button type="button" class="btn btn-ghost" id="cloud-stale-dismiss-btn">${t('Continuer quand même')}</button>
-    </div>`, { title: t('Sauvegarde cloud plus récente') });
+    </div>`, { title: t('Sauvegarde cloud plus récente'), onClose: () => { stalenessModalOpen = false; } });
 
   modal.el.querySelector('#cloud-stale-dismiss-btn').addEventListener('click', async () => {
     // Avance le repère local jusqu'à l'état du cloud qu'on vient de voir (sans le récupérer) : sans
     // ça, la modale identique réapparaîtrait à chaque démarrage tant que le cloud ne bouge pas — ici
     // elle ne reviendra que si le cloud avance ENCORE après ce constat, pas pour le même état déjà vu.
     await setSetting('cloudLastKnownSyncAt', cloudUpdatedAt.toISOString());
+    // Choix assumé de continuer : la sauvegarde automatique (en pause pour conflit) peut reprendre.
+    await setSetting('cloudAutoBackupBlocked', null);
+    scheduleAutoBackup(2000);
     modal.close();
   });
 
@@ -700,6 +739,162 @@ async function confirmLargeBackup() {
   }
 }
 
+/* ---------- Sauvegarde cloud AUTOMATIQUE ----------
+   Un cahier ne « perd » jamais ses pages ; une appli dont les données ne vivent que dans le téléphone,
+   si. Quand l'utilisateur l'active (opt-in explicite, voir renderCloudBackupSection), chaque modification
+   déclenche — après une courte inactivité, et au plus toutes les 15 minutes — le MÊME envoi chiffré que le
+   bouton manuel (pushBackupToCloud). Pas de synchronisation bidirectionnelle (voir l'en-tête du fichier) :
+   un appareil en retard sur le cloud ne l'écrase JAMAIS en silence, il affiche la modale de fraîcheur.
+
+   Le mot de passe de chiffrement est conservé sur CET appareil (réglage local, jamais exporté — voir
+   DEVICE_LOCAL_SETTING_KEYS dans db.js) pour pouvoir envoyer sans le redemander. Compromis assumé : les
+   données de l'appareil sont de toute façon lisibles par quiconque y a accès déverrouillé ; le chiffrement
+   protège la copie CLOUD (Google, fuite de compte), pas l'appareil. */
+const AUTO_DEBOUNCE_MS = 90 * 1000;
+const AUTO_MIN_INTERVAL_MS = 15 * 60 * 1000;
+const AUTO_FLUSH_SPACING_MS = 2 * 60 * 1000;
+const AUTO_FAILURE_ALERT_THRESHOLD = 3;
+
+let changeSeq = 0;
+let autoTimer = null;
+let autoRunning = false;
+let autoInitialized = false;
+let isRestoringFromCloud = false;
+let lastAutoAttemptAt = 0;
+
+async function markAutoBackupClean() {
+  clearTimeout(autoTimer);
+  autoTimer = null;
+  await setSetting('cloudAutoBackupDirty', false);
+}
+
+function scheduleAutoBackup(delay = AUTO_DEBOUNCE_MS) {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(() => runAutoBackup().catch((err) => console.warn('[AutoBackup]', err)), delay);
+}
+
+async function isAutoBackupReady() {
+  return !!(await getSetting('cloudAutoBackupEnabled', false)) && !!(await getSetting('cloudAutoBackupPassphrase', null));
+}
+
+/** Date de la dernière sauvegarde du compte connecté (horloge serveur), ou null s'il n'y en a pas. */
+async function fetchCloudUpdatedAt(user) {
+  const { firestoreMod } = await ensureFirebase();
+  const snap = await withTimeout(firestoreMod.getDoc(firestoreMod.doc(firebaseDb, 'backups', user.uid)), 20000);
+  return snap.exists() ? (snap.data().updatedAt?.toDate?.() || null) : null;
+}
+
+export async function enableCloudAutoBackup(passphrase) {
+  await setSetting('cloudAutoBackupPassphrase', passphrase);
+  await setSetting('cloudAutoBackupEnabled', true);
+  await setSetting('cloudAutoBackupDirty', true);
+  await setSetting('cloudAutoBackupFailures', 0);
+  await setSetting('cloudAutoBackupLastError', null);
+  await setSetting('cloudAutoBackupBlocked', null);
+}
+
+export async function disableCloudAutoBackup() {
+  clearTimeout(autoTimer);
+  autoTimer = null;
+  await setSetting('cloudAutoBackupEnabled', false);
+  await setSetting('cloudAutoBackupPassphrase', null); // le mot de passe ne reste pas sur l'appareil
+  await setSetting('cloudAutoBackupDirty', false);
+  await setSetting('cloudAutoBackupLastError', null);
+  await setSetting('cloudAutoBackupFailures', 0);
+  await setSetting('cloudAutoBackupBlocked', null);
+}
+
+/** Lance un envoi automatique si nécessaire. Renvoie la raison de l'issue : 'ok', 'clean', 'disabled',
+    'offline', 'throttled', 'busy', 'conflict' ou 'error' (jamais d'exception : appelée en tâche de fond). */
+export async function runAutoBackup({ force = false } = {}) {
+  if (autoRunning) return 'busy';
+  if (!isFirebaseConfigured) return 'disabled';
+  if (!(await isAutoBackupReady())) return 'disabled';
+  if (!force && !(await getSetting('cloudAutoBackupDirty', false))) return 'clean';
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
+  const lastIso = await getSetting('lastCloudBackupAt');
+  const sinceLast = lastIso ? Date.now() - new Date(lastIso).getTime() : Infinity;
+  if (!force && sinceLast < AUTO_MIN_INTERVAL_MS) {
+    scheduleAutoBackup(AUTO_MIN_INTERVAL_MS - sinceLast + 1000);
+    return 'throttled';
+  }
+  autoRunning = true;
+  lastAutoAttemptAt = Date.now();
+  try {
+    const user = await resolveCloudUser();
+    if (!user) throw new Error(t('Session Google expirée : reconnectez-vous dans Paramètres.'));
+
+    // Jamais d'écrasement silencieux : si le cloud est plus récent que ce que CET appareil a vu (un autre
+    // appareil a sauvegardé), ou si cet appareil n'a encore aucun repère, on laisse l'utilisateur choisir.
+    const cloudUpdatedAt = await fetchCloudUpdatedAt(user);
+    if (cloudUpdatedAt) {
+      const localSyncAt = await getSetting('cloudLastKnownSyncAt');
+      if (!localSyncAt || cloudUpdatedAt.getTime() > new Date(localSyncAt).getTime()) {
+        await setSetting('cloudAutoBackupBlocked', 'conflict');
+        showCloudStalenessModal(cloudUpdatedAt);
+        return 'conflict';
+      }
+    }
+
+    const estimate = await estimateBackupSize().catch(() => null);
+    if (estimate && estimate.level === 'critical') {
+      throw new Error(t("Sauvegarde trop volumineuse pour l'envoi automatique : utilisez « Réduire les photos » (Paramètres) puis « Sauvegarder maintenant »."));
+    }
+
+    await pushBackupToCloud(await getSetting('cloudAutoBackupPassphrase'));
+    await setSetting('cloudAutoBackupBlocked', null);
+    await setSetting('cloudAutoBackupLastError', null);
+    await setSetting('cloudAutoBackupFailures', 0);
+    return 'ok';
+  } catch (err) {
+    const failures = (await getSetting('cloudAutoBackupFailures', 0)) + 1;
+    await setSetting('cloudAutoBackupFailures', failures);
+    await setSetting('cloudAutoBackupLastError', err?.message || String(err));
+    scheduleAutoBackup(Math.min(60, 5 * failures) * 60 * 1000); // réessaie, de plus en plus espacé (1 h max)
+    return 'error';
+  } finally {
+    autoRunning = false;
+  }
+}
+
+/** Message à afficher sur le tableau de bord quand la sauvegarde automatique ne fonctionne plus
+    (pause pour conflit, ou échecs répétés) — sinon `null`. Ne lit que des réglages : aucun chargement
+    du SDK Firebase. Corrige le défaut déjà connu d'une sauvegarde qui échoue sans que personne le voie. */
+export async function getCloudAutoBackupAlert() {
+  if (!(await getSetting('cloudAutoBackupEnabled', false))) return null;
+  if (await getSetting('cloudAutoBackupBlocked', null)) {
+    return t("La sauvegarde cloud automatique est en pause : le cloud contient une version plus récente. Ouvrez Paramètres > Sauvegarde cloud.");
+  }
+  if ((await getSetting('cloudAutoBackupFailures', 0)) >= AUTO_FAILURE_ALERT_THRESHOLD) {
+    return t('La sauvegarde cloud automatique échoue : {message}', { message: (await getSetting('cloudAutoBackupLastError', '')) || t('erreur inconnue') });
+  }
+  return null;
+}
+
+/** À appeler une fois l'appli déverrouillée (idempotent). Ne charge pas le SDK Firebase tant que la
+    sauvegarde automatique n'est pas activée ET qu'il n'y a rien à envoyer. */
+export function initCloudAutoBackup() {
+  if (autoInitialized) return;
+  autoInitialized = true;
+  bus.on(EVENTS.DATA_CHANGED, () => {
+    if (isRestoringFromCloud) return;
+    changeSeq++;
+    getSetting('cloudAutoBackupEnabled', false).then(async (enabled) => {
+      if (!enabled) return;
+      await setSetting('cloudAutoBackupDirty', true);
+      scheduleAutoBackup();
+    }).catch(() => {});
+  });
+  // En quittant l'appli (changement d'onglet, retour à l'écran d'accueil) : dernier moment sûr pour envoyer.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'hidden' || Date.now() - lastAutoAttemptAt < AUTO_FLUSH_SPACING_MS) return;
+    getSetting('cloudAutoBackupDirty', false).then((dirty) => { if (dirty) runAutoBackup({ force: true }); }).catch(() => {});
+  });
+  window.addEventListener('online', () => scheduleAutoBackup(5000));
+  // Modifications faites avant la dernière fermeture et pas encore envoyées.
+  setTimeout(() => runAutoBackup().catch(() => {}), 8000);
+}
+
 /* ---------- UI (Paramètres) ---------- */
 function promptPassphrase(title) {
   return new Promise((resolve) => {
@@ -715,6 +910,34 @@ function promptPassphrase(title) {
       // synchroniquement — appeler resolve(p) après serait un no-op (une promesse déjà
       // résolue ignore les résolutions suivantes), le mot de passe réel serait perdu.
       resolve(p);
+      modal.close();
+    });
+  });
+}
+
+/** Choix du mot de passe de la sauvegarde automatique : saisi DEUX fois (une faute de frappe rendrait
+    toutes les sauvegardes futures irrécupérables) et accompagné de l'avertissement qui compte. */
+function promptNewAutoBackupPassphrase() {
+  return new Promise((resolve) => {
+    const modal = openModal(`
+      <p style="margin:0 0 10px;font-size:13.5px;color:var(--text-muted);">${t("Vos données seront envoyées chiffrées à chaque modification, après un court délai. Le mot de passe est mémorisé sur CET appareil pour envoyer sans vous le redemander ; il n'est jamais transmis.")}</p>
+      <p class="alert alert-warn" style="margin:0 0 12px;">${t("Notez-le ailleurs : sans ce mot de passe, personne — ni vous, ni Google, ni nous — ne peut restaurer la sauvegarde.")}</p>
+      <form id="auto-backup-form">
+        <div class="form-row"><label>${t('Mot de passe de chiffrement')}</label><input type="password" name="passphrase" required minlength="6" autocomplete="new-password" autofocus></div>
+        <div class="form-row"><label>${t('Confirmez le mot de passe')}</label><input type="password" name="confirm" required minlength="6" autocomplete="new-password"></div>
+        <p class="lock-error" id="auto-backup-error" role="alert" hidden></p>
+        <button type="submit" class="btn btn-primary btn-block">${t('Activer')}</button>
+      </form>`, { title: t('Sauvegarde cloud automatique'), onClose: () => resolve(null) });
+    const errorEl = modal.el.querySelector('#auto-backup-error');
+    modal.el.querySelector('#auto-backup-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      if (fd.get('passphrase') !== fd.get('confirm')) {
+        errorEl.textContent = t('Les deux mots de passe ne correspondent pas.');
+        errorEl.hidden = false;
+        return;
+      }
+      resolve(fd.get('passphrase')); // avant close() : close() déclenche onClose => resolve(null)
       modal.close();
     });
   });
@@ -750,15 +973,21 @@ export async function renderCloudBackupSection(container) {
     warmUpGoogleSignIn();
   }
 
+  const autoEnabled = !!(await getSetting('cloudAutoBackupEnabled', false));
+  const autoAlert = autoEnabled ? await getCloudAutoBackupAlert() : null;
+
   container.innerHTML = `
     <div class="panel" style="margin-bottom:16px;">
       <div class="panel-header"><h3>${t('Sauvegarde cloud (optionnelle)')}</h3></div>
       <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Sauvegarde chiffrée sur votre compte Google, pour la récupérer après une réinstallation. Le mot de passe de chiffrement n'est jamais transmis — sans lui, personne (y compris Google) ne peut lire vos données.")}</p>
       ${user ? `
-        <div class="stat-row"><span class="stat-row-label">${t('Connecté')}</span><span>${user.email || user.displayName || ''}</span></div>
+        <div class="stat-row"><span class="stat-row-label">${t('Connecté')}</span><span>${escapeHtml(user.email || user.displayName || '')}</span></div>
         <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">${t('Dernière sauvegarde cloud')}</span><span>${lastCloudBackupAt ? formatDate(lastCloudBackupAt) : t('jamais')}</span></div>
+        <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">${t('Sauvegarde automatique')}</span><span>${autoEnabled ? t('Activée') : t('Désactivée')}</span></div>
+        ${autoAlert ? `<p class="alert alert-warn" style="margin:10px 0 0;">${escapeHtml(autoAlert)}</p>` : ''}
         <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
           <button type="button" class="btn btn-primary" id="cloud-push-btn">${t('Sauvegarder maintenant')}</button>
+          <button type="button" class="btn btn-ghost" id="cloud-auto-toggle-btn">${autoEnabled ? t('Désactiver la sauvegarde automatique') : t('Activer la sauvegarde automatique')}</button>
           <button type="button" class="btn btn-ghost" id="cloud-pull-btn">${t('Restaurer depuis le cloud')}</button>
           <button type="button" class="btn btn-ghost" id="cloud-signout-btn">${t('Se déconnecter')}</button>
         </div>` : `
@@ -788,8 +1017,40 @@ export async function renderCloudBackupSection(container) {
     await renderCloudBackupSection(container);
   });
 
+  container.querySelector('#cloud-auto-toggle-btn')?.addEventListener('click', async () => {
+    if (autoEnabled) {
+      const ok = await confirmDialog(t("Désactiver la sauvegarde automatique ? Le mot de passe mémorisé sur cet appareil sera effacé ; vos sauvegardes déjà dans le cloud restent intactes."), { confirmText: t('Désactiver') });
+      if (!ok) return;
+      await disableCloudAutoBackup();
+      showToast(t('Sauvegarde automatique désactivée.'));
+      await renderCloudBackupSection(container);
+      return;
+    }
+    const passphrase = await promptNewAutoBackupPassphrase();
+    if (!passphrase) return;
+    // Cet appareil n'a jamais vu le cloud alors qu'une sauvegarde y existe : l'envoi automatique la
+    // remplacerait. À confirmer explicitement UNE fois, maintenant, plutôt qu'à chaque envoi.
+    try {
+      const cloudUpdatedAt = await fetchCloudUpdatedAt(user);
+      if (cloudUpdatedAt && !(await getSetting('cloudLastKnownSyncAt'))) {
+        const ok = await confirmDialog(t("Une sauvegarde existe déjà dans le cloud pour ce compte. L'envoi automatique la remplacera par les données de cet appareil. Si elle vient d'un autre appareil, restaurez-la d'abord. Continuer ?"), { confirmText: t('Remplacer') });
+        if (!ok) return;
+        await setSetting('cloudLastKnownSyncAt', cloudUpdatedAt.toISOString());
+      }
+    } catch (err) {
+      showToast(t('Erreur : {message}', { message: err.message || t('envoi impossible.') }), { duration: 8000 });
+      return;
+    }
+    await enableCloudAutoBackup(passphrase);
+    showToast(t('Sauvegarde automatique activée. Premier envoi en cours…'));
+    const outcome = await runAutoBackup({ force: true });
+    showToast(outcome === 'ok' ? t('Sauvegarde envoyée dans le cloud.') : t("L'envoi n'a pas abouti — il sera retenté automatiquement."), { duration: 6000 });
+    await renderCloudBackupSection(container);
+  });
+
   container.querySelector('#cloud-push-btn')?.addEventListener('click', async () => {
-    const p = await promptPassphrase(t('Chiffrer la sauvegarde cloud'));
+    // Sauvegarde automatique active : le mot de passe est déjà mémorisé sur cet appareil.
+    const p = (await getSetting('cloudAutoBackupPassphrase', null)) || await promptPassphrase(t('Chiffrer la sauvegarde cloud'));
     if (!p) return;
     if (!(await confirmLargeBackup())) return;
     // Retour visible pendant tout l'envoi (plusieurs secondes, voire minutes, avec beaucoup de
