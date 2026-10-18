@@ -613,6 +613,12 @@ export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
   // serveur de LA sauvegarde qu'on vient de récupérer, pas l'heure locale de fin de restauration —
   // plus précis, évite tout décalage d'horloge appareil/serveur). Voir checkCloudStaleness().
   if (updatedAt?.toDate) await setSetting('cloudLastKnownSyncAt', updatedAt.toDate().toISOString());
+  // « Dernière sauvegarde cloud » (Paramètres) : le réglage lastCloudBackupAt est écrit APRÈS chaque envoi,
+  // donc la sauvegarde elle-même contient la date de l'envoi PRÉCÉDENT. Après un remplacement complet, il
+  // restait donc la date d'avant (ex: 12 oct. alors que la sauvegarde restaurée date du 18) — alors que
+  // les données, elles, étaient bien à jour. Après une restauration en remplacement, l'appareil est
+  // identique à cette sauvegarde : c'est sa date qu'il faut afficher.
+  if (!merge && updatedAt?.toDate) await setSetting('lastCloudBackupAt', updatedAt.toDate().toISOString());
   // Laisse un répit de 24h avant le prochain rappel de sauvegarde cloud (checkWeeklyCloudBackupReminder)
   // : sans ça, un appareil qui vient de recevoir les données du cloud (via ce pull, éventuellement
   // déclenché par la modale de fraîcheur ci-dessous) pouvait se voir aussitôt réclamer "sauvegardez
@@ -982,7 +988,7 @@ export async function renderCloudBackupSection(container) {
       <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Sauvegarde chiffrée sur votre compte Google, pour la récupérer après une réinstallation. Le mot de passe de chiffrement n'est jamais transmis — sans lui, personne (y compris Google) ne peut lire vos données.")}</p>
       ${user ? `
         <div class="stat-row"><span class="stat-row-label">${t('Connecté')}</span><span>${escapeHtml(user.email || user.displayName || '')}</span></div>
-        <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">${t('Dernière sauvegarde cloud')}</span><span>${lastCloudBackupAt ? formatDate(lastCloudBackupAt) : t('jamais')}</span></div>
+        <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">${t('Dernière sauvegarde cloud')}</span><span id="cloud-last-backup">${lastCloudBackupAt ? formatDate(lastCloudBackupAt) : t('jamais')}</span></div>
         <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">${t('Sauvegarde automatique')}</span><span>${autoEnabled ? t('Activée') : t('Désactivée')}</span></div>
         ${autoAlert ? `<p class="alert alert-warn" style="margin:10px 0 0;">${escapeHtml(autoAlert)}</p>` : ''}
         <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
@@ -993,6 +999,16 @@ export async function renderCloudBackupSection(container) {
         </div>` : `
         <button type="button" class="btn btn-primary" id="cloud-signin-btn">${t('Se connecter avec Google')}</button>`}
     </div>`;
+
+  // La date affichée est celle de la sauvegarde qui est RÉELLEMENT dans le cloud (horloge serveur), pas
+  // celle mémorisée sur cet appareil (qui peut être celle d'un autre appareil ou d'un envoi précédent).
+  // Mise à jour en arrière-plan : hors-ligne, l'écran ne doit pas attendre le réseau.
+  if (user) {
+    withTimeout(fetchCloudUpdatedAt(user), 8000).then((cloudDate) => {
+      const el = container.querySelector('#cloud-last-backup');
+      if (el && cloudDate) el.textContent = formatDate(cloudDate.toISOString());
+    }).catch(() => { /* on garde la valeur locale */ });
+  }
 
   container.querySelector('#cloud-signin-btn')?.addEventListener('click', async (e) => {
     const btn = e.target;

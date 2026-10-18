@@ -3522,6 +3522,17 @@ complet, puis en anglais, puis à 375 px : aucune erreur, aucun « undefined/NaN
 données (aucune référence orpheline, patrimoine fini). Piège de l'audit : le script de contrôle du précache signale à
 tort `./?share-target=1` et `index.html` en double (chaînes du code du Service Worker, pas de la liste `APP_SHELL`).
 
+### 18 octobre 2026 (suite 6) — « Dernière sauvegarde cloud » fausse après restauration (`CACHE_VERSION` `v127`)
+
+Signalé par l'auteur (capture Windows) : après une restauration depuis Google, Paramètres affichait « Dernière
+sauvegarde cloud : 12 oct. » alors que la sauvegarde restaurée datait du 18 (ses transactions étaient bien là).
+**Cause** : `lastCloudBackupAt` est écrit APRÈS chaque envoi, donc la sauvegarde contient la date de l'envoi
+PRÉCÉDENT ; le remplacement complet la réimportait telle quelle. **Les données étaient justes, seule la date
+affichée était périmée.** Corrigé (`firebase-sync.js`) : (1) `pullBackupFromCloud` pose `lastCloudBackupAt` à la date
+serveur de la sauvegarde restaurée (en remplacement seulement) ; (2) Paramètres affiche en arrière-plan la date
+**réelle** du cloud (une lecture du petit document parent, délai de 8 s, valeur locale conservée hors-ligne).
+Non testé avec un vrai compte Google.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
