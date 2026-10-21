@@ -3554,6 +3554,93 @@ jamais découverte.** Corrigé :
 Vérifié sur une installation existante sans aucun réglage (mode complet) puis en mode simple, avec et sans données :
 chaque fonction est visible ; `features.test.html` 117/117, `ledger.test.html` 64/64.
 
+### 21 octobre 2026 — Refonte visuelle, lot 1 : « moins IA, plus fait main » (`CACHE_VERSION` `v133`)
+
+Constat de l'auteur : l'app se reconnaît tout de suite comme générée par IA. Audit du design et des
+graphiques fait en direct (démo) puis lot 1 appliqué ; les lots 2 (structure du tableau de bord : une
+seule grande carte, le reste en lignes façon cahier, 3 graphiques max, Rapports regroupé) et 3
+(police embarquée, icônes en traits dont une par section et des icônes de catégorie différentes, motif
+du cauri) restent à faire.
+- **Palette tirée du logo** (`styles.css`, bloc « Design tokens ») : accent bleu cauri `#1f5fa6`, or
+  `--gold` pour le seul relief, fond crème `#f4f2ec` (plus de gris-bleu), vert/rouge/ambre assourdis.
+  Thème sombre : l'accent est éclairci (`#7fb0ea`) et **`--on-accent`** donne la couleur du texte posé
+  dessus (blanc en clair, marine en sombre) — ne plus écrire `color:#fff` sur un fond d'accent.
+  `--text-faint` éclairci/assombri pour passer ~4,5:1 (c'était la dette d'accessibilité notée en §6, 14 août).
+- **Plus aucun dégradé, ombres retirées** (`--shadow-sm: none`, bordures à la place), rayons réduits
+  (6/10/14 px). Cartes de tête à plat sur la surface ; seule « Reste à vivre » (`.hero-card-safe`) est en
+  marine uni (`--hero-bg`), libellé en or, rouge brique si négatif. Les classes `.hero-card-budget` et
+  `.hero-card-debts` n'ont plus de style propre. `theme-color` et `manifest.json` alignés.
+- **Titres en double supprimés** : le `<h2>` de chaque `.view-header` est retiré (le titre vit dans la
+  barre du haut) ; un en-tête réduit à ses boutons les aligne à droite (`.view-header > :only-child`).
+- **Graphiques** (`charts.js` réécrit, signatures inchangées sauf `renderNetWorthTrendChart(…, opts)`
+  qui accepte `{ beginAtZero }`) : un accent + du gris, la couleur seulement pour le sens (rouge =
+  dépassement/perte) ; camembert → barres horizontales triées avec la valeur au bout (plugin
+  `valueLabels`, replié dans la barre si ça ne tient pas) ; budget vs réel → jauges (rail gris = budget,
+  barre = réel, rouge si dépassement) ; courbes droites, sans aire ni points sauf le dernier ; axes
+  compacts (« 120 k ») ; légende en haut à droite seulement quand il y a 2 séries ; la 1re série est la
+  principale (le « Réel » passe avant le « Budget » dans la tendance de Rapports). La palette de choix
+  de couleurs des catégories (`CATEGORY_COLORS`, `PALETTE`) devient sobre ; les catégories déjà colorées
+  gardent leur couleur. **Piège** : le thème sombre est posé sur `<body>`, pas `<html>` — `cssVar()` lit
+  donc `body` en premier (sinon grilles/rails restaient clairs en sombre). Le rendu `.chart-card:first-child`
+  sur 2 lignes (conçu pour le camembert haut) est supprimé.
+- **« (s) » à l'écran** : `t()` (`i18n.js`) accorde désormais les marques `mot(s)` et `verbe(nt)` d'après
+  `count`/`days`/`years`/`n` (FR : 0 et 1 au singulier ; EN : seulement 1 ; sans nombre → pluriel), avant
+  l'interpolation. Les clés restent écrites avec « (s) » : **toujours passer le nombre dans `vars`**.
+  « jour(s) restants » est devenu « jour(s) restant(s) » ; l'anglais « stay(s) » → « remain ».
+- Image du bilan à partager (`monthly-recap.js`) : fond marine uni, accent or/bleu cohérents.
+Vérifié dans le navigateur (clair, sombre, mobile 375 px, FR/EN, aucune erreur console). Les builds
+natifs (APK/EXE) et le dépôt `geofinance-free` n'ont pas été touchés.
+
+### 21 octobre 2026 — Refonte visuelle, lot 2 : tableau de bord et Rapports (`CACHE_VERSION` `v134`)
+
+- **Tableau de bord** (`index.html`, `dashboard.js`, bloc « Tableau de bord : une carte de tête… » de `styles.css`) : les 4 cartes
+  de tête + 4 cartes de synthèse sont remplacées par **une seule carte** (« Reste à vivre », marine) et **deux panneaux en
+  lignes de cahier** (libellé ...... montant, classes `.ledger-*`) : « Où j'en suis » (patrimoine net, créances, dettes,
+  solde net) et « Ce mois-ci » (entrées, sorties, épargne nette, cash-flow, budget alloué). Les identifiants que le JS remplit
+  sont conservés (`budget-month-value`, `dash-net-worth-value`…) ; les 4 chiffres du mois ont maintenant des ids
+  (`dash-income-value`, `dash-expenses-value`, `dash-netsavings-value`, `dash-cashflow-value`) au lieu d'être pris par index.
+  `#panel-position-dash` est masqué si patrimoine ET dettes sont désactivés dans les panneaux. Le salut n'a plus d'emoji.
+- **3 graphiques au maximum** : Dépenses par catégorie, Budget vs réel, Prévision de trésorerie. L'évolution de la valeur
+  nette et les deux courbes de variation mensuelle (avec leurs filtres année/catégorie et tout leur état dans `dashboard.js`)
+  quittent le tableau de bord : elles restent dans Rapports. `computeNetWorthHistory(2)` suffit à la tendance du patrimoine.
+- **Mode simple** : un seul sélecteur, `.dash-advanced` (patrimoine, épargne nette, cash-flow, budget) + graphiques + panneaux
+  de catégories/échéances ; `.hero-card-budget`, `.summary-grid` et leurs règles n'existent plus pour le tableau de bord
+  (`.summary-card` sert toujours aux cartes des autres écrans).
+- **Rapports en 4 onglets** (`reports.js`, état `reportTab`) sous une barre de période commune (mois + année, remplaçant les
+  deux sélecteurs éparpillés) : Bilans (PDF mensuel/annuel, CSV en liens, bilan à partager, résultat par étiquette) ·
+  Dépenses et revenus (catégories du mois, variation dépenses, variation entrées, épargne nette) · Budget et patrimoine
+  (budget vs réel, tendance annuelle, valeur nette) · Santé et calendrier. Seul l'onglet actif est rendu (les graphiques
+  ne se dessinent pas dans un conteneur caché) ; changer d'onglet re-rend simplement la vue.
+- Vérifié : clair, sombre, mobile 375 px (page du tableau de bord de ~4 400 à ~3 200 px), mode simple/complet, 3 canvas sur le
+  tableau de bord, 4/3/0/0 canvas selon l'onglet de Rapports, aucune erreur console. Pas de test sur appareil réel ; builds
+  natifs et `geofinance-free` non touchés.
+
+### 21 octobre 2026 — Refonte visuelle, lot 3 : polices, icônes, cauri (`CACHE_VERSION` `v139`)
+
+- **Icônes en traits, un seul jeu** : nouveau `js/icons.js` (ajouté à `APP_SHELL`) — grille 24 px, trait 1,7 px, bouts arrondis,
+  `currentColor`, aucun aplat. `icon(nom, taille)` renvoie le `<svg>` ; les modules l'importent sous l'alias `svgIcon` (plusieurs
+  ont déjà une variable locale `icon`). **Toute nouvelle icône va dans `ICON_PATHS`**, pas en SVG collé dans un module. Une icône
+  par section (plus de bouclier partagé entre Épargne et Dettes : Épargne = pot, Dettes = carnet, Tontines = trois points reliés,
+  Comptes gardés = clé…), icônes d'action (modifier, supprimer, archiver…), types de portefeuille, barre du haut, clavier du PIN.
+  `index.html` a été converti en place (les `<svg>` d'origine gardent leurs classes/attributs, ex. `icon-eye-open` + `hidden`).
+  Les icônes de type de transaction (`TX_ICONS`, déjà en traits à 2 px) n'ont pas été touchées.
+  `ui-mode.js` échange aussi l'icône du 4e bouton de la barre mobile (pot ↔ carnet) avec sa cible.
+- **Catégories** : 15 icônes proposées (`CATEGORY_ICON_KEYS`) ; `DEFAULT_CATEGORIES` (`db.js`) porte maintenant `icon` + `color` d'après
+  `DEFAULT_CATEGORY_LOOK`. Les catégories déjà en base sans icône ni couleur (donc toutes les « tag » bleues d'avant) prennent leur apparence
+  par défaut **à l'affichage** d'après leur nom FR/EN (`categoryLook()` dans `budgets.js`) — rien n'est réécrit ; une icône choisie à la main prime.
+  Les couleurs par défaut sont des membres de `CATEGORY_COLORS` pour que le sélecteur de couleur les reconnaisse.
+- **Motif du cauri** (fin de `styles.css`) : le coquillage du logo redessiné en ovale à fente dentée, en **masque CSS** (donc il suit le
+  thème) — en filigrane (5 %) derrière tout écran `.lock-screen` (PIN, langue, activation, restauration) et en petit signe au-dessus de
+  `.empty-state` / `.tx-empty`. Variables `--cauri-glyph` et `--cauri-tile` (data-URI, pas de fichier).
+- **Polices embarquées** (`vendor/fonts/`, licence OFL jointe, ajoutées à `APP_SHELL`, préchargées dans `index.html`, aucun appel réseau) :
+  *Source Sans 3* pour l'interface, *Source Serif 4* pour les titres et les gros montants (`--font-sans`, `--font-serif`). Fichiers variables,
+  sous-ensemble **latin** seulement (≈ 80 Ko au total : accents, œ, €, guillemets) ; les symboles hors sous-ensemble (→, ⚠, ☆…) retombent sur la
+  police du système. Récupérées via `npm pack` (paquets `@fontsource-variable/source-sans-3` et `source-serif-4` 5.3.1) puis copiées à la main :
+  pas de `package.json` ni de build dans le projet. Chart.js lit la police du `body` ; l'image du bilan partagé (`monthly-recap.js`) la cite en premier.
+- Vérifié : clair, sombre, mobile, 64/64 et 117/117 sur les deux pages de test, aucune requête externe, aucune erreur console. Les builds
+  APK/EXE embarquent leurs propres copies des fichiers : il faudra y recopier `icons.js`, `vendor/fonts/`, `styles.css`, `sw.js`, `index.html`
+  et les modules modifiés avant de reconstruire. `geofinance-free` non touché.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

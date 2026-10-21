@@ -60,8 +60,21 @@ export function applyStaticTranslations() {
     pareil ("Budget X à 90% de la limite" vs "Budget X at 90% of limit" — ça
     marche ici, mais rien ne le garantit en général), un gabarit entier par
     langue est la seule façon de le garantir. */
+/** Accord en nombre : un texte s'écrit une seule fois avec des marques « mot(s) » / « verbe(nt) », résolues
+    d'après le nombre passé dans `vars` (count, days, years ou n) — au lieu d'afficher « 1 transaction(s)
+    importée(s) » à l'écran. Français : 0 et 1 sont au singulier ; anglais : seul 1. Sans nombre dans
+    `vars`, on retient le pluriel. Appliqué AVANT l'interpolation, pour ne jamais toucher à un « (s) »
+    venant d'un nom saisi par l'utilisateur. */
+function agree(s, vars) {
+  if (!s.includes('(')) return s;
+  const n = [vars && vars.count, vars && vars.days, vars && vars.years, vars && vars.n].map(Number).find((x) => Number.isFinite(x));
+  const singular = n !== undefined && (currentLang === 'en' ? n === 1 : Math.abs(n) < 2);
+  return s.replace(/\((s|nt)\)/g, (_, end) => (singular ? '' : end));
+}
+
 export function t(fr, vars) {
   let s = currentLang === 'en' ? (EN[fr] || fr) : fr;
+  s = agree(s, vars);
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, v);
   return s;
 }
@@ -149,6 +162,14 @@ const EN = {
   'Variation mensuelle des entrées': 'Monthly income trend',
   'Transactions récentes': 'Recent transactions',
   'Voir tout': 'See all',
+  "Où j'en suis": 'Where I stand',
+  'Ce mois-ci': 'This month',
+  'Voir les budgets': 'View budgets',
+  'Année': 'Year',
+  'Bilans': 'Summaries',
+  'Dépenses et revenus': 'Spending and income',
+  'Budget et patrimoine': 'Budget and net worth',
+  'Santé et calendrier': 'Health and calendar',
   'Voir le détail des budgets →': 'See budget details →',
   'Composition du patrimoine': 'Net worth composition',
   'Solde net :': 'Net balance:',
@@ -163,7 +184,7 @@ const EN = {
   'Aucune transaction pour le moment. Utilisez « Saisie express » pour commencer.': 'No transactions yet. Use "Quick add" to get started.',
   "Aucun budget défini pour l'instant.": 'No budget set yet.',
   'Après budgets réservés et échéances à venir': 'After reserved budgets and upcoming bills',
-  'Soit {amount}/jour sur les {days} jour(s) restants': "That's {amount}/day over the {days} day(s) left",
+  'Soit {amount}/jour sur les {days} jour(s) restant(s)': "That's {amount}/day over the {days} day(s) left",
   'Au rythme actuel, le budget "{label}" sera dépassé de {amount} vers le {day}.':
     'At the current pace, the "{label}" budget will be exceeded by {amount} around day {day}.',
 
@@ -618,7 +639,7 @@ const EN = {
   '{amount} restant': '{amount} remaining',
   'Soldé': 'Paid off',
   'Valeur nette (valeur − prêt restant)': 'Net value (value − remaining loan)',
-  'Le(s) prêt(s) « {name} » reste(nt) enregistré(s) dans Dettes & créances.': 'The loan(s) "{name}" stay(s) recorded in Debts & receivables.',
+  'Le(s) prêt(s) « {name} » reste(nt) enregistré(s) dans Dettes & créances.': 'The loan(s) "{name}" remain recorded in Debts & receivables.',
   'Prêts ({count})': 'Loans ({count})',
   'Quel prêt voulez-vous rembourser ?': 'Which loan do you want to repay?',
   'Financer par un prêt (augmentation de capital, réparation…)': 'Finance with a loan (capital increase, repair…)',

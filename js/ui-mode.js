@@ -11,6 +11,7 @@
 
 import { getSetting, setSetting } from './db.js';
 import { t } from './i18n.js';
+import { icon } from './icons.js';
 
 /** Écrans proposés dans le menu « Plus » en mode simple (le reste est masqué). */
 export const SIMPLE_MORE_VIEWS = ['wallets', 'debts', 'settings'];
@@ -29,6 +30,7 @@ export async function applyUiMode() {
     const target = mode === 'simple' ? 'debts' : 'budgets';
     const text = mode === 'simple' ? 'Dettes' : 'Budgets';
     slot.dataset.viewTarget = target;
+    slot.querySelector('svg')?.replaceWith(Object.assign(document.createElement('template'), { innerHTML: icon(mode === 'simple' ? 'ledger' : 'pie', 22) }).content.firstElementChild);
     if (label) { label.dataset.i18n = text; label.textContent = t(text); }
   }
   return mode;

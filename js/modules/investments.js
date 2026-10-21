@@ -12,6 +12,7 @@ import { renderNetWorthTrendChart } from '../charts.js';
 import { openProofExportModal, PRINT_ICON } from '../proof-export.js';
 import { createLinkedDebt, openPaymentModal } from './debts.js';
 import { t } from '../i18n.js';
+import { icon as svgIcon } from '../icons.js';
 
 // Les valeurs (libellés affichés) sont traduites à l'usage via t(...), jamais les clés
 // (immobilier/actions/...) : ces clés sont les valeurs stockées en base (inv.assetClass), pas du
@@ -36,9 +37,9 @@ let assetFilter = 'all'; // 'all' | 'physical' | 'financial'
 // Mêmes conventions que ASSET_CLASSES ci-dessus : les clés sont stockées en base (entry.type), les
 // valeurs (libellés) sont traduites à l'usage via t(...).
 export const ENTRY_TYPE_LABELS = { contribution: 'Apport', withdrawal: 'Retrait', dividend: 'Dividende', valuation: 'Valorisation' };
-const EDIT_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"/></svg>';
-const DELETE_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 7h12l-1 14H7L6 7Zm3-4h6l1 2h4v2H2V5h4l1-2Z"/></svg>';
-const HISTORY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M13 3a9 9 0 1 0 8.94 10H19.9A7 7 0 1 1 13 5v4l5-4-5-4v2Z"/></svg>';
+const EDIT_ICON = svgIcon('edit', 16);
+const DELETE_ICON = svgIcon('trash', 16);
+const HISTORY_ICON = svgIcon('history', 16);
 
 function walletOptionsHtml(wallets, currency) {
   const matching = wallets.filter((w) => w.currency === currency);
@@ -259,7 +260,7 @@ async function buildInvestmentProof(inv) {
   };
 }
 
-const REPAY_ICON = '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M2 6h20v12H2V6Zm2 2v8h16V8H4Zm8 1.5A2.5 2.5 0 1 1 9.5 12 2.5 2.5 0 0 1 12 9.5Z"/></svg>';
+const REPAY_ICON = svgIcon('repay', 16);
 
 /** Prêts liés à un investissement, avec leur restant dû, ou null s'il n'y en a aucun. Un investissement
     peut avoir PLUSIEURS prêts : celui de l'achat, puis d'autres contractés en cours de route
@@ -979,7 +980,7 @@ export function initInvestmentsModule() {
       // dans Dettes & créances (simplement détaché de cet investissement).
       const linkedLoans = (await dbGetAll(STORES.DEBTS)).filter((d) => d.investmentId === inv.id || d.id === inv.loanDebtId);
       const ok = await confirmDialog(linkedLoans.length
-        ? `${confirmMsg} ${t('Le(s) prêt(s) « {name} » reste(nt) enregistré(s) dans Dettes & créances.', { name: linkedLoans.map((d) => d.personName).join(', ') })}`
+        ? `${confirmMsg} ${t('Le(s) prêt(s) « {name} » reste(nt) enregistré(s) dans Dettes & créances.', { name: linkedLoans.map((d) => d.personName).join(', '), count: linkedLoans.length })}`
         : confirmMsg, { danger: true, confirmText: t('Supprimer') });
       if (ok) {
         for (const loan of linkedLoans) await dbPut(STORES.DEBTS, { ...loan, investmentId: null });

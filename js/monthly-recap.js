@@ -137,15 +137,13 @@ export function renderRecapCard(recap, { hideAmounts = false } = {}) {
   const ctx = canvas.getContext('2d');
   const money = (v) => (hideAmounts ? MASK : formatCurrency(v, recap.currency));
 
-  const bg = ctx.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, '#111226'); bg.addColorStop(1, '#1d2a5a');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#111226'; ctx.fillRect(0, 0, W, H);
 
-  const font = (size, weight = 400) => `${weight} ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
-  ctx.fillStyle = '#9aa7ff'; ctx.font = font(34, 700); ctx.fillText('DJIGNAN', 80, 110);
+  const font = (size, weight = 400) => `${weight} ${size}px "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif`;
+  ctx.fillStyle = '#c9a24a'; ctx.font = font(34, 700); ctx.fillText('DJIGNAN', 80, 110);
   ctx.fillStyle = '#ffffff'; ctx.font = font(64, 800); ctx.fillText(formatMonthLabel(recap.monthKey), 80, 200);
 
-  const kpis = [[tr('Entrées'), money(recap.income), '#4ade80'], [tr('Sorties'), money(recap.expenses), '#fb7185'], [tr('Épargne nette'), money(recap.net), recap.net >= 0 ? '#4ade80' : '#fb7185']];
+  const kpis = [[tr('Entrées'), money(recap.income), '#4cc38a'], [tr('Sorties'), money(recap.expenses), '#f08071'], [tr('Épargne nette'), money(recap.net), recap.net >= 0 ? '#4cc38a' : '#f08071']];
   kpis.forEach(([label, value, color], i) => {
     const x = 80 + i * 320;
     ctx.fillStyle = '#b7bdd9'; ctx.font = font(28); ctx.fillText(label, x, 300);
@@ -159,7 +157,7 @@ export function renderRecapCard(recap, { hideAmounts = false } = {}) {
     ctx.fillStyle = '#dfe3f5'; ctx.font = font(30); ctx.fillText(row.name, 80, y, 560);
     ctx.fillStyle = '#b7bdd9'; ctx.textAlign = 'right'; ctx.fillText(`${Math.round(row.share)} %`, W - 80, y); ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(80, y + 14, W - 160, 14);
-    ctx.fillStyle = '#7c8cff'; ctx.fillRect(80, y + 14, Math.max(8, (W - 160) * Math.min(1, row.share / 100)), 14);
+    ctx.fillStyle = '#7fb0ea'; ctx.fillRect(80, y + 14, Math.max(8, (W - 160) * Math.min(1, row.share / 100)), 14);
     y += 40;
   }
 
