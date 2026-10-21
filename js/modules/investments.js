@@ -799,7 +799,7 @@ async function openHistoryModal(inv) {
       reinvested.length
         ? t("Supprimer cette entrée d'historique et les {count} réinvestissement(s) qui en découlent ?", { count: reinvested.length })
         : t("Supprimer cette entrée d'historique ?"),
-      { danger: true, confirmText: t('Supprimer') },
+      { danger: true, requirePin: true, confirmText: t('Supprimer') },
     );
     if (ok) {
       const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((tx) => tx.investmentEntryId === entryId);
@@ -981,7 +981,7 @@ export function initInvestmentsModule() {
       const linkedLoans = (await dbGetAll(STORES.DEBTS)).filter((d) => d.investmentId === inv.id || d.id === inv.loanDebtId);
       const ok = await confirmDialog(linkedLoans.length
         ? `${confirmMsg} ${t('Le(s) prêt(s) « {name} » reste(nt) enregistré(s) dans Dettes & créances.', { name: linkedLoans.map((d) => d.personName).join(', '), count: linkedLoans.length })}`
-        : confirmMsg, { danger: true, confirmText: t('Supprimer') });
+        : confirmMsg, { danger: true, requirePin: true, confirmText: t('Supprimer') });
       if (ok) {
         for (const loan of linkedLoans) await dbPut(STORES.DEBTS, { ...loan, investmentId: null });
         const entries = (await dbGetAll(STORES.INVESTMENT_ENTRIES)).filter((en) => en.investmentId === inv.id);

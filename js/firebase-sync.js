@@ -22,7 +22,7 @@
 import { firebaseConfig, isFirebaseConfigured, googleClientId, googleDesktopClientId, googleAndroidClientId } from './firebase-config.js';
 import { buildEncryptedPayload, decryptPayload, deserializeReceiptsForImport, markBackupDone, estimateBackupSize, formatBytes } from './backup.js';
 import { importAllData, getSetting, setSetting } from './db.js';
-import { openModal, showToast, confirmDialog, formatDate, escapeHtml } from './utils.js';
+import { openModal, showToast, confirmDialog, confirmReplaceAllData, formatDate, escapeHtml } from './utils.js';
 import { notifyDataChanged, bus, EVENTS } from './state.js';
 import { t } from './i18n.js';
 
@@ -720,6 +720,7 @@ function showCloudStalenessModal(cloudUpdatedAt) {
     const p = await promptPassphrase(t('Mot de passe de la sauvegarde cloud'));
     if (!p) return;
     const merge = await confirmDialog(t('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.'), { confirmText: t('Fusionner'), cancelText: t('Remplacer tout') });
+    if (!merge && !(await confirmReplaceAllData())) return;
     try {
       await pullBackupFromCloud(p, { merge });
       showToast(t('Données restaurées depuis le cloud.'));
@@ -1091,6 +1092,7 @@ export async function renderCloudBackupSection(container) {
     const p = await promptPassphrase(t('Mot de passe de la sauvegarde cloud'));
     if (!p) return;
     const merge = await confirmDialog(t('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.'), { confirmText: t('Fusionner'), cancelText: t('Remplacer tout') });
+    if (!merge && !(await confirmReplaceAllData())) return;
     try {
       await pullBackupFromCloud(p, { merge });
       showToast(t('Données restaurées depuis le cloud.'));

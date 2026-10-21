@@ -373,7 +373,7 @@ export function initTontinesModule() {
         linked.length
           ? tr('Supprimer « {name} » et les {count} opération(s) enregistrées dans vos portefeuilles ?', { name: tontine.name, count: linked.length })
           : tr('Supprimer « {name} » ?', { name: tontine.name }),
-        { danger: true, confirmText: tr('Supprimer') },
+        { danger: true, requirePin: true, confirmText: tr('Supprimer') },
       );
       if (!ok) return;
       await dbWriteBatch([

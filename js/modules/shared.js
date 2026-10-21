@@ -69,7 +69,7 @@ async function renderParticipantsPanel(container) {
   container.querySelectorAll('[data-action="delete-participant"]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const id = btn.closest('[data-participant-id]').dataset.participantId;
-      const ok = await confirmDialog(t('Supprimer ce participant ? Les dépenses partagées existantes le mentionnant resteront mais afficheront un nom inconnu.'), { danger: true, confirmText: t('Supprimer') });
+      const ok = await confirmDialog(t('Supprimer ce participant ? Les dépenses partagées existantes le mentionnant resteront mais afficheront un nom inconnu.'), { danger: true, requirePin: true, confirmText: t('Supprimer') });
       if (!ok) return;
       await dbDelete(STORES.PARTICIPANTS, id);
       showToast(t('Participant supprimé.'));
@@ -369,7 +369,7 @@ export async function renderShared() {
       const message = exp?.myTransactionId || linkedDebts.length
         ? t('Supprimer la dépense "{description}" ? Votre part personnelle liée, ainsi que les dettes/créances (et leurs remboursements déjà enregistrés) issues de cette dépense, seront aussi retirées.', { description: exp?.description })
         : t('Supprimer la dépense "{description}" ?', { description: exp?.description });
-      const ok = await confirmDialog(message, { danger: true, confirmText: t('Supprimer') });
+      const ok = await confirmDialog(message, { danger: true, requirePin: true, confirmText: t('Supprimer') });
       if (!ok) return;
       const myTx = exp?.myTransactionId ? (await dbGetAll(STORES.TRANSACTIONS)).find((t2) => t2.id === exp.myTransactionId) : null;
       await dbDelete(STORES.SHARED_EXPENSES, id);
