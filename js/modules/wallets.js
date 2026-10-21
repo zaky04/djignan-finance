@@ -60,7 +60,7 @@ async function renderWealthHero() {
   if (safeTrendEl) {
     safeTrendEl.textContent = safeToSpend >= 0
       ? t('Après budgets réservés et échéances à venir')
-      : t('⚠ Dépenses prévues supérieures aux liquidités disponibles');
+      : t('Dépenses prévues supérieures aux liquidités disponibles');
   }
 }
 
@@ -68,11 +68,11 @@ async function renderWealthHero() {
 // jamais ici — mêmes conventions que ASSET_CLASSES (investments.js) : les clés sont les valeurs
 // stockées en base (wallet.type), jamais traduites.
 const WALLET_TYPES = {
-  bank: { label: 'Compte bancaire', icon: svgIcon('bank', 20) },
-  mobile_money: { label: 'Mobile Money', icon: svgIcon('phone', 20) },
-  cash: { label: 'Espèces', icon: svgIcon('banknote', 20) },
-  investment: { label: "Portefeuille d'investissement", icon: svgIcon('chart', 20) },
-  savings: { label: 'Épargne spécifique', icon: svgIcon('jar', 20) },
+  bank: { label: 'Compte bancaire', icon: svgIcon('bank', 20), color: '#1f5fa6' },
+  mobile_money: { label: 'Mobile Money', icon: svgIcon('phone', 20), color: '#b9663a' },
+  cash: { label: 'Espèces', icon: svgIcon('banknote', 20), color: '#4f8a3c' },
+  investment: { label: "Portefeuille d'investissement", icon: svgIcon('chart', 20), color: '#6a5f9e' },
+  savings: { label: 'Épargne spécifique', icon: svgIcon('jar', 20), color: '#2d8a7a' },
 };
 
 // Rôle d'un portefeuille (voir walletUsage, ledger.js) — les clés sont stockées en base
@@ -99,12 +99,12 @@ function walletFormHtml(wallet, defaultCurrency, presetUsage = null) {
         <select name="usage">
           ${Object.entries(WALLET_USAGES).map(([key, label]) => `<option value="${key}" ${usage === key ? 'selected' : ''}>${t(label)}</option>`).join('')}
         </select>
-        <p style="font-size:12px;color:var(--text-muted);margin:4px 0 0;">${t("Courant : utilisable au quotidien. Épargne ou Bloqué : absent de tous les écrans du quotidien — on y verse et on en retire uniquement depuis la fiche du portefeuille.")}</p>
+        <p style="margin:4px 0 0;" class="fs-12 c-muted">${t("Courant : utilisable au quotidien. Épargne ou Bloqué : absent de tous les écrans du quotidien — on y verse et on en retire uniquement depuis la fiche du portefeuille.")}</p>
       </div>
       <div class="form-row" data-field="unlockRow" ${usage === 'blocked' ? '' : 'hidden'}>
         <label>${t('Date de déblocage')}</label>
         <input type="date" name="unlockDate" value="${escapeHtml(wallet?.unlockDate || '')}">
-        <p style="font-size:12px;color:var(--text-muted);margin:4px 0 0;">${t("Aucun retrait n'est possible avant cette date.")}</p>
+        <p style="margin:4px 0 0;" class="fs-12 c-muted">${t("Aucun retrait n'est possible avant cette date.")}</p>
       </div>
       <div class="form-row">
         <label>${t('Devise')}</label>
@@ -206,15 +206,15 @@ function walletCardHtml(w) {
   const meta = WALLET_TYPES[w.type] || WALLET_TYPES.bank;
   const usage = walletUsage(w);
   const lockedUntil = withdrawalLockedUntil(w);
-  const usageBadge = usage === 'current' ? '' : `<span class="badge badge-accent" style="margin-left:6px;">${usage === 'blocked' ? LOCK_ICON + ' ' : ''}${escapeHtml(t(WALLET_USAGES[usage]))}</span>`;
+  const usageBadge = usage === 'current' ? '' : `<span class="badge badge-accent ml-6">${usage === 'blocked' ? LOCK_ICON + ' ' : ''}${escapeHtml(t(WALLET_USAGES[usage]))}</span>`;
   return `
     <div class="summary-card" data-wallet-id="${w.id}">
       <div class="card-title-row">
         <div style="display:flex;align-items:center;gap:10px;">
-          <div class="tx-icon">${meta.icon}</div>
+          <div class="tx-icon" style="color:${meta.color};background:${meta.color}22;">${meta.icon}</div>
           <div>
             <div class="summary-card-label">${escapeHtml(t(meta.label))} · ${escapeHtml(w.currency)}${usageBadge}</div>
-            <div style="font-weight:700;font-size:14.5px;">${escapeHtml(w.name)}</div>
+            <div class="fw-700 fs-15">${escapeHtml(w.name)}</div>
           </div>
         </div>
         <div class="card-actions">
@@ -227,8 +227,8 @@ function walletCardHtml(w) {
         </div>
       </div>
       <div class="summary-card-value amount" data-value="${w.balance}">${formatCurrency(w.balance, w.currency)}</div>
-      ${usage === 'blocked' ? `<div class="tx-sub" style="margin-top:4px;">${lockedUntil ? t('Bloqué jusqu\'au {date}', { date: formatDate(lockedUntil) }) : t('Déblocage atteint — retraits possibles')}</div>` : ''}
-      ${usage !== 'current' ? `<button type="button" class="btn btn-ghost btn-block" data-action="open" style="margin-top:10px;">${t('Ouvrir le portefeuille')}</button>` : ''}
+      ${usage === 'blocked' ? `<div class="tx-sub mt-4">${lockedUntil ? t('Bloqué jusqu\'au {date}', { date: formatDate(lockedUntil) }) : t('Déblocage atteint — retraits possibles')}</div>` : ''}
+      ${usage !== 'current' ? `<button type="button" class="btn btn-ghost btn-block mt-10" data-action="open">${t('Ouvrir le portefeuille')}</button>` : ''}
     </div>`;
 }
 
@@ -270,7 +270,7 @@ export async function openWalletMoveModal(wallet, mode = 'deposit', { onDone = n
       </div>
       <div class="form-row"><label>${t('Date')}</label><input type="date" name="date" value="${todayISO()}" required></div>
       <div class="form-row"><label>${t('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
-      <p id="wallet-move-hint" style="font-size:12.5px;color:var(--text-muted);margin:0 0 12px;"></p>
+      <p id="wallet-move-hint" style="margin:0 0 12px;" class="fs-13 c-muted"></p>
       <button type="submit" class="btn btn-primary btn-block">${t('Enregistrer')}</button>
     </form>`, { title: goal ? t('{wallet} — objectif « {goal} »', { wallet: wallet.name, goal: goal.name }) : t('Portefeuille — {name}', { name: wallet.name }), onClose: onDone });
 
@@ -370,7 +370,7 @@ export async function openWalletDetailModal(wallet) {
   const modal = openModal(`
     <div class="stat-row"><span class="stat-row-label">${t('Solde actuel')}</span><strong class="amount">${formatCurrency(balance, wallet.currency)}</strong></div>
     <div class="stat-row"><span class="stat-row-label">${t('Usage du portefeuille')}</span><span>${escapeHtml(t(WALLET_USAGES[usage]))}</span></div>
-    ${usage === 'blocked' ? `<div class="stat-row"><span class="stat-row-label">${t('Date de déblocage')}</span><span>${wallet.unlockDate ? formatDate(wallet.unlockDate) : '—'}${lockedUntil ? '' : ' ✓'}</span></div>` : ''}
+    ${usage === 'blocked' ? `<div class="stat-row"><span class="stat-row-label">${t('Date de déblocage')}</span><span>${wallet.unlockDate ? formatDate(wallet.unlockDate) : '—'}${lockedUntil ? '' : ' ' + svgIcon('check', 14)}</span></div>` : ''}
     ${walletAlloc.goals.map((g) => `<div class="stat-row"><span class="stat-row-label">${t('Objectif « {name} »', { name: escapeHtml(g.name) })}</span><span>${formatCurrency(g.amount, wallet.currency)}</span></div>`).join('')}
     ${walletAlloc.goals.length ? `<div class="stat-row"><span class="stat-row-label">${t('Libre (non affecté)')}</span><span>${formatCurrency(Math.max(0, walletAlloc.free), wallet.currency)}</span></div>` : ''}
     <div class="proof-actions" style="margin:14px 0;">
@@ -378,7 +378,7 @@ export async function openWalletDetailModal(wallet) {
       <button type="button" class="btn btn-ghost" data-move="withdraw" ${lockedUntil ? 'disabled' : ''}>${t('Retirer des fonds')}</button>
       <button type="button" class="btn btn-ghost" data-move="interest">${t('Intérêts / gain')}</button>
     </div>
-    ${lockedUntil ? `<p style="font-size:12.5px;color:var(--text-muted);margin:-6px 0 12px;">${t('Portefeuille bloqué jusqu\'au {date} : retrait impossible.', { date: formatDate(lockedUntil) })}</p>` : ''}
+    ${lockedUntil ? `<p style="margin:-6px 0 12px;" class="fs-13 c-muted">${t('Portefeuille bloqué jusqu\'au {date} : retrait impossible.', { date: formatDate(lockedUntil) })}</p>` : ''}
     <div>${rows.length ? rows.map(rowHtml).join('') : `<div class="empty-state">${t('Aucun mouvement pour le moment.')}</div>`}</div>`, { title: wallet.name });
 
   modal.el.querySelectorAll('[data-move]').forEach((btn) => {
@@ -405,7 +405,7 @@ async function renderRatesPanel() {
   const base = await getSetting('baseCurrency', 'EUR');
   const rates = await dbGetAll(STORES.EXCHANGE_RATES);
   if (!rates.length) {
-    panel.innerHTML = `<div class="panel"><h3 style="margin-bottom:6px;">${t('Taux de change')}</h3><p class="empty-state" style="padding:12px 0;">${t('Aucune devise étrangère utilisée. Devise de base : <strong>{base}</strong>.', { base: escapeHtml(base) })}</p></div>`;
+    panel.innerHTML = `<div class="panel"><h3 class="mb-6">${t('Taux de change')}</h3><p class="empty-state" style="padding:12px 0;">${t('Aucune devise étrangère utilisée. Devise de base : <strong>{base}</strong>.', { base: escapeHtml(base) })}</p></div>`;
     return;
   }
   const unconfirmedCount = rates.filter((r) => r.confirmed === false).length;
@@ -415,15 +415,15 @@ async function renderRatesPanel() {
         <h3>${t('Taux de change (devise de base : {base})', { base: escapeHtml(base) })}</h3>
         <button type="button" class="btn btn-ghost" id="rates-fetch-live-btn">${t('Actualiser via internet')}</button>
       </div>
-      ${unconfirmedCount ? `<p class="alert alert-warn" style="margin-bottom:10px;">⚠ ${unconfirmedCount > 1 ? t('{count} taux ne sont pas encore confirmés (valeur 1:1 par défaut, presque certainement fausse). Corrigez-les ci-dessous pour un patrimoine net exact.', { count: unconfirmedCount }) : t("Un taux n'est pas encore confirmé (valeur 1:1 par défaut, presque certainement fausse). Corrigez-le ci-dessous pour un patrimoine net exact.")}</p>` : ''}
+      ${unconfirmedCount ? `<p class="alert alert-warn mb-10">${unconfirmedCount > 1 ? t('{count} taux ne sont pas encore confirmés (valeur 1:1 par défaut, presque certainement fausse). Corrigez-les ci-dessous pour un patrimoine net exact.', { count: unconfirmedCount }) : t("Un taux n'est pas encore confirmé (valeur 1:1 par défaut, presque certainement fausse). Corrigez-le ci-dessous pour un patrimoine net exact.")}</p>` : ''}
       <div class="filters-bar" style="flex-direction:column;align-items:stretch;gap:10px;">
         ${rates.map((r) => `
           <div style="display:flex;align-items:center;gap:10px;">
             <span class="badge ${r.confirmed === false ? 'badge-neg' : 'badge-accent'}" style="min-width:56px;justify-content:center;">${escapeHtml(r.code)}</span>
-            <span style="font-size:13px;color:var(--text-muted);">1 ${escapeHtml(r.code)} =</span>
+            <span class="fs-13 c-muted">1 ${escapeHtml(r.code)} =</span>
             <input type="number" step="0.0001" min="0" data-rate-code="${escapeHtml(r.code)}" value="${r.rateToBase}" style="width:110px;padding:7px 9px;border-radius:8px;border:1px solid ${r.confirmed === false ? 'var(--neg)' : 'var(--border)'};background:var(--surface);">
-            <span style="font-size:13px;color:var(--text-muted);">${escapeHtml(base)}</span>
-            ${r.confirmed === false ? `<span style="font-size:12px;color:var(--neg);">${t('non confirmé')}</span>` : ''}
+            <span class="fs-13 c-muted">${escapeHtml(base)}</span>
+            ${r.confirmed === false ? `<span class="fs-12 c-neg">${t('non confirmé')}</span>` : ''}
           </div>`).join('')}
       </div>
     </div>`;
@@ -486,7 +486,7 @@ export async function renderWallets() {
     grid.innerHTML = `<div class="empty-state">${t('Aucun portefeuille pour le moment. Créez votre premier compte bancaire, mobile money ou espèces.')}</div>`;
   } else {
     grid.innerHTML = active.map(walletCardHtml).join('') +
-      (archived.length ? `<div style="grid-column:1/-1;font-size:12.5px;color:var(--text-faint);font-weight:700;margin-top:8px;">${t('ARCHIVÉS')}</div>${archived.map(walletCardHtml).join('')}` : '');
+      (archived.length ? `<div style="grid-column:1/-1;" class="fs-13 c-faint fw-700 mt-8">${t('ARCHIVÉS')}</div>${archived.map(walletCardHtml).join('')}` : '');
   }
 
   if (!document.getElementById('wallets-rates-panel')) {

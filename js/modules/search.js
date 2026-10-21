@@ -177,7 +177,7 @@ const EXAMPLE_QUESTIONS = ['Combien ai-je dépensé ce mois ?', 'Qui me doit de 
 function searchHelpHtml() {
   return `<div class="empty-state">
     <p style="margin:0 0 10px;">${tr("Tapez pour rechercher parmi vos transactions, portefeuilles, dettes, objectifs d'épargne, investissements, comptes gardés et dépenses partagées.")}</p>
-    <p style="margin:0 0 8px;font-weight:600;">${tr('Ou posez une question :')}</p>
+    <p style="margin:0 0 8px;" class="fw-600">${tr('Ou posez une question :')}</p>
     <div class="qa-chips" style="justify-content:center;">${EXAMPLE_QUESTIONS.map((q) => `<button type="button" class="qa-chip search-example">${escapeHtml(tr(q))}</button>`).join('')}</div>
   </div>`;
 }
@@ -214,7 +214,7 @@ export function openGlobalSearch() {
         <input type="number" step="0.01" id="search-amount-max" placeholder="${tr('Montant max')}">
         <input type="date" id="search-date-from" title="${tr('Du')}">
         <input type="date" id="search-date-to" title="${tr('Au')}">
-        <span style="font-size:11.5px;color:var(--text-faint);">${tr("S'applique aux transactions uniquement")}</span>
+        <span class="fs-12 c-faint">${tr("S'applique aux transactions uniquement")}</span>
       </div>
       <div id="search-answer" class="search-answer" aria-live="polite" hidden></div>
       <div id="search-results" class="search-results">${searchHelpHtml()}</div>

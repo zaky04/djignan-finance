@@ -131,7 +131,7 @@ async function maybeShowBudgetSuggestionReminder(monthKey) {
   const dismiss = document.createElement('button');
   dismiss.type = 'button';
   dismiss.className = 'icon-btn';
-  dismiss.textContent = '✕';
+  dismiss.innerHTML = svgIcon('close', 16);
   dismiss.setAttribute('aria-label', tr('Ignorer pour ce mois'));
   dismiss.addEventListener('click', async () => {
     await setSetting('budgetSuggestionDismissedMonth', monthKey);
@@ -187,7 +187,7 @@ function watchCategoryRowHtml(r) {
   const cls = budgetProgressClass(pct);
   return `
     <div style="padding:10px 0;border-bottom:1px solid var(--border);">
-      <div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:600;margin-bottom:6px;">
+      <div style="display:flex;justify-content:space-between;" class="fs-14 fw-600 mb-6">
         <span>${escapeHtml(r.label)}</span>
         <span>${formatPercent(pct, 0)}</span>
       </div>
@@ -264,7 +264,7 @@ async function renderForecast(panelEl) {
   }
   if (forecast.firstNegativeDate) {
     headline.className = 'neg';
-    headline.textContent = tr('⚠ Solde négatif prévu le {date} (plus bas : {amount}).', { date: formatDate(forecast.firstNegativeDate), amount: formatCurrency(forecast.minBalance, cur) });
+    headline.textContent = tr('Solde négatif prévu le {date} (plus bas : {amount}).', { date: formatDate(forecast.firstNegativeDate), amount: formatCurrency(forecast.minBalance, cur) });
   } else {
     headline.className = '';
     headline.textContent = tr('Dans {days} jours : {end} (au plus bas {min} le {date}).', { days: forecastDays, end: formatCurrency(forecast.endBalance, cur), min: formatCurrency(forecast.minBalance, cur), date: formatDate(forecast.minDate) });
@@ -314,7 +314,7 @@ async function renderFavorites(panelEl) {
   const container = document.getElementById('dashboard-favorites');
   if (!container) return;
   if (!templates.length) {
-    container.innerHTML = `<p class="tx-sub" style="margin:0;">${tr("Aucun favori pour l'instant. Dans « Saisie express », remplissez une opération que vous refaites souvent (ex : « Taxi », 1 500) puis touchez « Garder comme favori ».")}</p>`;
+    container.innerHTML = `<p class="tx-sub m-0">${tr("Aucun favori pour l'instant. Dans « Saisie express », remplissez une opération que vous refaites souvent (ex : « Taxi », 1 500) puis touchez « Garder comme favori ».")}</p>`;
     return;
   }
   container.innerHTML = templates.map((x) => {
@@ -429,7 +429,7 @@ export async function renderDashboard() {
     if (safeTrendEl) {
       safeTrendEl.textContent = safeToSpend >= 0
         ? tr('Après budgets réservés et échéances à venir')
-        : tr('⚠ Dépenses prévues supérieures aux liquidités disponibles');
+        : tr('Dépenses prévues supérieures aux liquidités disponibles');
     }
   }
 

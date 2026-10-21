@@ -55,17 +55,17 @@ function goalCardHtml(g, progress) {
       <div style="display:flex;gap:14px;align-items:center;">
         <div style="position:relative;width:72px;height:72px;flex-shrink:0;">
           ${gaugeSvg(pct, color)}
-          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;">${pct.toFixed(0)}%</div>
+          <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:800;" class="fs-13">${pct.toFixed(0)}%</div>
         </div>
         <div style="flex:1;min-width:0;">
-          <div style="font-weight:700;font-size:14.5px;">${escapeHtml(g.name)}${info.linked ? '' : ` <span class="badge badge-neg">${t('Non lié')}</span>`}</div>
+          <div class="fw-700 fs-15">${escapeHtml(g.name)}${info.linked ? '' : ` <span class="badge badge-neg">${t('Non lié')}</span>`}</div>
           <div class="tx-sub amount" data-value="${info.saved}">${formatCurrency(info.saved, g.currency)} / ${formatCurrency(g.targetAmount, g.currency)}</div>
           ${g.targetDate ? `<div class="tx-sub">${t('Échéance : {date}', { date: formatDate(g.targetDate) })}</div>` : ''}
         </div>
       </div>
-      ${walletLines ? `<div style="margin-top:10px;">${walletLines}</div>` : ''}
-      ${info.linked ? '' : `<p style="font-size:12.5px;color:var(--text-muted);margin:10px 0 0;">${t("Cet objectif est encore suivi à la main : liez-le à un portefeuille d'épargne pour qu'il reflète l'argent réel.")}</p>`}
-      <div class="card-actions" style="justify-content:flex-end;margin-top:10px;flex-wrap:wrap;">
+      ${walletLines ? `<div class="mt-10">${walletLines}</div>` : ''}
+      ${info.linked ? '' : `<p style="margin:10px 0 0;" class="fs-13 c-muted">${t("Cet objectif est encore suivi à la main : liez-le à un portefeuille d'épargne pour qu'il reflète l'argent réel.")}</p>`}
+      <div class="card-actions mt-10" style="justify-content:flex-end;flex-wrap:wrap;">
         ${info.linked
           ? `<button type="button" class="btn btn-ghost" data-action="deposit">${t('Épargner')}</button>
              <button type="button" class="btn btn-ghost" data-action="withdraw">${t('Récupérer')}</button>`
@@ -87,10 +87,10 @@ function goalFormHtml(g, defaultCurrency) {
       <div class="form-row">
         <label>${t("Portefeuilles d'épargne liés")}</label>
         <div id="goal-wallet-choices"></div>
-        <button type="button" class="btn btn-ghost" id="goal-create-wallet" style="margin-top:6px;">${t("+ Créer un portefeuille d'épargne")}</button>
-        <p style="font-size:12px;color:var(--text-muted);margin:6px 0 0;">${t("L'argent épargné vit dans ces portefeuilles (usage Épargne ou Bloqué, même devise) et compte dans votre patrimoine. Un même portefeuille peut servir plusieurs objectifs : indiquez la part qui revient à celui-ci.")}</p>
+        <button type="button" class="btn btn-ghost mt-6" id="goal-create-wallet">${t("+ Créer un portefeuille d'épargne")}</button>
+        <p style="margin:6px 0 0;" class="fs-12 c-muted">${t("L'argent épargné vit dans ces portefeuilles (usage Épargne ou Bloqué, même devise) et compte dans votre patrimoine. Un même portefeuille peut servir plusieurs objectifs : indiquez la part qui revient à celui-ci.")}</p>
       </div>
-      ${g && !(g.walletIds || []).length && g.currentAmount ? `<p class="alert alert-warn" style="margin-bottom:12px;">${t("L'ancien montant saisi à la main ({amount}) sera remplacé par le solde réel des portefeuilles liés.", { amount: formatCurrency(g.currentAmount, g.currency) })}</p>` : ''}
+      ${g && !(g.walletIds || []).length && g.currentAmount ? `<p class="alert alert-warn mb-12">${t("L'ancien montant saisi à la main ({amount}) sera remplacé par le solde réel des portefeuilles liés.", { amount: formatCurrency(g.currentAmount, g.currency) })}</p>` : ''}
       <button type="submit" class="btn btn-primary btn-block">${g ? t('Enregistrer') : t("Créer l'objectif")}</button>
     </form>`;
 }
@@ -126,17 +126,17 @@ export async function openGoalModal(g = null) {
           const isChecked = checked.has(w.id);
           const value = typedShares.has(w.id) ? typedShares.get(w.id) : String(currentShare.get(w.id) || 0);
           return `<div style="padding:6px 0;">
-            <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;">
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;" class="fs-14">
               <input type="checkbox" name="walletIds" value="${w.id}" ${isChecked ? 'checked' : ''}>
               ${escapeHtml(w.name)} <span class="badge">${escapeHtml(t(walletUsage(w) === 'blocked' ? 'Bloqué' : 'Épargne'))}</span>
             </label>
-            <div style="display:flex;align-items:center;gap:8px;margin:4px 0 0 28px;font-size:12.5px;color:var(--text-muted);" ${isChecked ? '' : 'hidden'} data-share-row="${w.id}">
+            <div style="display:flex;align-items:center;gap:8px;margin:4px 0 0 28px;font-size:13px;color:var(--text-muted);" ${isChecked ? '' : 'hidden'} data-share-row="${w.id}">
               ${t('Part de cet objectif')} <input type="number" step="0.01" min="0" data-share-input="${w.id}" value="${escapeHtml(value)}" style="width:120px;padding:6px 8px;">
               <span>${t('Libre : {amount}', { amount: formatCurrency(free, currency) })}</span>
             </div>
           </div>`;
         }).join('')
-      : `<p style="font-size:13px;color:var(--text-muted);margin:0;">${t("Aucun portefeuille d'épargne ou bloqué dans cette devise. Créez-en un ci-dessous.")}</p>`;
+      : `<p class="fs-13 c-muted m-0">${t("Aucun portefeuille d'épargne ou bloqué dans cette devise. Créez-en un ci-dessous.")}</p>`;
     choicesEl.querySelectorAll('[name="walletIds"]').forEach((cb) => cb.addEventListener('change', () => {
       choicesEl.querySelector(`[data-share-row="${cb.value}"]`).hidden = !cb.checked;
     }));
@@ -208,7 +208,7 @@ async function pickLinkedWallet(g, mode) {
   return new Promise((resolve) => {
     let done = false;
     const modal = openModal(`
-      <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px;">${mode === 'deposit' ? t('Dans quel portefeuille épargner ?') : t('Depuis quel portefeuille récupérer ?')}</p>
+      <p style="margin:0 0 12px;" class="fs-13 c-muted">${mode === 'deposit' ? t('Dans quel portefeuille épargner ?') : t('Depuis quel portefeuille récupérer ?')}</p>
       <div class="proof-actions" style="flex-direction:column;">${wallets.map((w) => `<button type="button" class="btn btn-ghost" data-pick="${w.id}">${escapeHtml(w.name)}</button>`).join('')}</div>`,
     { title: g.name, onClose: () => { if (!done) resolve(null); } });
     modal.el.querySelectorAll('[data-pick]').forEach((btn) => btn.addEventListener('click', () => {
@@ -229,7 +229,7 @@ export async function renderSavings() {
   const card = (g) => goalCardHtml(g, progress);
 
   container.innerHTML = active.length || archived.length
-    ? active.map(card).join('') + (archived.length ? `<div style="grid-column:1/-1;font-size:12.5px;color:var(--text-faint);font-weight:700;margin-top:8px;">${t('ARCHIVÉS')}</div>${archived.map(card).join('')}` : '')
+    ? active.map(card).join('') + (archived.length ? `<div style="grid-column:1/-1;" class="fs-13 c-faint fw-700 mt-8">${t('ARCHIVÉS')}</div>${archived.map(card).join('')}` : '')
     : `<div class="empty-state">${t("Aucun objectif d'épargne. Créez-en un pour visualiser votre progression.")}</div>`;
 }
 

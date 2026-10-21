@@ -173,7 +173,7 @@ const EN = {
   'Dépenses et revenus': 'Spending and income',
   'Budget et patrimoine': 'Budget and net worth',
   'Santé et calendrier': 'Health and calendar',
-  'Voir le détail des budgets →': 'See budget details →',
+  'Voir le détail des budgets': 'See budget details',
   'Composition du patrimoine': 'Net worth composition',
   'Solde net :': 'Net balance:',
   'Aucune échéance à venir ce mois-ci.': 'No upcoming bills this month.',
@@ -206,7 +206,7 @@ const EN = {
   'Dépenses en baisse': 'Spending going down',
   'Total des budgets cochés : {amount}': 'Total of selected budgets: {amount}',
   'Revenu mensuel moyen : {amount}': 'Average monthly income: {amount}',
-  '⚠ Le total dépasse votre revenu mensuel moyen.': '⚠ The total exceeds your average monthly income.',
+  'Le total dépasse votre revenu mensuel moyen.': 'The total exceeds your average monthly income.',
   'Taux de change non confirmé pour {codes} : les montants convertis de ces suggestions peuvent être faux.':
     'Unconfirmed exchange rate for {codes}: converted amounts in these suggestions may be wrong.',
   'Remplir les budgets vides': 'Fill empty budgets',
@@ -277,7 +277,7 @@ const EN = {
   'Total des entrées': 'Total in',
   'Total des sorties': 'Total out',
   'Solde après': 'Balance after',
-  '⚠ Dépenses prévues supérieures aux liquidités disponibles': '⚠ Planned expenses exceed available cash',
+  'Dépenses prévues supérieures aux liquidités disponibles': 'Planned expenses exceed available cash',
   "Pas encore assez d'historique": 'Not enough history yet',
   'Reste {amount} ce mois-ci': '{amount} left this month',
   'Dépassé de {amount}': 'Over by {amount}',
@@ -1214,7 +1214,6 @@ const EN = {
     'Set the auto-lock after inactivity and enable biometric unlock.',
   'Réglez le verrouillage automatique après inactivité.': 'Set the auto-lock after inactivity.',
   'Activer le déverrouillage biométrique': 'Enable biometric unlock',
-  'Biométrie activée ✓': 'Biometrics enabled ✓',
   'Rappels locaux pour vos budgets qui approchent leur limite, vos échéances proches et vos soldes bas.':
     'Local reminders for your budgets approaching their limit, your upcoming bills, and your low balances.',
   'Activer les notifications': 'Enable notifications',
@@ -1316,7 +1315,7 @@ const EN = {
   'Portefeuille introuvable.': 'Wallet not found.',
   'Votre navigateur ne permet pas cette fonctionnalité (Chrome/Edge sur ordinateur uniquement).': 'Your browser does not support this feature (Chrome/Edge on desktop only).',
   'Sauvegarde automatique effectuée.': 'Automatic backup completed.',
-  'Sauvegarde en retard ⚠': 'Backup overdue ⚠',
+  'Sauvegarde en retard': 'Backup overdue',
   "Vous avez repoussé ce rappel plusieurs fois. Vos données ne vivent que sur cet appareil : sans export, un changement de téléphone, une réinstallation ou un nettoyage du cache les effacerait définitivement. Exportez-les maintenant.":
     "You have postponed this reminder several times. Your data only lives on this device: without an export, a phone change, a reinstall, or a cache cleanup would permanently erase it. Export it now.",
   "Choisissez un mot de passe pour chiffrer votre sauvegarde avant de l'envoyer vers votre stockage distant (Drive, etc.). Conservez-le précieusement : sans lui, la sauvegarde ne pourra pas être restaurée.":
@@ -1584,7 +1583,7 @@ const EN = {
 
   // ---------- Prévision de trésorerie, bilan du mois, questions en langage naturel ----------
   'Prévision de trésorerie': 'Cash-flow forecast',
-  '⚠ Solde négatif prévu le {date} (plus bas : {amount}).': '⚠ Negative balance expected on {date} (lowest: {amount}).',
+  'Solde négatif prévu le {date} (plus bas : {amount}).': 'Negative balance expected on {date} (lowest: {amount}).',
   'Dans {days} jours : {end} (au plus bas {min} le {date}).': 'In {days} days: {end} (lowest {min} on {date}).',
   "Calculé d'après vos récurrences, échéances de dettes et tontines — pas vos dépenses courantes (courses, transport…).": 'Based on your recurring items, debt due dates and tontines — not your everyday spending (groceries, transport…).',
   'Solde prévu': 'Expected balance',
@@ -1641,7 +1640,7 @@ const EN = {
   // ---------- Fonctions rendues visibles par défaut (retour de l'auteur : « je ne les vois pas ») ----------
   'Rien de prévu pour les {days} prochains jours.': 'Nothing planned for the next {days} days.',
   'La prévision se remplit avec vos récurrences (loyer, abonnements), les échéances de vos dettes et créances, et vos tontines — elle ne prévoit pas les dépenses courantes.': 'The forecast fills up with your recurring items (rent, subscriptions), the due dates of your debts and receivables, and your tontines — it does not predict everyday spending.',
-  'Ajouter une récurrence (loyer, abonnement…) →': 'Add a recurring item (rent, subscription…) →',
+  'Ajouter une récurrence (loyer, abonnement…)': 'Add a recurring item (rent, subscription…)',
   'Bilan du mois': 'Monthly recap',
   'Bilan — {month}': 'Recap — {month}',
   'Voir le détail': 'See details',

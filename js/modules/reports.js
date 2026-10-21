@@ -13,7 +13,7 @@ import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, loca
 import { exportTransactionsCsv, exportInvestmentEntriesCsv } from '../backup.js';
 import { STORES, dbGetAll, getSetting } from '../db.js';
 import { healthScorePanelHtml, calendarPanelHtml, wireCalendarPanel } from './reports-extras.js';
-import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderMultiTrendChart, renderNetSavingsBarChart } from '../charts.js';
+import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderMultiTrendChart, renderNetSavingsBarChart, trimLeadingZeros } from '../charts.js';
 import { loadMonthlyRecap, recapHighlights, recapAsText, shareRecapImage } from '../monthly-recap.js';
 import { t } from '../i18n.js';
 
@@ -176,7 +176,7 @@ async function renderBudgetCharts(container) {
     computeNetWorth(), computeBudgetVsActual(reportMonthKey), computeNetWorthHistoryForYear(reportYear),
   ]);
   renderBudgetVsActualChart('rep-chart-budget-vs-actual', budgetVsActual, currency);
-  renderNetWorthTrendChart('rep-chart-net-worth', netWorthHistory, currency, t('Valeur nette'));
+  renderNetWorthTrendChart('rep-chart-net-worth', trimLeadingZeros(netWorthHistory), currency, t('Valeur nette'));
   await refreshBudgetTrendChart();
 
   container.querySelector('#rep-budget-category').onchange = (e) => { repBudgetCategoryId = e.target.value; refreshBudgetTrendChart(); };
@@ -378,10 +378,10 @@ async function recapPanelHtml(monthKey) {
   if (!recap.hasData) return '';
   const lines = recapHighlights(recap);
   return `
-    <div class="panel" style="margin-top:16px;" id="recap-panel">
+    <div class="panel mt-16" id="recap-panel">
       <div class="panel-header"><h3>${t('Bilan du mois à partager')}</h3></div>
-      <ul style="margin:0 0 12px;padding-left:18px;font-size:13.5px;line-height:1.6;">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px;cursor:pointer;">
+      <ul style="margin:0 0 12px;padding-left:18px;line-height:1.6;" class="fs-14">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;" class="fs-13 mb-12">
         <input type="checkbox" id="recap-hide-amounts"> ${t('Masquer les montants (garder les pourcentages)')}
       </label>
       <div style="display:flex;flex-wrap:wrap;gap:10px;">
@@ -417,9 +417,9 @@ async function tagSummaryPanelHtml(monthKey) {
   const { rows, currency } = await computeTagSummary(monthKey);
   if (!rows.length) return '';
   return `
-    <div class="panel" style="margin-top:16px;">
+    <div class="panel mt-16">
       <div class="panel-header"><h3>${t('Résultat par étiquette')}</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin:0 0 10px;">${t("Étiquetez vos opérations (ex : « pro ») dans la Saisie express : vous voyez ici ce que chaque activité rapporte ce mois-ci. Une opération à plusieurs étiquettes compte dans chacune.")}</p>
+      <p style="margin:0 0 10px;" class="fs-13 c-muted">${t("Étiquetez vos opérations (ex : « pro ») dans la Saisie express : vous voyez ici ce que chaque activité rapporte ce mois-ci. Une opération à plusieurs étiquettes compte dans chacune.")}</p>
       ${rows.map((r) => `
         <div class="tx-row">
           <div class="tx-main">
@@ -443,7 +443,7 @@ async function summaryTabHtml() {
         <button type="button" class="link-btn" id="rep-csv-investments-btn">${t("Exporter l'historique des investissements (CSV)")}</button>
       </div>
     </div>
-    <div class="panel" style="margin-top:16px;">
+    <div class="panel mt-16">
       <div class="panel-header"><h3>${t('Bilan annuel')} <span class="chart-card-period">· ${reportYear}</span></h3></div>
       <button type="button" class="btn btn-primary" id="rep-annual-pdf-btn">${t('Générer le bilan annuel PDF')}</button>
     </div>

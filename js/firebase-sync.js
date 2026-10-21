@@ -559,7 +559,7 @@ function showCloudBackupReminderModal(urgent = false) {
     ? t("Vous avez repoussé ce rappel plusieurs fois. Sans sauvegarde cloud récente, une réinstallation ou un changement d'appareil vous ferait perdre les données saisies depuis votre dernière sauvegarde. Sauvegardez maintenant.")
     : t("Ça fait plus de 7 jours que vos données n'ont pas été sauvegardées dans le cloud. Voulez-vous le faire maintenant ?");
   const modal = openModal(`
-    <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${message}</p>
+    <p style="margin:0 0 16px;" class="fs-14 c-muted">${message}</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;">
       <button type="button" class="btn btn-primary" id="cloud-reminder-backup-btn">${t('Sauvegarder maintenant')}</button>
       ${urgent ? '' : `<button type="button" class="btn btn-ghost" id="cloud-reminder-later-btn">${t('Plus tard')}</button>`}
@@ -698,7 +698,7 @@ function showCloudStalenessModal(cloudUpdatedAt) {
   if (stalenessModalOpen) return;
   stalenessModalOpen = true;
   const modal = openModal(`
-    <p style="margin:0 0 16px;font-size:13.5px;color:var(--text-muted);">${t('Une sauvegarde plus récente existe dans le cloud, faite le {date} — probablement depuis un autre appareil. Pour éviter des doublons ou de remplacer des données par erreur, il est recommandé de la récupérer avant de continuer sur cet appareil.', { date: formatDate(cloudUpdatedAt.toISOString()) })}</p>
+    <p style="margin:0 0 16px;" class="fs-14 c-muted">${t('Une sauvegarde plus récente existe dans le cloud, faite le {date} — probablement depuis un autre appareil. Pour éviter des doublons ou de remplacer des données par erreur, il est recommandé de la récupérer avant de continuer sur cet appareil.', { date: formatDate(cloudUpdatedAt.toISOString()) })}</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;">
       <button type="button" class="btn btn-primary" id="cloud-stale-restore-btn">${t('Restaurer maintenant')}</button>
       <button type="button" class="btn btn-ghost" id="cloud-stale-dismiss-btn">${t('Continuer quand même')}</button>
@@ -926,7 +926,7 @@ function promptPassphrase(title) {
 function promptNewAutoBackupPassphrase() {
   return new Promise((resolve) => {
     const modal = openModal(`
-      <p style="margin:0 0 10px;font-size:13.5px;color:var(--text-muted);">${t("Vos données seront envoyées chiffrées à chaque modification, après un court délai. Le mot de passe est mémorisé sur CET appareil pour envoyer sans vous le redemander ; il n'est jamais transmis.")}</p>
+      <p style="margin:0 0 10px;" class="fs-14 c-muted">${t("Vos données seront envoyées chiffrées à chaque modification, après un court délai. Le mot de passe est mémorisé sur CET appareil pour envoyer sans vous le redemander ; il n'est jamais transmis.")}</p>
       <p class="alert alert-warn" style="margin:0 0 12px;">${t("Notez-le ailleurs : sans ce mot de passe, personne — ni vous, ni Google, ni nous — ne peut restaurer la sauvegarde.")}</p>
       <form id="auto-backup-form">
         <div class="form-row"><label>${t('Mot de passe de chiffrement')}</label><input type="password" name="passphrase" required minlength="6" autocomplete="new-password" autofocus></div>
@@ -952,7 +952,7 @@ function promptNewAutoBackupPassphrase() {
 export async function renderCloudBackupSection(container) {
   if (!isFirebaseConfigured) {
     container.innerHTML = `
-      <div class="panel" style="margin-bottom:16px;">
+      <div class="panel mb-16">
         <div class="panel-header"><h3>${t('Sauvegarde cloud (optionnelle)')}</h3></div>
         <p class="empty-state" style="padding:12px 0;">${t("Fonctionnalité pas encore configurée par l'auteur de l'app.")}</p>
       </div>`;
@@ -983,15 +983,15 @@ export async function renderCloudBackupSection(container) {
   const autoAlert = autoEnabled ? await getCloudAutoBackupAlert() : null;
 
   container.innerHTML = `
-    <div class="panel" style="margin-bottom:16px;">
+    <div class="panel mb-16">
       <div class="panel-header"><h3>${t('Sauvegarde cloud (optionnelle)')}</h3></div>
-      <p style="font-size:12.5px;color:var(--text-muted);margin-bottom:12px;">${t("Sauvegarde chiffrée sur votre compte Google, pour la récupérer après une réinstallation. Le mot de passe de chiffrement n'est jamais transmis — sans lui, personne (y compris Google) ne peut lire vos données.")}</p>
+      <p class="fs-13 c-muted mb-12">${t("Sauvegarde chiffrée sur votre compte Google, pour la récupérer après une réinstallation. Le mot de passe de chiffrement n'est jamais transmis — sans lui, personne (y compris Google) ne peut lire vos données.")}</p>
       ${user ? `
         <div class="stat-row"><span class="stat-row-label">${t('Connecté')}</span><span>${escapeHtml(user.email || user.displayName || '')}</span></div>
-        <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">${t('Dernière sauvegarde cloud')}</span><span id="cloud-last-backup">${lastCloudBackupAt ? formatDate(lastCloudBackupAt) : t('jamais')}</span></div>
-        <div class="stat-row" style="margin-top:6px;"><span class="stat-row-label">${t('Sauvegarde automatique')}</span><span>${autoEnabled ? t('Activée') : t('Désactivée')}</span></div>
+        <div class="stat-row mt-6"><span class="stat-row-label">${t('Dernière sauvegarde cloud')}</span><span id="cloud-last-backup">${lastCloudBackupAt ? formatDate(lastCloudBackupAt) : t('jamais')}</span></div>
+        <div class="stat-row mt-6"><span class="stat-row-label">${t('Sauvegarde automatique')}</span><span>${autoEnabled ? t('Activée') : t('Désactivée')}</span></div>
         ${autoAlert ? `<p class="alert alert-warn" style="margin:10px 0 0;">${escapeHtml(autoAlert)}</p>` : ''}
-        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;" class="mt-12">
           <button type="button" class="btn btn-primary" id="cloud-push-btn">${t('Sauvegarder maintenant')}</button>
           <button type="button" class="btn btn-ghost" id="cloud-auto-toggle-btn">${autoEnabled ? t('Désactiver la sauvegarde automatique') : t('Activer la sauvegarde automatique')}</button>
           <button type="button" class="btn btn-ghost" id="cloud-pull-btn">${t('Restaurer depuis le cloud')}</button>

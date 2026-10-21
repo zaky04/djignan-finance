@@ -74,16 +74,16 @@ export async function openSmsImportModal({ text = '' } = {}) {
   const existingKeys = new Set(existingTx.map((x) => `${x.walletId}|${x.date}|${x.type}|${x.amount}`));
 
   const modal = openModal(`
-    <p style="margin:0 0 10px;font-size:13px;color:var(--text-muted);">${t("Collez ici un ou plusieurs SMS de confirmation (Orange Money, Wave, MTN MoMo, Moov…). Séparez-les par une ligne vide. Rien ne quitte votre appareil, et rien n'est enregistré sans votre validation.")}</p>
+    <p style="margin:0 0 10px;" class="fs-13 c-muted">${t("Collez ici un ou plusieurs SMS de confirmation (Orange Money, Wave, MTN MoMo, Moov…). Séparez-les par une ligne vide. Rien ne quitte votre appareil, et rien n'est enregistré sans votre validation.")}</p>
     <textarea id="sms-text" rows="5" style="width:100%;" placeholder="${escapeHtml(t('Ex : Vous avez envoyé 5 000 F à Moussa… Nouveau solde : 12 400 F'))}"></textarea>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px;">
       <button type="button" class="btn btn-ghost" id="sms-paste-btn">${t('Coller depuis le presse-papiers')}</button>
     </div>
-    <div id="sms-summary" style="font-size:12.5px;color:var(--text-muted);margin-bottom:8px;"></div>
+    <div id="sms-summary" class="fs-13 c-muted mb-8"></div>
     <div id="sms-results"></div>
     <div id="sms-footer" hidden>
       <div class="form-row"><label>${t('Portefeuille')}</label><select id="sms-wallet"></select></div>
-      <label id="sms-fee-row" style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin:6px 0 12px;cursor:pointer;" hidden>
+      <label id="sms-fee-row" style="display:flex;align-items:center;gap:8px;margin:6px 0 12px;cursor:pointer;" hidden class="fs-14">
         <input type="checkbox" id="sms-fee-check" checked> ${t('Enregistrer aussi les frais comme dépense séparée')}
       </label>
       <button type="button" class="btn btn-primary btn-block" id="sms-import-btn">${t('Importer')}</button>
@@ -169,12 +169,12 @@ export async function openSmsImportModal({ text = '' } = {}) {
           <span style="flex:1;min-width:0;">
             <strong>${escapeHtml(formatCurrency(msg.amount, cur))}</strong>
             <span class="tx-sub"> · ${formatDate(msg.date || todayISO())}</span>
-            <span style="display:block;font-size:13px;overflow-wrap:anywhere;">${escapeHtml(buildSmsNote(msg))}</span>
+            <span style="display:block;overflow-wrap:anywhere;" class="fs-13">${escapeHtml(buildSmsNote(msg))}</span>
             ${msg.fee > 0 ? `<span class="tx-sub">${t('Frais : {amount}', { amount: formatCurrency(msg.fee, cur) })}</span>` : ''}
-            ${badges ? `<span style="display:block;margin-top:4px;">${badges}</span>` : ''}
+            ${badges ? `<span style="display:block;" class="mt-4">${badges}</span>` : ''}
           </span>
         </label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" class="mt-8">
           <select data-sms-type aria-label="${escapeHtml(t('Type'))}">${typeOptions}</select>
           ${row.type === 'transfer'
             ? `<select data-sms-target aria-label="${escapeHtml(t('Vers le portefeuille'))}">${transferTargetOptions(row) || `<option value="">${t('Aucun autre portefeuille dans cette devise')}</option>`}</select>`

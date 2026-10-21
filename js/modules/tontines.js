@@ -20,6 +20,7 @@ import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, localISODate, o
 import { notifyDataChanged } from '../state.js';
 import { whatsappUrl } from './person-ledger.js';
 import { t as tr } from '../i18n.js';
+import { icon as svgIcon } from '../icons.js';
 
 /* ---------- Calendrier (pur) ---------- */
 const PERIOD_DAYS = { weekly: 7, biweekly: 14 };
@@ -203,22 +204,22 @@ async function openTontineDetail(tontineId, roundIndex = null) {
       <div class="tx-main"><div class="tx-title">${escapeHtml(m.isMe ? tr('Moi') : m.name)}${isBeneficiary ? ` <span class="badge badge-pos">${tr('Reçoit le pot')}</span>` : ''}</div>
         <div class="tx-sub">${paid ? tr('A cotisé') : tr('N\'a pas encore cotisé')}</div></div>
       ${remind}
-      <button type="button" class="btn ${paid ? 'btn-ghost' : 'btn-primary'}" data-toggle-paid="${m.id}">${paid ? '✓ ' + tr('Payé') : tr('Marquer payé')}</button>
+      <button type="button" class="btn ${paid ? 'btn-ghost' : 'btn-primary'}" data-toggle-paid="${m.id}">${paid ? svgIcon('check', 16) + ' ' + tr('Payé') : tr('Marquer payé')}</button>
     </div>`;
   }).join('');
 
   const modal = openModal(`
-    <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:6px;">
+    <div style="display:flex;align-items:center;justify-content:center;gap:8px;" class="mb-6">
       <button type="button" class="icon-btn" id="tontine-prev" aria-label="${tr('Tour précédent')}" ${round <= 0 ? 'disabled' : ''}>‹</button>
       <strong>${tr('Tour {n} / {total}', { n: round + 1, total })}</strong>
       <button type="button" class="icon-btn" id="tontine-next" aria-label="${tr('Tour suivant')}" ${round >= total - 1 ? 'disabled' : ''}>›</button>
     </div>
-    <p class="tx-sub" style="text-align:center;margin:0 0 12px;">${formatDate(roundDate(tontine, round))} · ${tr('Pot : {amount}', { amount: formatCurrency(potAmount(tontine), cur) })} · ${tr('bénéficiaire : {name}', { name: escapeHtml(beneficiary?.isMe ? tr('Moi') : beneficiary?.name || '—') })}</p>
+    <p class="tx-sub ta-center" style="margin:0 0 12px;">${formatDate(roundDate(tontine, round))} · ${tr('Pot : {amount}', { amount: formatCurrency(potAmount(tontine), cur) })} · ${tr('bénéficiaire : {name}', { name: escapeHtml(beneficiary?.isMe ? tr('Moi') : beneficiary?.name || '—') })}</p>
     ${beneficiary?.isMe ? (potReceived
       ? `<p class="alert alert-info">${tr('Pot reçu le {date} : {amount}', { date: formatDate(potReceived.date), amount: formatCurrency(potReceived.amount, cur) })}</p>`
-      : `<button type="button" class="btn btn-primary btn-block" id="tontine-pot-btn" style="margin-bottom:12px;">${tr("J'ai reçu le pot")}</button>`) : ''}
+      : `<button type="button" class="btn btn-primary btn-block mb-12" id="tontine-pot-btn">${tr("J'ai reçu le pot")}</button>`) : ''}
     ${memberRows}
-    <p class="tx-sub" style="margin-top:12px;">${tr('Ma position : {amount} (versé moins reçu).', { amount: formatCurrency(myNetPosition(tontine), cur) })}</p>`,
+    <p class="tx-sub mt-12">${tr('Ma position : {amount} (versé moins reçu).', { amount: formatCurrency(myNetPosition(tontine), cur) })}</p>`,
   { title: tontine.name });
 
   const reopen = (r) => { modal.close(); openTontineDetail(tontineId, r); };
@@ -331,7 +332,7 @@ function cardHtml(tontine) {
     <div class="summary-card" data-tontine-id="${tontine.id}">
       <div class="card-title-row">
         <div>
-          <div style="font-weight:700;font-size:14.5px;">${escapeHtml(tontine.name)}</div>
+          <div class="fw-700 fs-15">${escapeHtml(tontine.name)}</div>
           <div class="tx-sub">${frequencyLabel(tontine.frequency)} · ${formatCurrency(tontine.amount, cur)} × ${total}</div>
         </div>
         <div class="card-actions">
@@ -343,7 +344,7 @@ function cardHtml(tontine) {
       <div class="stat-row"><span class="stat-row-label">${tr('Bénéficiaire')}</span><span>${escapeHtml(beneficiary?.isMe ? tr('Moi') : beneficiary?.name || '—')}</span></div>
       <div class="stat-row"><span class="stat-row-label">${tr('Pot')}</span><span>${formatCurrency(potAmount(tontine), cur)}</span></div>
       <div class="stat-row"><span class="stat-row-label">${tr('Cotisations de ce tour')}</span><span>${paidCount} / ${total}${mePaid ? '' : ' · ' + tr('la mienne : à verser')}</span></div>
-      <button type="button" class="btn btn-primary btn-block" data-action="open" style="margin-top:10px;">${tr('Ouvrir le tour')}</button>
+      <button type="button" class="btn btn-primary btn-block mt-10" data-action="open">${tr('Ouvrir le tour')}</button>
     </div>`;
 }
 

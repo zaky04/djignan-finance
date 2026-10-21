@@ -419,8 +419,8 @@ export async function openProofExportModal(buildDocument) {
     return;
   }
   const modal = openModal(`
-    <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px;">${t("Génère un document daté (informations, synthèse, historique complet et zone de signature) à imprimer ou à conserver ailleurs comme preuve.")}</p>
-    ${(model.warnings || []).map((w) => `<div class="alert alert-warn" style="margin-bottom:12px;">${escapeHtml(w)}</div>`).join('')}
+    <p style="margin:0 0 12px;" class="fs-13 c-muted">${t("Génère un document daté (informations, synthèse, historique complet et zone de signature) à imprimer ou à conserver ailleurs comme preuve.")}</p>
+    ${(model.warnings || []).map((w) => `<div class="alert alert-warn mb-12">${escapeHtml(w)}</div>`).join('')}
     <div class="proof-actions">
       <button type="button" class="btn btn-primary" data-proof="pdf">${t('Télécharger le PDF')}</button>
       <button type="button" class="btn btn-ghost" data-proof="print">${t('Imprimer')}</button>

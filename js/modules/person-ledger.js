@@ -12,6 +12,7 @@
 import { getSetting, setSetting } from '../db.js';
 import { formatCurrency, formatDate, escapeHtml, openModal, showToast, openExternalUrl } from '../utils.js';
 import { t } from '../i18n.js';
+import { icon as svgIcon } from '../icons.js';
 
 /** Clé de regroupement : « Moussa  Diop », « moussa diop » et « Moussá Diop » sont la même personne. */
 export function normalizeName(name) {
@@ -125,7 +126,7 @@ export async function openPersonLedger(personName, debts, payments, actions = {}
   const summaryLines = [
     ...owedToMe.map((a) => `<div class="stat-row"><span class="stat-row-label">${escapeHtml(t('{name} me doit', { name: statement.name }))}</span><strong class="pos">${escapeHtml(formatCurrency(a.value, a.currency))}</strong></div>`),
     ...iOwe.map((a) => `<div class="stat-row"><span class="stat-row-label">${escapeHtml(t('Je dois à {name}', { name: statement.name }))}</span><strong class="neg">${escapeHtml(formatCurrency(a.value, a.currency))}</strong></div>`),
-    settled ? `<div class="stat-row"><span class="stat-row-label">${t('Tout est réglé')}</span><strong>✓</strong></div>` : '',
+    settled ? `<div class="stat-row"><span class="stat-row-label">${t('Tout est réglé')}</span><strong>${svgIcon('check', 16)}</strong></div>` : '',
   ].join('');
 
   const activeDebts = statement.debts.filter((d) => d.status !== 'paid' && d.remaining > 0.005);
@@ -140,7 +141,7 @@ export async function openPersonLedger(personName, debts, payments, actions = {}
 
   const modal = openModal(`
     <div class="person-summary">${summaryLines}</div>
-    <div class="form-row" style="margin-top:12px;">
+    <div class="form-row mt-12">
       <label>${t('Téléphone WhatsApp (avec indicatif pays, ex : +225 07 00 00 00 00)')}</label>
       <input type="tel" id="person-phone" value="${escapeHtml(phone)}" maxlength="30" inputmode="tel" autocomplete="off">
     </div>
@@ -150,12 +151,12 @@ export async function openPersonLedger(personName, debts, payments, actions = {}
       ${actions.onNew ? `<button type="button" class="btn btn-ghost" id="person-new-btn">${t('+ Nouvelle dette / créance')}</button>` : ''}
     </div>
     ${activeDebts.length && actions.onPay ? `
-      <div class="panel-header" style="margin-top:6px;"><h3>${t('En cours')}</h3></div>
+      <div class="panel-header mt-6"><h3>${t('En cours')}</h3></div>
       ${activeDebts.map((d) => `<div class="tx-row">
         <div class="tx-main"><div class="tx-title">${escapeHtml(d.type === 'receivable' ? t('Créance') : t('Dette'))} · ${escapeHtml(formatCurrency(d.remaining, d.currency))}</div><div class="tx-sub">${escapeHtml(d.note || '')}${d.dueDate ? (d.note ? ' · ' : '') + t('Échéance : {date}', { date: formatDate(d.dueDate) }) : ''}</div></div>
         <button type="button" class="btn btn-ghost" data-person-pay="${d.id}">${t('Rembourser')}</button>
       </div>`).join('')}` : ''}
-    <div class="panel-header" style="margin-top:14px;"><h3>${t('Historique')}</h3></div>
+    <div class="panel-header mt-14"><h3>${t('Historique')}</h3></div>
     <div class="tx-list">${eventsHtml || `<div class="tx-empty">${t('Aucun mouvement.')}</div>`}</div>
   `, { title: statement.name });
 

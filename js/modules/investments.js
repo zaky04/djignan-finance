@@ -54,7 +54,7 @@ function walletOptionsHtml(wallets, currency) {
    toutes partageant investmentId (+ investmentEntryId pour les apports/dividendes) et un
    splitGroupId commun, uniquement pour un affichage/regroupement futur éventuel. */
 function walletSplitRowHtml(wallets, currency, optionsHtml = null) {
-  return `<div data-split-row style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+  return `<div data-split-row style="display:flex;gap:8px;align-items:center;" class="mb-8">
     <select class="split-wallet" style="flex:2;">${optionsHtml ?? walletOptionsHtml(wallets, currency)}</select>
     <input type="number" step="0.01" min="0" class="split-amount" placeholder="0.00" style="flex:1;">
     <button type="button" class="icon-btn split-remove" aria-label="${t('Retirer')}">${DELETE_ICON}</button>
@@ -289,10 +289,10 @@ function investmentCardHtml(inv, metrics, loan = null) {
       <div class="card-title-row">
         <div>
           <span class="badge badge-accent">${escapeHtml(t(ASSET_CLASSES[inv.assetClass] || inv.assetClass))}</span>
-          <div style="font-weight:700;font-size:14.5px;margin-top:6px;">${escapeHtml(inv.name)}</div>
+          <div class="fw-700 fs-15 mt-6">${escapeHtml(inv.name)}</div>
           ${inv.description
             ? `<div class="tx-sub inv-desc">${escapeHtml(inv.description)}</div>`
-            : `<span class="badge badge-neg" style="margin-top:6px;">${t('Description manquante')}</span>`}
+            : `<span class="badge badge-neg mt-6">${t('Description manquante')}</span>`}
         </div>
         <div class="card-actions">
           ${loan && loan.remaining > 0.005 ? `<button type="button" class="icon-btn" data-action="repay" aria-label="${t('Rembourser le prêt')}" title="${t('Rembourser le prêt')}">${REPAY_ICON}</button>` : ''}
@@ -337,13 +337,13 @@ function investmentFormHtml(inv, defaultCurrency) {
         <div class="form-row"><label>${t('Prêteur (personne ou organisme)')}</label><input type="text" name="loanLender" maxlength="60" placeholder="${t('Ex: Banque Atlantique')}"></div>
         <div class="form-row"><label>${t("Taux d'intérêt annuel % (optionnel)")}</label><input type="number" step="0.01" min="0" name="loanRate"></div>
         <div class="form-row"><label>${t('Échéance (optionnel)')}</label><input type="date" name="loanDueDate"></div>
-        <p id="inv-loan-hint" style="font-size:12.5px;color:var(--text-muted);margin:0 0 12px;"></p>
+        <p id="inv-loan-hint" style="margin:0 0 12px;" class="fs-13 c-muted"></p>
       </div>
       <div class="form-row" data-field="walletPartCheck">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
           <input type="checkbox" name="movesMoneyNow" checked> <span id="inv-wallet-part-label">${t("Débiter ce montant d'un portefeuille")}</span>
         </label>
-        <p style="font-size:12px;color:var(--text-muted);margin:2px 0 0;">${t('Décochez si cet investissement existait déjà avant d\'utiliser l\'app (aucun mouvement de portefeuille ne sera créé).')}</p>
+        <p style="margin:2px 0 0;" class="fs-12 c-muted">${t('Décochez si cet investissement existait déjà avant d\'utiliser l\'app (aucun mouvement de portefeuille ne sera créé).')}</p>
       </div>
       <div class="form-row" data-field="movesMoneyWallet">
         <label>${t('Portefeuille')}</label>
@@ -354,7 +354,7 @@ function investmentFormHtml(inv, defaultCurrency) {
         <div id="inv-split-wrap" hidden>
           <div id="inv-split-list"></div>
           <button type="button" class="btn btn-ghost" id="inv-split-add">${t('+ Ajouter un portefeuille')}</button>
-          <div id="inv-split-total" style="font-size:12.5px;color:var(--text-muted);margin-top:4px;"></div>
+          <div id="inv-split-total" class="fs-13 c-muted mt-4"></div>
         </div>
       </div>` : ''}
       <button type="submit" class="btn btn-primary btn-block">${inv ? t('Enregistrer') : t("Créer l'investissement")}</button>
@@ -556,7 +556,7 @@ async function openHistoryModal(inv) {
     </optgroup>`;
 
   const modal = openModal(`
-    <form id="entry-form" style="margin-bottom:16px;">
+    <form id="entry-form" class="mb-16">
       <div class="form-row"><label>${t('Type')}</label>
         <select name="type">${Object.entries(ENTRY_TYPE_LABELS).map(([k, l]) => `<option value="${k}">${t(l)}</option>`).join('')}</select>
       </div>
@@ -571,7 +571,7 @@ async function openHistoryModal(inv) {
         <div class="form-row"><label>${t('Prêteur (personne ou organisme)')}</label><input type="text" name="entryLoanLender" maxlength="60" placeholder="${t('Ex: Banque Atlantique')}"></div>
         <div class="form-row"><label>${t("Taux d'intérêt annuel % (optionnel)")}</label><input type="number" step="0.01" min="0" name="entryLoanRate"></div>
         <div class="form-row"><label>${t('Échéance (optionnel)')}</label><input type="date" name="entryLoanDueDate"></div>
-        <p id="entry-loan-hint" style="font-size:12.5px;color:var(--text-muted);margin:0 0 12px;"></p>
+        <p id="entry-loan-hint" style="margin:0 0 12px;" class="fs-13 c-muted"></p>
       </div>
       <div class="form-row" data-field="entryWallet">
         <label>${t('Portefeuille')}</label>
@@ -582,9 +582,9 @@ async function openHistoryModal(inv) {
         <div id="entry-split-wrap" hidden>
           <div id="entry-split-list"></div>
           <button type="button" class="btn btn-ghost" id="entry-split-add">${t('+ Ajouter un portefeuille')}</button>
-          <div id="entry-split-total" style="font-size:12.5px;color:var(--text-muted);margin-top:4px;"></div>
+          <div id="entry-split-total" class="fs-13 c-muted mt-4"></div>
         </div>
-        <p id="entry-wallet-hint" style="font-size:12px;color:var(--text-muted);margin:2px 0 0;"></p>
+        <p id="entry-wallet-hint" style="margin:2px 0 0;" class="fs-12 c-muted"></p>
       </div>
       <div class="form-row"><label>${t('Date')}</label><input type="date" name="date" value="${todayISO()}" required></div>
       <div class="form-row"><label>${t('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
@@ -855,20 +855,20 @@ function renderYieldTable(rows, baseCurrency, rates, threshold, showAlert) {
   const overThreshold = (showAlert && linesWithShare.length > 1) ? linesWithShare.filter((l) => l.sharePct > threshold) : [];
 
   const alertHtml = overThreshold.length ? `
-    <div class="alert alert-warn" style="margin-bottom:12px;">
+    <div class="alert alert-warn mb-12">
       ${overThreshold.map((l) => escapeHtml(t('{label} représente {pct}% de votre portefeuille (seuil {threshold}%).', { label: l.label, pct: l.sharePct.toFixed(0), threshold }))).join('<br>')}
     </div>` : '';
 
   return alertHtml + `
     <div style="overflow-x:auto;">
-      <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
-        <thead><tr style="text-align:left;color:var(--text-muted);">
+      <table style="width:100%;border-collapse:collapse;" class="fs-14">
+        <thead><tr style="text-align:left;" class="c-muted">
           <th style="padding:8px 6px;">${t("Classe d'actif")}</th><th style="padding:8px 6px;">${t('Capital net')}</th><th style="padding:8px 6px;">${t('Valeur actuelle')}</th><th style="padding:8px 6px;">${t('Part du portefeuille')}</th><th style="padding:8px 6px;">${t('Rendement annualisé')}</th>
         </tr></thead>
         <tbody>
           ${linesWithShare.map((l) => `
             <tr style="border-top:1px solid var(--border);">
-              <td style="padding:8px 6px;font-weight:600;">${escapeHtml(l.label)}</td>
+              <td style="padding:8px 6px;" class="fw-600">${escapeHtml(l.label)}</td>
               <td style="padding:8px 6px;">${formatCurrency(l.netInvested, baseCurrency)}</td>
               <td style="padding:8px 6px;">${formatCurrency(l.currentValue, baseCurrency)}</td>
               <td style="padding:8px 6px;"><span class="badge ${l.sharePct > threshold ? 'badge-neg' : ''}">${formatPercent(l.sharePct, 0)}</span></td>
@@ -901,20 +901,20 @@ export async function renderInvestments() {
   });
 
   container.innerHTML = `
-    <div class="tabs-bar" style="margin-bottom:16px;">
+    <div class="tabs-bar mb-16">
       <button type="button" class="tab-btn ${assetFilter === 'all' ? 'is-active' : ''}" data-asset-filter="all">${t('Tous')}</button>
       <button type="button" class="tab-btn ${assetFilter === 'financial' ? 'is-active' : ''}" data-asset-filter="financial">${t('Actifs financiers')}</button>
       <button type="button" class="tab-btn ${assetFilter === 'physical' ? 'is-active' : ''}" data-asset-filter="physical">${t('Biens physiques')}</button>
     </div>
-    <div class="grid-cards" style="margin-bottom:18px;">${rows.length ? rows.map((r) => investmentCardHtml(r.inv, r.metrics, r.loan)).join('') : `<div class="empty-state">${t('Aucun actif dans cette catégorie.')}</div>`}</div>
-    <div class="chart-card" style="margin-bottom:18px;">
+    <div class="grid-cards mb-18">${rows.length ? rows.map((r) => investmentCardHtml(r.inv, r.metrics, r.loan)).join('') : `<div class="empty-state">${t('Aucun actif dans cette catégorie.')}</div>`}</div>
+    <div class="chart-card mb-18">
       <h3>${t('Évolution de la valeur du portefeuille')}</h3>
       <div class="chart-canvas-wrap"><canvas id="chart-investments-trend"></canvas></div>
     </div>
     <div class="panel">
       <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <h3>${t("Comparatif de rendement par classe d'actif")}</h3>
-        <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);font-weight:400;">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:400;" class="fs-13 c-muted">
           ${t('Alerte si plus de')}
           <input type="number" id="allocation-threshold" min="1" max="100" step="1" value="${threshold}" style="width:56px;">%
         </label>
@@ -961,7 +961,7 @@ export function initInvestmentsModule() {
       } else if (open.length > 1) {
         // Plusieurs prêts sur cet investissement : on choisit celui qu'on rembourse.
         const picker = openModal(`
-          <p style="font-size:13px;color:var(--text-muted);margin:0 0 12px;">${t('Quel prêt voulez-vous rembourser ?')}</p>
+          <p style="margin:0 0 12px;" class="fs-13 c-muted">${t('Quel prêt voulez-vous rembourser ?')}</p>
           <div class="proof-actions" style="flex-direction:column;">${open.map((l) => `<button type="button" class="btn btn-ghost" data-pick-loan="${l.debt.id}">${escapeHtml(l.debt.personName)} — ${t('{amount} restant', { amount: formatCurrency(l.remaining, inv.currency) })}</button>`).join('')}</div>`,
         { title: inv.name });
         picker.el.querySelectorAll('[data-pick-loan]').forEach((b) => b.addEventListener('click', () => {
