@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" class="brand-cowrie">
 <head>
 <meta charset="UTF-8">
 <!-- CSP en defense-in-depth : aucune faille XSS connue (voir CLAUDE.md), mais si une venait à
@@ -54,13 +54,15 @@
     <div class="lock-logo" aria-hidden="true">
       <img src="icons/icon-192.png" alt="" width="64" height="64" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;">
     </div>
-    <h1 class="lock-title">Code d'activation / Activation code</h1>
-    <p class="lock-subtitle">Cette version nécessite un code fourni par l'éditeur. / This version requires a code provided by the publisher.</p>
+    <h1 class="lock-title">Code d'activation</h1>
+    <div class="lock-title-alt" lang="en">Activation code</div>
+    <p class="lock-subtitle">Cette version nécessite un code fourni par l'éditeur.</p>
+    <p class="lock-subtitle lock-subtitle-alt" lang="en">This version requires a code provided by the publisher.</p>
     <form id="activation-form" style="width:100%;max-width:280px;display:flex;flex-direction:column;gap:10px;" class="mt-18">
       <input type="text" id="activation-code-input" autocomplete="off" autocapitalize="characters" spellcheck="false"
         placeholder="XXXXX-XXXXX" style="letter-spacing:2px;text-transform:uppercase;" class="ta-center fw-700">
-      <p id="activation-error" class="lock-error" aria-live="assertive" hidden>Code invalide / Invalid code</p>
-      <button type="submit" class="btn btn-primary btn-block">Valider / Submit</button>
+      <p id="activation-error" class="lock-error" aria-live="assertive" hidden>Code invalide · Invalid code</p>
+      <button type="submit" class="btn btn-primary btn-block">Valider · Submit</button>
     </form>
   </div>
 </div>
