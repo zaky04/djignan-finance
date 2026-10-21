@@ -568,9 +568,12 @@
           <button type="button" class="segmented-btn" data-value="income" data-i18n="Recette">Recette</button>
           <button type="button" class="segmented-btn" data-value="transfer" data-i18n="Transfert">Transfert</button>
         </div>
-        <div class="form-row" data-field="amountRow">
+        <div class="form-row amount-hero" data-field="amountRow">
           <label data-i18n="Montant">Montant</label>
-          <input type="number" step="0.01" min="0" name="amount" required inputmode="decimal" placeholder="0.00">
+          <div class="amount-hero-field">
+            <input type="number" step="0.01" min="0" name="amount" required inputmode="decimal" placeholder="0.00" autocomplete="off">
+            <span class="amount-hero-currency" id="qa-amount-currency"></span>
+          </div>
         </div>
         <div class="form-row">
           <label data-i18n="Portefeuille">Portefeuille</label>
@@ -617,7 +620,7 @@
             </div>
           </div>
         </div>
-        <button type="button" id="qa-favorite-btn" class="link-btn" style="margin-bottom:10px;" data-i18n="☆ Garder comme favori">☆ Garder comme favori</button>
+        <button type="button" id="qa-favorite-btn" class="link-btn" style="margin-bottom:10px;display:inline-flex;align-items:center;gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.8l2.5 5.2 5.7.8-4.1 4 1 5.7-5.1-2.7-5.1 2.7 1-5.7-4.1-4 5.7-.8L12 3.8Z"/></svg><span data-i18n="Garder comme favori">Garder comme favori</span></button>
         <button type="submit" class="btn btn-primary btn-block" data-i18n="Enregistrer">Enregistrer</button>
       </form>
     </div>

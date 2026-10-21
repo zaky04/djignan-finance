@@ -10,14 +10,14 @@ import { openSmsImportModal, initSmsImport } from './sms-import.js';
 import { isVoiceSupported, listenOnce, parseSpokenEntry } from '../voice-input.js';
 import { getTemplates, addTemplate, removeTemplate, computeFrequentSuggestions } from '../quick-templates.js';
 import { getEnrichedTransactions, guessCategoryId, checkUnusualExpense, isDailyWallet } from '../ledger.js';
-import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast, safeNumber, compressImageBlob } from '../utils.js';
+import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast, safeNumber, compressImageBlob, ZERO_DECIMAL_CURRENCIES } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { extractReceiptDataFromImage } from '../ocr.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // plusieurs fonctions (txRowHtml(t), reconTxRowHtml(t), et une const t locale dans le handler de
 // clic de initTransactionsModule) — voir le même piège documenté dans dashboard.js.
 import { t as tr, applyStaticTranslations, getLanguage } from '../i18n.js';
-import { icon as svgIcon } from '../icons.js';
+import { icon as svgIcon, knownCategoryLook } from '../icons.js';
 
 const TX_ICONS = {
   income: '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 20V6M6 12l6-6 6 6"/></svg>',
@@ -157,6 +157,9 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     splitTotalEl.textContent = tr('Total : {sum}', { sum: sum.toFixed(2) });
   }
 
+  /** Options de catégorie pour une ligne de division : sans l'entrée « Choisir une catégorie » du formulaire principal. */
+  const splitCategoryOptions = () => categorySelect.innerHTML.replace(/<option value="">[^<]*<\/option>/, '');
+
   function addSplitRow(categoryId = '') {
     const row = document.createElement('div');
     row.dataset.splitRow = '1';
@@ -166,7 +169,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       <input type="number" step="0.01" min="0" class="split-amount" placeholder="0.00" style="flex:1;">
       <button type="button" class="icon-btn split-remove" aria-label="${tr('Retirer')}">${DELETE_ICON}</button>`;
     splitList.appendChild(row);
-    row.querySelector('.split-category').innerHTML = categorySelect.innerHTML;
+    row.querySelector('.split-category').innerHTML = splitCategoryOptions();
     if (categoryId) row.querySelector('.split-category').value = categoryId;
     row.querySelector('.split-amount').addEventListener('input', updateSplitTotal);
     row.querySelector('.split-remove').addEventListener('click', () => { row.remove(); updateSplitTotal(); });
@@ -179,7 +182,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     splitRowsWrap.hidden = !splitMode;
     splitToggleBtn.textContent = splitMode ? tr('Revenir à une seule catégorie') : tr('Diviser en plusieurs catégories');
     form.elements.amount.required = !splitMode;
-    categorySelect.required = !splitMode && currentType !== 'transfer';
+    categorySelect.required = !splitMode && currentType !== 'transfer' && categoryRequired();
     if (splitMode && !splitList.children.length) {
       addSplitRow();
       addSplitRow();
@@ -217,7 +220,14 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       || `<option value="">${tr('Aucun autre portefeuille dans cette devise')}</option>`;
     if (eligible.some((w) => w.id === prevTarget)) targetWalletSelect.value = prevTarget;
   }
-  walletSelect.addEventListener('change', refreshTargetWalletOptions);
+  /** Le montant est le champ principal : devise du portefeuille affichée à côté, « 0 » pour les devises sans centimes. */
+  const amountCurrencyEl = form.querySelector('#qa-amount-currency');
+  function refreshAmountHint() {
+    const currency = allWallets.find((w) => w.id === walletSelect.value)?.currency || '';
+    if (amountCurrencyEl) amountCurrencyEl.textContent = currency;
+    form.elements.amount.placeholder = ZERO_DECIMAL_CURRENCIES.has(currency) ? '0' : '0.00';
+  }
+  walletSelect.addEventListener('change', () => { refreshTargetWalletOptions(); refreshAmountHint(); });
 
   async function populateCategories() {
     const all = await dbGetAll(STORES.CATEGORIES);
@@ -229,8 +239,11 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
         html += `<option value="${child.id}">— ${escapeHtml(child.name)}</option>`;
       }
     }
-    categorySelect.innerHTML = html || `<option value="">${tr('Aucune catégorie (créez-en dans Budgets)')}</option>`;
+    categorySelect.innerHTML = html ? `<option value="">${tr('Choisir une catégorie')}</option>${html}` : `<option value="">${tr('Aucune catégorie (créez-en dans Budgets)')}</option>`;
   }
+
+  // Une transaction déjà enregistrée sans catégorie reste modifiable sans qu'on l'oblige à en choisir une.
+  const categoryRequired = () => !editTransaction || !!editTransaction.categoryId;
 
   function setType(type) {
     currentType = type;
@@ -240,7 +253,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     categoryRow.hidden = type === 'transfer' || splitMode;
     splitToggleRow.hidden = type === 'transfer';
     targetWalletSelect.required = type === 'transfer';
-    categorySelect.required = type !== 'transfer' && !splitMode;
+    categorySelect.required = type !== 'transfer' && !splitMode && categoryRequired();
     titleEl.textContent = editTransaction ? tr('Modifier la transaction') : (type === 'transfer' ? tr('Transfert entre portefeuilles') : tr('Saisie express'));
     // Renvoie la promesse : l'ouverture en modification doit ATTENDRE les options avant de poser la
     // catégorie d'origine, sinon la valeur est posée sur un <select> encore vide puis les options
@@ -249,7 +262,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     return populateCategories().then(() => {
       splitList.querySelectorAll('.split-category').forEach((sel) => {
         const prevVal = sel.value;
-        sel.innerHTML = categorySelect.innerHTML;
+        sel.innerHTML = splitCategoryOptions();
         sel.value = prevVal;
       });
     });
@@ -287,7 +300,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       const wallet = allWallets.find((w) => w.id === x.walletId);
       const amount = x.amount > 0 ? ` · ${escapeHtml(formatCurrency(x.amount, wallet?.currency || 'EUR'))}` : '';
       return `<span class="qa-chip-wrap">
-        <button type="button" class="qa-chip ${x.suggestion ? 'is-suggestion' : ''}" data-chip-id="${x.id}" title="${x.suggestion ? escapeHtml(tr('Suggestion d\'après vos habitudes')) : ''}">${x.suggestion ? '✦ ' : '★ '}${escapeHtml(x.label)}${amount}</button>
+        <button type="button" class="qa-chip ${x.suggestion ? 'is-suggestion' : ''}" data-chip-id="${x.id}" title="${x.suggestion ? escapeHtml(tr('Suggestion d\'après vos habitudes')) : ''}">${escapeHtml(x.label)}${amount}</button>
         ${x.suggestion ? '' : `<button type="button" class="qa-chip-x" data-chip-remove="${x.id}" aria-label="${escapeHtml(tr('Retirer ce favori'))}">✕</button>`}
       </span>`;
     };
@@ -417,7 +430,9 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       splitToggleRow.hidden = true;
     }
     // Favori sans montant fixe touché depuis le tableau de bord : formulaire pré-rempli, montant à saisir.
+    refreshAmountHint();
     if (prefill && !editTransaction) await applyTemplate(prefill);
+    else if (!editTransaction) form.elements.amount.focus();
     // Photo reçue via le partage entrant (Web Share Target, voir applyShareTarget() dans app.js) :
     // injectée dans le vrai <input type="file"> via DataTransfer plutôt que dans une variable à
     // part, pour réutiliser tel quel tout le circuit existant (aperçu, retrait, résolution du
@@ -648,6 +663,14 @@ let bulkMode = false;
 const selectedIds = new Set();
 let visibleIds = [];
 
+/** Pastille de la ligne : l'icône et la couleur de la catégorie quand elle en a une, sinon la flèche entrée/sortie/virement. */
+function txIconHtml(t) {
+  const look = t.type !== 'transfer' ? knownCategoryLook(t.category) : null;
+  if (!look) return `<div class="tx-icon">${TX_ICONS[t.type] || ''}</div>`;
+  const color = escapeHtml(look.color);
+  return `<div class="tx-icon" style="color:${color};background:${color}22;">${svgIcon(look.icon, 18)}</div>`;
+}
+
 function txRowHtml(t) {
   const isTransfer = t.type === 'transfer';
   const title = isTransfer ? `${t.wallet?.name || '—'} → ${t.targetWallet?.name || '—'}` : (t.category?.name || tr('Sans catégorie'));
@@ -663,7 +686,7 @@ function txRowHtml(t) {
   return `
     <div class="tx-row" data-tx-id="${t.id}">
       ${checkboxHtml}
-      <div class="tx-icon">${TX_ICONS[t.type] || ''}</div>
+      ${txIconHtml(t)}
       <div class="tx-main">
         <div class="tx-title">${escapeHtml(title)}</div>
         <div class="tx-sub">${sub}</div>
