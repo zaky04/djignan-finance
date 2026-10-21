@@ -10,7 +10,7 @@
    ========================================================================== */
 
 import { getSetting, setSetting } from '../db.js';
-import { formatCurrency, formatDate, escapeHtml, openModal, showToast, openExternalUrl } from '../utils.js';
+import { formatCurrency, formatDate, escapeHtml, openModal, showToast, openExternalUrl, openSmsUrl, canSendSms, todayISO } from '../utils.js';
 import { t } from '../i18n.js';
 import { icon as svgIcon } from '../icons.js';
 
@@ -70,6 +70,14 @@ export function whatsappUrl(phone, message) {
   return digits.length >= 8 ? `https://wa.me/${digits}?text=${text}` : `https://wa.me/?text=${text}`;
 }
 
+/** Lien SMS. iOS attend « & » avant body quand un numéro est donné ; Android et le reste acceptent « ? ». */
+export function smsUrl(phone, message, ios = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent || '')) {
+  let digits = String(phone || '').replace(/[^\d+]/g, '');
+  if (digits.startsWith('00')) digits = '+' + digits.slice(2);
+  const text = encodeURIComponent(message);
+  return digits.replace(/\D/g, '').length >= 8 ? `sms:${digits}${ios ? '&' : '?'}body=${text}` : `sms:${ios ? '&' : '?'}body=${text}`;
+}
+
 /** Texte brut du relevé, pour le partager. */
 export function statementAsText(statement, translate = t, format = formatCurrency, formatDay = formatDate) {
   const lines = [translate('Relevé — {name}', { name: statement.name })];
@@ -103,6 +111,20 @@ export async function setPersonPhone(personName, phone) {
   await setSetting('personPhones', map);
 }
 
+/** Dernière relance envoyée, par personne : { clé: 'AAAA-MM-JJ' } (réglage local, jamais sur un serveur). */
+async function loadReminders() {
+  const map = await getSetting('personReminders', {});
+  return map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+}
+export async function getLastReminder(personName) {
+  return (await loadReminders())[normalizeName(personName)] || '';
+}
+async function markReminded(personName) {
+  const map = await loadReminders();
+  map[normalizeName(personName)] = todayISO();
+  await setSetting('personReminders', map);
+}
+
 /** Liste « par personne » (écran Dettes & créances) : [{ key, name, balances }] triée par montant. */
 export function summarizePeople(debts, payments) {
   const names = new Map();
@@ -111,6 +133,65 @@ export function summarizePeople(debts, payments) {
     .map((name) => buildPersonStatement(name, debts, payments))
     .filter((s) => Object.values(s.balances).some((v) => v !== 0))
     .map((s) => ({ key: normalizeName(s.name), name: s.name, balances: s.balances }));
+}
+
+/** Fenêtre de relance : numéro, message modifiable, puis WhatsApp / SMS / copier. Les liens sont ouverts
+    DANS le clic (avant tout await) : Safari et certains navigateurs mobiles bloquent sinon la fenêtre. */
+export async function openReminderModal({ name, phone = '', amounts, dueDate = null, senderName = '' }) {
+  const message = buildReminderMessage({ name, amounts, dueDate, senderName });
+  const last = await getLastReminder(name);
+  const sms = canSendSms();
+  const modal = openModal(`
+    <div class="form-row">
+      <label for="rem-phone">${t('Téléphone (avec indicatif pays, ex : +225 07 00 00 00 00)')}</label>
+      <input type="tel" id="rem-phone" value="${escapeHtml(phone)}" maxlength="30" inputmode="tel" autocomplete="off">
+    </div>
+    <div class="form-row">
+      <label for="rem-msg">${t('Message')}</label>
+      <textarea id="rem-msg" rows="5" maxlength="600">${escapeHtml(message)}</textarea>
+    </div>
+    ${last ? `<p class="fs-13 c-muted mb-16">${escapeHtml(t('Dernière relance : {date}', { date: formatDate(last) }))}</p>` : ''}
+    <div class="modal-actions" style="flex-wrap:wrap;">
+      <button type="button" class="btn btn-primary" id="rem-wa">WhatsApp</button>
+      ${sms ? `<button type="button" class="btn btn-ghost" id="rem-sms">SMS</button>` : ''}
+      <button type="button" class="btn btn-ghost" id="rem-copy">${t('Copier le message')}</button>
+    </div>`, { title: t('Relancer {name}', { name }) });
+
+  const phoneEl = modal.el.querySelector('#rem-phone');
+  const msgEl = modal.el.querySelector('#rem-msg');
+  const validPhone = () => phoneEl.value.replace(/\D/g, '').length >= 8;
+  // Le numéro et la date de relance sont enregistrés APRÈS l'ouverture du lien, sans bloquer le clic.
+  const afterSend = () => { setPersonPhone(name, phoneEl.value).catch(() => {}); markReminded(name).catch(() => {}); };
+
+  modal.el.querySelector('#rem-wa').addEventListener('click', () => {
+    if (!msgEl.value.trim()) { showToast(t('Le message est vide.')); return; }
+    if (!validPhone()) showToast(t('Pas de numéro valide : WhatsApp vous laissera choisir le contact.'));
+    openExternalUrl(whatsappUrl(phoneEl.value, msgEl.value));
+    afterSend();
+  });
+  modal.el.querySelector('#rem-sms')?.addEventListener('click', () => {
+    if (!msgEl.value.trim()) { showToast(t('Le message est vide.')); return; }
+    openSmsUrl(smsUrl(phoneEl.value, msgEl.value));
+    afterSend();
+  });
+  modal.el.querySelector('#rem-copy').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(msgEl.value);
+      showToast(t('Message copié : collez-le dans votre messagerie.'));
+      afterSend();
+    } catch { showToast(t('Impossible de copier : sélectionnez le texte à la main.')); }
+  });
+  return modal;
+}
+
+/** Relance depuis une carte de créance : calcule ce que la personne doit au total, puis ouvre la fenêtre. */
+export async function openPersonReminder(personName, debts, payments) {
+  const statement = buildPersonStatement(personName, debts, payments);
+  const amounts = Object.entries(statement.balances).filter(([, v]) => v > 0).map(([currency, value]) => ({ currency, value }));
+  if (!amounts.length) { showToast(t('{name} ne vous doit rien : pas de relance à envoyer.', { name: statement.name })); return null; }
+  const profile = await getSetting('userProfile', {});
+  const senderName = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
+  return openReminderModal({ name: statement.name, phone: await getPersonPhone(statement.name), amounts, dueDate: statement.nextDueDate, senderName });
 }
 
 /** Ouvre la fiche. `actions` = { onPay(debt), onNew(personName) } fournis par debts.js. */
@@ -142,11 +223,11 @@ export async function openPersonLedger(personName, debts, payments, actions = {}
   const modal = openModal(`
     <div class="person-summary">${summaryLines}</div>
     <div class="form-row mt-12">
-      <label>${t('Téléphone WhatsApp (avec indicatif pays, ex : +225 07 00 00 00 00)')}</label>
+      <label>${t('Téléphone (avec indicatif pays, ex : +225 07 00 00 00 00)')}</label>
       <input type="tel" id="person-phone" value="${escapeHtml(phone)}" maxlength="30" inputmode="tel" autocomplete="off">
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px;">
-      <button type="button" class="btn btn-primary" id="person-remind-btn" ${owedToMe.length ? '' : 'disabled'}>${t('Relancer sur WhatsApp')}</button>
+      <button type="button" class="btn btn-primary" id="person-remind-btn" ${owedToMe.length ? '' : 'disabled'}>${t('Relancer')}</button>
       <button type="button" class="btn btn-ghost" id="person-share-btn" ${statement.events.length ? '' : 'disabled'}>${t('Partager le relevé')}</button>
       ${actions.onNew ? `<button type="button" class="btn btn-ghost" id="person-new-btn">${t('+ Nouvelle dette / créance')}</button>` : ''}
     </div>
@@ -167,9 +248,7 @@ export async function openPersonLedger(personName, debts, payments, actions = {}
   modal.el.querySelector('#person-remind-btn').addEventListener('click', async () => {
     await savePhone();
     const sender = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
-    const message = buildReminderMessage({ name: statement.name, amounts: owedToMe, dueDate: statement.nextDueDate, senderName: sender });
-    if (phoneInput.value.replace(/\D/g, '').length < 8) showToast(t("Pas de numéro valide : WhatsApp vous laissera choisir le contact."));
-    openExternalUrl(whatsappUrl(phoneInput.value, message));
+    openReminderModal({ name: statement.name, phone: phoneInput.value, amounts: owedToMe, dueDate: statement.nextDueDate, senderName: sender });
   });
 
   modal.el.querySelector('#person-share-btn').addEventListener('click', async () => {

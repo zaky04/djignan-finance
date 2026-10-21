@@ -12,8 +12,8 @@ import { icon } from './icons.js';
 import { t } from './i18n.js';
 
 /** Ordre de préférence de l'action restée visible, et son libellé court (une icône seule ne dit pas ce qu'elle fait). */
-const PRIMARY_ACTIONS = ['pay', 'history', 'edit'];
-const PRIMARY_LABELS = { pay: 'Rembourser', history: 'Historique', edit: 'Modifier' };
+const PRIMARY_ACTIONS = ['remind', 'pay', 'history', 'edit'];
+const PRIMARY_LABELS = { remind: 'Relancer', pay: 'Rembourser', history: 'Historique', edit: 'Modifier' };
 
 function closeAllMenus(except) {
   document.querySelectorAll('.card-menu:not([hidden])').forEach((m) => {

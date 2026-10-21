@@ -467,6 +467,20 @@ export function openExternalUrl(url) {
   window.open(url, '_blank', 'noopener');
 }
 
+/** L'envoi de SMS n'a de sens que sur un téléphone (PWA mobile ou APK) : sur Windows (EXE Tauri) ou un
+    ordinateur, le lien « sms: » n'ouvre rien d'utile — on propose alors seulement WhatsApp / copier. */
+export function canSendSms() {
+  if (typeof window === 'undefined' || window.__TAURI__) return false;
+  if (window.Capacitor?.isNativePlatform?.()) return true;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+}
+
+/** Ouvre l'application SMS du téléphone avec le message prêt (lien « sms: » uniquement). */
+export function openSmsUrl(url) {
+  if (typeof url !== 'string' || !/^sms:/i.test(url)) return;
+  window.location.href = url;
+}
+
 /** Dernier verrou avant d'écraser TOUTES les données de l'appareil (import ou restauration cloud en mode
     « Remplacer tout ») : PIN (ou empreinte) obligatoire. Fermer la première boîte (Échap, ✕) équivaut à
     « Remplacer tout » dans ces flux — ce verrou évite qu'un simple geste détruise les données. */

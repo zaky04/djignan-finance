@@ -9,7 +9,7 @@ import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, 
 import { notifyDataChanged } from '../state.js';
 import { renderNetWorthTrendChart } from '../charts.js';
 import { openProofExportModal, PRINT_ICON } from '../proof-export.js';
-import { openPersonLedger, summarizePeople } from './person-ledger.js';
+import { openPersonLedger, summarizePeople, openPersonReminder } from './person-ledger.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // initDebtsModule() (handler de suppression) — voir le même piège documenté dans dashboard.js/
 // transactions.js.
@@ -20,6 +20,7 @@ const EDIT_ICON = svgIcon('edit', 16);
 const DELETE_ICON = svgIcon('trash', 16);
 const PERSON_ICON = svgIcon('person', 16);
 const PAY_ICON = svgIcon('pay', 16);
+const REMIND_ICON = svgIcon('message', 16);
 
 function remaining(debt, payments) {
   const paid = payments.filter((p) => p.debtId === debt.id).reduce((s, p) => s + p.amount, 0);
@@ -181,6 +182,7 @@ function debtCardHtml(d, payments, investmentName = null) {
           ${investmentName ? `<div class="tx-sub">${tr('Finance l\'investissement « {name} »', { name: escapeHtml(investmentName) })}</div>` : ''}
         </div>
         <div class="card-actions">
+          ${!isDebt && rem > 0.005 ? `<button type="button" class="icon-btn" data-action="remind" aria-label="${tr('Relancer')}" title="${tr('Relancer par WhatsApp ou SMS')}">${REMIND_ICON}</button>` : ''}
           <button type="button" class="icon-btn" data-action="person" aria-label="${tr('Fiche de la personne')}" title="${tr('Fiche de la personne')}">${PERSON_ICON}</button>
           <button type="button" class="icon-btn" data-action="export" aria-label="${tr('Exporter / imprimer')}" title="${tr('Exporter / imprimer')}">${PRINT_ICON}</button>
           <button type="button" class="icon-btn" data-action="pay" aria-label="${tr('Enregistrer un remboursement')}" title="${tr('Enregistrer un remboursement')}">${PAY_ICON}</button>
@@ -572,7 +574,9 @@ export function initDebtsModule() {
     const d = debts.find((x) => x.id === card.dataset.debtId);
     if (!d) return;
 
-    if (btn.dataset.action === 'person') {
+    if (btn.dataset.action === 'remind') {
+      openPersonReminder(d.personName, debts, await dbGetAll(STORES.DEBT_PAYMENTS));
+    } else if (btn.dataset.action === 'person') {
       openPerson(d.personName);
     } else if (btn.dataset.action === 'pay') {
       openPaymentModal(d);

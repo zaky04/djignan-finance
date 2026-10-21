@@ -23,7 +23,7 @@ window.__GEOFINANCE_TEST_DB_NAME__ = 'geofinance-features-test-db';
 const { STORES, dbAdd, wipeAllData, setSetting } = await import('../js/db.js');
 const { parseMobileMoneyMessage: sms, parseMobileMoneyMessages, parseAmountToken, currencyMatchesWallet } = await import('../js/mobile-money-parser.js');
 const { parseSpokenEntry: say } = await import('../js/voice-input.js');
-const { buildPersonStatement, buildReminderMessage, whatsappUrl, normalizeName, summarizePeople } = await import('../js/modules/person-ledger.js');
+const { buildPersonStatement, buildReminderMessage, whatsappUrl, smsUrl, normalizeName, summarizePeople } = await import('../js/modules/person-ledger.js');
 const { roundDate, currentRoundIndex, beneficiaryOf, potAmount, parseMembersText } = await import('../js/modules/tontines.js');
 const { computeNetWorth, computeMonthSummary, computeTagSummary, computeNetWorthComposition, isInvestmentMovementExcluded } = await import('../js/ledger.js');
 
@@ -91,6 +91,10 @@ ok('relance : montant, échéance et signature', msg.includes('8000 XOF') && msg
 eq('WhatsApp : numéro nettoyé', whatsappUrl('+225 07 00 11 22 33', 'Salut').startsWith('https://wa.me/2250700112233?text='), true);
 eq('WhatsApp : « 00 » international', whatsappUrl('00225 0700112233', 'x').startsWith('https://wa.me/2250700112233'), true);
 eq('WhatsApp : sans numéro → choix du contact', whatsappUrl('', 'x').startsWith('https://wa.me/?text='), true);
+eq('SMS Android : numéro + message', smsUrl('+225 07 00 11 22 33', 'Salut à toi', false), 'sms:+2250700112233?body=Salut%20%C3%A0%20toi');
+eq('SMS iOS : « & » avant body', smsUrl('+225 07 00 11 22 33', 'x', true), 'sms:+2250700112233&body=x');
+eq('SMS « 00 » international → +', smsUrl('00225 0700112233', 'x', false), 'sms:+2250700112233?body=x');
+eq('SMS sans numéro → app SMS ouverte sans destinataire', smsUrl('', 'x', false), 'sms:?body=x');
 
 // ---------- Tontines : calendrier ----------
 const tontine = { startDate: '2026-01-31', frequency: 'monthly', amount: 10000, members: [{ id: 'a' }, { id: 'me' }, { id: 'c' }, { id: 'd' }], order: ['a', 'me', 'c', 'd'] };
