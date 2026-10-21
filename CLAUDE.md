@@ -3440,7 +3440,7 @@ dictée avec un vrai micro (bloqué dans le panneau de test) ; formats de SMS de
 à valider avec des messages réels, ajuster les mots-clés si besoin) ; partage Android réel de texte vers l'appli ;
 enregistrement du Service Worker dans le panneau de test (échec « unknown error fetching the script », le serveur de
 test répond 500 aux requêtes HEAD — non lié à ce lot) ; `CACHE_VERSION` `v122` → `v123`.
-Pas de dépôt git dans ce dossier : rien n'a été commité.
+(Correction du 21 octobre 2026 : ce dossier EST un dépôt git, branche main qui suit le remote djignan = djignan-finance. Le remote origin pointe vers le dépôt gratuit geofinance, jamais pousser dessus d'ici.)
 
 ### 18 octobre 2026 (suite 3) — Rappels planifiés Android + passe de vérification
 
