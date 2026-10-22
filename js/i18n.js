@@ -474,6 +474,13 @@ const EN = {
   "Créez au moins un portefeuille avant d'ajouter une récurrence.": 'Create at least one wallet before adding a recurring entry.',
   'Récurrence mise à jour.': 'Recurring entry updated.',
   'Récurrence créée.': 'Recurring entry created.',
+  'La devise ne peut plus changer : ce portefeuille a déjà des transactions. Créez un nouveau portefeuille dans cette devise.':
+    'Currency can no longer change: this wallet already has transactions. Create a new wallet in that currency.',
+  'Récurrence réactivée : prochaine échéance le {date}.': 'Recurring entry resumed: next occurrence on {date}.',
+  "Le capital initial et la devise ne peuvent plus changer : l'achat a déjà été enregistré. Utilisez l'historique (apport, retrait, valorisation).":
+    'Initial capital and currency can no longer change: the purchase is already recorded. Use the history (contribution, withdrawal, valuation).',
+  'Le type et la devise ne peuvent plus changer : des mouvements de portefeuille y sont liés. Supprimez cette dette et recréez-la.':
+    'Type and currency can no longer change: wallet movements are linked to it. Delete this debt and recreate it.',
   'Inactif': 'Inactive',
   'Prochaine échéance : {date}': 'Next due date: {date}',
   'Désactiver': 'Deactivate',

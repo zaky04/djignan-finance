@@ -465,7 +465,19 @@ export async function openInvestmentModal(inv = null) {
     const description = (fd.get('description') || '').trim();
     if (!description) { showToast(t('La description est obligatoire.')); return; }
 
+    // Le capital initial et la devise d'un investissement déjà débité d'un portefeuille (ou financé par
+    // un prêt) ne se modifient pas ici : la transaction d'achat resterait à l'ancien montant et le solde
+    // du portefeuille divergerait en silence. On corrige via l'historique (apport/retrait) à la place.
+    if (inv && (currency !== inv.currency || Math.abs(capitalInvested - (inv.capitalInvested || 0)) > 0.005)) {
+      const hasPurchase = (await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.investmentId === inv.id && x.investmentMovementType === 'purchase');
+      if (hasPurchase || inv.loanDebtId) {
+        showToast(t("Le capital initial et la devise ne peuvent plus changer : l'achat a déjà été enregistré. Utilisez l'historique (apport, retrait, valorisation)."));
+        return;
+      }
+    }
+
     const record = {
+      ...(inv || {}),
       id: inv?.id || uuid(),
       name: fd.get('name').trim(),
       description,
