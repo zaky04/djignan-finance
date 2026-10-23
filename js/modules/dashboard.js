@@ -3,7 +3,7 @@
    ========================================================================== */
 
 import { formatCurrency, formatDate, formatMonthLabel, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';
-import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates, computeBudgetSuggestions } from '../ledger.js';
+import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeSafeToSpend, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates, computeBudgetSuggestions } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderBudgetVsActualChart, renderMultiTrendChart } from '../charts.js';
 import { loadCashflowForecast } from '../forecast.js';
 import { loadMonthlyRecap, recapHighlights, shareRecapImage } from '../monthly-recap.js';
@@ -405,9 +405,7 @@ export async function renderDashboard() {
   const currency = summary.currency;
 
   if (panels.safeToSpend) {
-    const upcomingBillsTotal = forecast.upcoming.filter((u) => u.type === 'expense').reduce((sum, u) => sum + u.amountBase, 0);
-    const reservedBudget = Math.max(0, monthlyBudget.remaining);
-    const safeToSpend = forecast.current - upcomingBillsTotal - reservedBudget;
+    const { safeToSpend } = computeSafeToSpend(forecast, budgetVsActual);
     setAmount(document.getElementById('dash-safe-to-spend-value'), safeToSpend, forecast.currency);
     safeToSpendEl?.classList.toggle('is-negative', safeToSpend < 0);
     const dailyEl = document.getElementById('dash-safe-to-spend-daily');

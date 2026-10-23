@@ -5,7 +5,7 @@
    rapprochement bancaire ("check-in").
    ========================================================================== */
 
-import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, logAudit, getSetting, setSetting } from '../db.js';
+import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, dbWriteBatch, logAudit, getSetting, setSetting } from '../db.js';
 import { openSmsImportModal, initSmsImport } from './sms-import.js';
 import { isVoiceSupported, listenOnce, parseSpokenEntry } from '../voice-input.js';
 import { getTemplates, addTemplate, removeTemplate, computeFrequentSuggestions } from '../quick-templates.js';
@@ -37,6 +37,21 @@ const RECEIPT_ICON = svgIcon('receipt', 16);
 /* ==========================================================================
    Modale Saisie express (création + édition)
    ========================================================================== */
+/* Transaction créée par un autre écran (dette/créance, investissement, tontine, dépense partagée) : son
+   montant, sa date, son portefeuille et son type sont aussi portés par l'élément d'origine (remboursement,
+   apport, cotisation…). Les modifier ici désynchroniserait les deux (le solde du portefeuille ne
+   correspondrait plus à la dette ou à l'investissement) ; la supprimer ici laisserait l'élément orphelin.
+   On les verrouille donc : seuls la note, les étiquettes, la catégorie et le justificatif restent libres. */
+function transactionLinkKind(t) {
+  if (!t) return null;
+  if (t.debtId) return 'debt';
+  if (t.investmentId) return 'investment';
+  if (t.tontineId) return 'tontine';
+  if (t.sharedExpenseId) return 'shared';
+  return null;
+}
+const LINK_KIND_LABELS = { debt: 'une dette ou créance', investment: 'un investissement', tontine: 'une tontine', shared: 'une dépense partagée' };
+
 export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null, prefill = null } = {}) {
   document.querySelectorAll('#modal-root .modal-backdrop[data-modal="quick-add"]').forEach((el) => el.remove());
   const tpl = document.getElementById('tpl-modal-quick-add');
@@ -75,6 +90,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
   const walletSelect = form.elements.walletId;
   const targetWalletSelect = form.elements.targetWalletId;
   const categorySelect = form.elements.categoryId;
+  const lockedLink = editTransaction ? transactionLinkKind(editTransaction) : null;
   const receiptInput = form.elements.receipt;
   const receiptTriggerBtn = backdrop.querySelector('#qa-receipt-trigger');
   const receiptPreviewWrap = backdrop.querySelector('#qa-receipt-preview');
@@ -429,6 +445,11 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       else categorySelect.value = editTransaction.categoryId || '';
       splitToggleRow.hidden = true;
     }
+    if (lockedLink) {
+      form.insertAdjacentHTML('afterbegin', `<p class="alert alert-warn mb-12">${escapeHtml(tr('Cette transaction est liée à {kind} : le montant, la date, le portefeuille et le type ne se modifient que depuis son écran d\'origine.', { kind: tr(LINK_KIND_LABELS[lockedLink]) }))}</p>`);
+      for (const el of [form.elements.amount, form.elements.date, walletSelect, targetWalletSelect]) if (el) el.disabled = true;
+      segButtons.forEach((b) => { b.disabled = true; });
+    }
     // Favori sans montant fixe touché depuis le tableau de bord : formulaire pré-rempli, montant à saisir.
     refreshAmountHint();
     if (prefill && !editTransaction) await applyTemplate(prefill);
@@ -451,8 +472,8 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     e.preventDefault();
     const fd = new FormData(form);
     const type = currentType;
-    const walletId = fd.get('walletId');
-    const targetWalletId = type === 'transfer' ? fd.get('targetWalletId') : null;
+    const walletId = lockedLink ? editTransaction.walletId : fd.get('walletId');
+    const targetWalletId = type === 'transfer' ? (lockedLink ? editTransaction.targetWalletId : fd.get('targetWalletId')) : null;
 
     if (!walletId) { showToast(tr('Créez au moins un portefeuille avant de saisir une transaction.')); return; }
     if (type === 'transfer' && walletId === targetWalletId) { showToast(tr('Choisissez deux portefeuilles différents.')); return; }
@@ -477,13 +498,15 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       const date = fd.get('date');
       const note = (fd.get('note') || '').trim().slice(0, 140);
       const tags = parseTags(fd.get('tags'));
-      for (const r of rows) {
-        const splitRecord = {
-          id: uuid(), type, walletId, targetWalletId: null,
-          categoryId: r.categoryId || null, amount: r.amount, date, note, tags, receiptBlob, receiptOptimized,
-          reconciled: false, splitGroupId, createdAt: new Date().toISOString(),
-        };
-        await dbAdd(STORES.TRANSACTIONS, splitRecord);
+      // Toutes les lignes dans UNE transaction IndexedDB : sinon une interruption au milieu laissait un achat
+      // scindé à moitié enregistré (solde du portefeuille faux, lignes manquantes).
+      const splitRecords = rows.map((r) => ({
+        id: uuid(), type, walletId, targetWalletId: null,
+        categoryId: r.categoryId || null, amount: r.amount, date, note, tags, receiptBlob, receiptOptimized,
+        reconciled: false, splitGroupId, createdAt: new Date().toISOString(),
+      }));
+      await dbWriteBatch(splitRecords.map((value) => ({ store: STORES.TRANSACTIONS, type: 'add', value })));
+      for (const splitRecord of splitRecords) {
         await logAudit({ entityType: 'transaction', entityId: splitRecord.id, action: 'create', after: splitRecord, note: tr('Transaction scindée') });
       }
       close();
@@ -504,8 +527,8 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       walletId,
       targetWalletId,
       categoryId: type !== 'transfer' ? (fd.get('categoryId') || null) : null,
-      amount: safeNumber(parseFloat(fd.get('amount'))),
-      date: fd.get('date'),
+      amount: lockedLink ? editTransaction.amount : safeNumber(parseFloat(fd.get('amount'))),
+      date: lockedLink ? editTransaction.date : fd.get('date'),
       note: (fd.get('note') || '').trim().slice(0, 140),
       tags: parseTags(fd.get('tags')),
       receiptBlob,
@@ -785,6 +808,13 @@ async function bulkSetReconciled(reconciled) {
 }
 
 async function bulkDelete() {
+  const allTx = await dbGetAll(STORES.TRANSACTIONS);
+  const linkedIds = new Set(allTx.filter((x) => selectedIds.has(x.id) && transactionLinkKind(x)).map((x) => x.id));
+  if (linkedIds.size) {
+    linkedIds.forEach((id) => selectedIds.delete(id));
+    showToast(tr('{count} transaction(s) liée(s) à une dette, un investissement, une tontine ou une dépense partagée ne peuvent pas être supprimées ici : supprimez l\'élément d\'origine.', { count: linkedIds.size }));
+    if (!selectedIds.size) { notifyDataChanged('transactions'); return; }
+  }
   const count = selectedIds.size;
   const ok = await confirmDialog(tr('Supprimer {count} transaction(s) sélectionnée(s) ?', { count }), { danger: true, requirePin: true, confirmText: tr('Supprimer') });
   if (!ok) return;
@@ -911,6 +941,10 @@ export function initTransactionsModule() {
     } else if (btn.dataset.action === 'edit') {
       openQuickAdd({ editTransaction: t });
     } else if (btn.dataset.action === 'delete') {
+      if (transactionLinkKind(t)) {
+        showToast(tr('Cette transaction est liée à {kind} : supprimez l\'élément d\'origine (elle sera retirée avec lui).', { kind: tr(LINK_KIND_LABELS[transactionLinkKind(t)]) }));
+        return;
+      }
       const ok = await confirmDialog(tr('Supprimer cette transaction ?'), { danger: true, requirePin: true, confirmText: tr('Supprimer') });
       if (ok) {
         await dbDelete(STORES.TRANSACTIONS, txId);

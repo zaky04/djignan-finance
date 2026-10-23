@@ -3,7 +3,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, dbGetAllByIndex, logAudit, getSetting, setSetting } from '../db.js';
-import { getAllWalletBalances, computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthlyBudgetSummary, computeEndOfMonthForecast, getEnrichedTransactions, computeSavingsAllocations, walletUsage, isDailyWallet, withdrawalLockedUntil } from '../ledger.js';
+import { getAllWalletBalances, computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeBudgetVsActual, computeSafeToSpend, computeEndOfMonthForecast, getEnrichedTransactions, computeSavingsAllocations, walletUsage, isDailyWallet, withdrawalLockedUntil } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, currentMonthKey, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { renderExpensesByCategoryChart } from '../charts.js';
@@ -17,10 +17,10 @@ function setAmount(el, value, currency) {
 }
 
 async function renderWealthHero() {
-  const [{ total, currency }, netWorthHistory, monthlyBudget, forecast, composition] = await Promise.all([
+  const [{ total, currency }, netWorthHistory, budgetRows, forecast, composition] = await Promise.all([
     computeNetWorth(),
     computeNetWorthHistory(6),
-    computeMonthlyBudgetSummary(currentMonthKey()),
+    computeBudgetVsActual(currentMonthKey()),
     computeEndOfMonthForecast(),
     computeNetWorthComposition(),
   ]);
@@ -49,11 +49,7 @@ async function renderWealthHero() {
     }
   }
 
-  const upcomingBillsTotal = forecast.upcoming
-    .filter((u) => u.type === 'expense')
-    .reduce((sum, u) => sum + u.amountBase, 0);
-  const reservedBudget = Math.max(0, monthlyBudget.remaining);
-  const safeToSpend = forecast.current - upcomingBillsTotal - reservedBudget;
+  const { safeToSpend } = computeSafeToSpend(forecast, budgetRows);
   setAmount(document.getElementById('safe-to-spend-value'), safeToSpend, forecast.currency);
   document.getElementById('hero-safe-to-spend')?.classList.toggle('is-negative', safeToSpend < 0);
   const safeTrendEl = document.getElementById('safe-to-spend-trend');
@@ -524,6 +520,11 @@ export function initWalletsModule() {
       // Archiver ou supprimer un portefeuille le retire de tous les sélecteurs : une récurrence active
       // qui le débite continuerait à le faire en silence, sans qu'on puisse la voir ni la corriger.
       if (!wallet.archived) {
+        const linkedGoal = (await dbGetAll(STORES.SAVINGS_GOALS)).find((g) => !g.archived && (g.walletIds || []).includes(walletId));
+        if (linkedGoal) {
+          showToast(t("Ce portefeuille est lié à l'objectif d'épargne « {name} » : déliez-le d'abord.", { name: linkedGoal.name }));
+          return;
+        }
         const linkedRec = (await dbGetAll(STORES.RECURRING)).filter((r) => r.active && r.walletId === walletId);
         if (linkedRec.length) {
           showToast(t('Ce portefeuille est utilisé par {count} récurrence(s) active(s) : changez-les ou désactivez-les d\'abord.', { count: linkedRec.length }));

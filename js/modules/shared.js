@@ -20,7 +20,7 @@
    remboursement réel plus tard). */
 
 import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, logAudit, getSetting } from '../db.js';
-import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
+import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber, ZERO_DECIMAL_CURRENCIES } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { isDailyWallet } from '../ledger.js';
 import { t } from '../i18n.js';
@@ -191,7 +191,11 @@ async function openSharedExpenseModal(participants, defaultCurrency) {
       myTransactionId: null,
       createdAt: new Date().toISOString(),
     };
-    const share = record.amount / splitAmong.length;
+    // Part arrondie à la précision de la devise (entier pour XOF/XAF/JPY, centimes sinon), vers le bas : une part
+    // de 333,3333 F ne pourrait jamais être remboursée exactement (la créance resterait « en cours » pour 0,33 F
+    // alors que l'écran affiche 0). Le reliquat d'arrondi reste à la charge de celui qui a payé.
+    const factor = ZERO_DECIMAL_CURRENCIES.has(currency) ? 1 : 100;
+    const share = Math.floor((record.amount / splitAmong.length) * factor + 1e-9) / factor;
     const isMePaying = meParticipant && record.paidBy === meParticipant.id;
     const iOwe = meParticipant && !isMePaying && splitAmong.includes(meParticipant.id);
     let touchesMoney = false;
@@ -224,7 +228,7 @@ async function openSharedExpenseModal(participants, defaultCurrency) {
       // réglable depuis Dettes & créances (pas de transaction d'ouverture ici — l'argent a déjà
       // bougé via myTx ci-dessus, une transaction d'ouverture en plus doublerait le montant compté).
       for (const pid of splitAmong) {
-        if (pid === meParticipant.id) continue;
+        if (pid === meParticipant.id || !(share > 0)) continue;
         const participant = participants.find((p) => p.id === pid);
         await createLinkedDebt({
           type: 'receivable',
@@ -236,7 +240,7 @@ async function openSharedExpenseModal(participants, defaultCurrency) {
           sharedExpenseId: record.id,
         });
       }
-    } else if (iOwe) {
+    } else if (iOwe && share > 0) {
       // Rien ne bouge dans mon portefeuille maintenant (je n'ai encore rien payé en réalité) : ma
       // part devient une dette envers le payeur, réglée plus tard depuis Dettes & créances.
       const payer = participants.find((p) => p.id === record.paidBy);

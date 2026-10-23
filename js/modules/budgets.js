@@ -398,6 +398,15 @@ function openCategoryModal(category = null, presetParentId = null, presetType = 
     e.preventDefault();
     const fd = new FormData(form);
     const before = category ? { ...category } : null;
+    if (category) {
+      // Une catégorie qui a des sous-catégories ne peut pas devenir elle-même une sous-catégorie (3 niveaux :
+      // les petits-enfants n'apparaîtraient nulle part), et son type ne change pas tant que des
+      // transactions ou sous-catégories s'y rattachent (une dépense passerait sous une catégorie de recettes).
+      const [allCategories, allTransactions] = await Promise.all([dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.TRANSACTIONS)]);
+      const hasChildren = allCategories.some((c) => c.parentId === category.id);
+      if (hasChildren && fd.get('parentId')) { showToast(t("Cette catégorie a des sous-catégories : elle ne peut pas devenir elle-même une sous-catégorie.")); return; }
+      if (fd.get('type') !== category.type && (hasChildren || allTransactions.some((x) => x.categoryId === category.id))) { showToast(t('Le type ne peut plus changer : cette catégorie a des sous-catégories ou des transactions.')); return; }
+    }
     const record = {
       id: category?.id || uuid(),
       name: fd.get('name').trim(),
@@ -460,7 +469,16 @@ async function renderCategoriesTab(container) {
       if (hasChildren) { showToast(t("Supprimez d'abord les sous-catégories.")); return; }
       const ok = await confirmDialog(t('Supprimer la catégorie "{name}" ? Les transactions déjà enregistrées resteront mais afficheront "Sans catégorie".', { name: cat.name }), { danger: true, requirePin: true, confirmText: t('Supprimer') });
       if (ok) {
-        await dbDelete(STORES.CATEGORIES, cat.id);
+        // Une catégorie supprimée ne doit laisser derrière elle ni budget fantôme (limite sans catégorie),
+        // ni règle d'auto-catégorisation qui continuerait à assigner une catégorie inexistante, ni
+        // récurrence pointant dessus : on les nettoie dans la même transaction que la suppression.
+        const [allBudgets, allRules, allRecurring] = await Promise.all([dbGetAll(STORES.BUDGETS), dbGetAll(STORES.CATEGORIZATION_RULES), dbGetAll(STORES.RECURRING)]);
+        await dbWriteBatch([
+          { store: STORES.CATEGORIES, type: 'delete', value: cat.id },
+          ...allBudgets.filter((x) => x.categoryId === cat.id).map((x) => ({ store: STORES.BUDGETS, type: 'delete', value: x.id })),
+          ...allRules.filter((x) => x.categoryId === cat.id).map((x) => ({ store: STORES.CATEGORIZATION_RULES, type: 'delete', value: x.id })),
+          ...allRecurring.filter((x) => x.categoryId === cat.id).map((x) => ({ store: STORES.RECURRING, type: 'put', value: { ...x, categoryId: null } })),
+        ]);
         await logAudit({ entityType: 'category', entityId: cat.id, action: 'delete', before: cat });
         showToast(t('Catégorie supprimée.'));
         notifyDataChanged('categories');

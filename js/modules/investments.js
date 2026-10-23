@@ -4,7 +4,7 @@
    comparatif du rendement annualisé (yield) par classe d'actif.
    ========================================================================== */
 
-import { STORES, dbGetAll, dbPut, dbDelete, dbAdd, logAudit, getSetting, setSetting } from '../db.js';
+import { STORES, dbGetAll, dbPut, dbDelete, dbAdd, dbWriteBatch, logAudit, getSetting, setSetting } from '../db.js';
 import { investmentValueAsOf, getExchangeRates, computeInvestmentValueHistory, isDailyWallet } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
@@ -806,25 +806,38 @@ async function openHistoryModal(inv) {
     const entryId = e.target.closest('[data-entry-id]').dataset.entryId;
     // Apports issus du réinvestissement de ce dividende : ils n'ont de sens qu'avec lui, on les retire
     // en même temps plutôt que de laisser du capital sans origine.
-    const reinvested = (await dbGetAll(STORES.INVESTMENT_ENTRIES)).filter((en) => en.sourceEntryId === entryId);
-    const ok = await confirmDialog(
-      reinvested.length
+    const allEntries = await dbGetAll(STORES.INVESTMENT_ENTRIES);
+    const reinvested = allEntries.filter((en) => en.sourceEntryId === entryId);
+    // Apport financé par un prêt : le prêt n'a plus de raison d'être sans lui (sinon il resterait une dette
+    // fantôme, et le patrimoine net baisserait de son montant). Refusé s'il a déjà été remboursé en partie :
+    // des mouvements de portefeuille y sont alors liés, à régler depuis Dettes & créances.
+    const entry = allEntries.find((en) => en.id === entryId);
+    const loanDebt = entry?.loanDebtId ? (await dbGetAll(STORES.DEBTS)).find((x) => x.id === entry.loanDebtId) || null : null;
+    if (loanDebt && (await dbGetAll(STORES.DEBT_PAYMENTS)).some((p) => p.debtId === loanDebt.id)) {
+      showToast(t("Cet apport est financé par un prêt déjà remboursé en partie : réglez ou supprimez d'abord ce prêt dans Dettes & créances."));
+      return;
+    }
+    const confirmMessage = loanDebt
+      ? t("Supprimer cette entrée d'historique et le prêt de {amount} qui la finance ?", { amount: formatCurrency(loanDebt.principal, loanDebt.currency) })
+      : reinvested.length
         ? t("Supprimer cette entrée d'historique et les {count} réinvestissement(s) qui en découlent ?", { count: reinvested.length })
-        : t("Supprimer cette entrée d'historique ?"),
-      { danger: true, requirePin: true, confirmText: t('Supprimer') },
-    );
+        : t("Supprimer cette entrée d'historique ?");
+    const ok = await confirmDialog(confirmMessage, { danger: true, requirePin: true, confirmText: t('Supprimer') });
     if (ok) {
       const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((tx) => tx.investmentEntryId === entryId);
-      for (const tx of linkedTx) await dbDelete(STORES.TRANSACTIONS, tx.id);
-      for (const en of reinvested) {
-        await dbDelete(STORES.INVESTMENT_ENTRIES, en.id);
-        await logAudit({ entityType: 'investmentEntry', entityId: en.id, action: 'delete', before: en });
-      }
-      await dbDelete(STORES.INVESTMENT_ENTRIES, entryId);
+      // Une seule transaction IndexedDB : tout ou rien.
+      await dbWriteBatch([
+        ...linkedTx.map((tx) => ({ store: STORES.TRANSACTIONS, type: 'delete', value: tx.id })),
+        ...reinvested.map((en) => ({ store: STORES.INVESTMENT_ENTRIES, type: 'delete', value: en.id })),
+        { store: STORES.INVESTMENT_ENTRIES, type: 'delete', value: entryId },
+        ...(loanDebt ? [{ store: STORES.DEBTS, type: 'delete', value: loanDebt.id }] : []),
+      ]);
+      for (const en of reinvested) await logAudit({ entityType: 'investmentEntry', entityId: en.id, action: 'delete', before: en });
+      if (loanDebt) await logAudit({ entityType: 'debt', entityId: loanDebt.id, action: 'delete', before: loanDebt, note: t("Prêt supprimé avec l'apport qu'il finançait") });
       await logAudit({ entityType: 'investmentEntry', entityId: entryId, action: 'delete' });
       modal.close();
       showToast(t('Entrée supprimée.'));
-      notifyDataChanged(linkedTx.length ? 'all' : 'investments');
+      notifyDataChanged(linkedTx.length || loanDebt ? 'all' : 'investments');
     }
   });
 }
