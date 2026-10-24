@@ -106,6 +106,10 @@ export const DEFAULT_CATEGORY_LOOK = {
 
 const DEFAULT_ACCENT = '#1f5fa6';
 
+/** La couleur d'une catégorie est écrite dans des attributs style="…" : une sauvegarde importée (fichier forgé)
+    pourrait y glisser du CSS (« red;background:url(…) »). Seule une couleur hexadécimale est acceptée. */
+const safeColor = (c) => (typeof c === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c) ? c : null);
+
 /** Icône et couleur d'une catégorie SI elle en a une (choisie à la main, ou catégorie par défaut reconnue par son nom,
     en français ou traduit) ; sinon null — l'appelant garde alors son repli (ex. la flèche entrée/sortie d'une ligne). */
 export function knownCategoryLook(cat) {
@@ -113,10 +117,10 @@ export function knownCategoryLook(cat) {
   const byName = Object.entries(DEFAULT_CATEGORY_LOOK).find(([fr]) => cat.name === fr || cat.name === t(fr));
   const hasIcon = CATEGORY_ICON_KEYS.includes(cat.icon);
   if (!hasIcon && !byName) return null;
-  return { icon: hasIcon ? cat.icon : byName[1].icon, color: cat.color || (byName ? byName[1].color : DEFAULT_ACCENT) };
+  return { icon: hasIcon ? cat.icon : byName[1].icon, color: safeColor(cat.color) || (byName ? byName[1].color : DEFAULT_ACCENT) };
 }
 
 /** Comme knownCategoryLook, avec l'étiquette bleue en repli. */
 export function categoryLook(cat) {
-  return knownCategoryLook(cat) || { icon: 'tag', color: (cat && cat.color) || DEFAULT_ACCENT };
+  return knownCategoryLook(cat) || { icon: 'tag', color: safeColor(cat && cat.color) || DEFAULT_ACCENT };
 }

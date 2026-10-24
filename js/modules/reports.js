@@ -7,14 +7,15 @@
 import {
   computeNetWorth, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeCategoryActuals,
   computeMonthlyTypeHistory, getCategoriesByType, computeMonthlyNetSavingsHistory, computeMonthlyBudgetVsActualHistory, computeNetWorthHistoryForYear,
-  computeNetWorthComposition, computeInvestmentEntryTotals, computeTagSummary,
+  computeNetWorthComposition, computeInvestmentEntryTotals, computeTagSummary, computeMobileMoneyFees,
 } from '../ledger.js';
-import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, localISODate, showToast, escapeHtml } from '../utils.js';
+import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, localISODate, showToast, escapeHtml, intlLocale } from '../utils.js';
 import { exportTransactionsCsv, exportInvestmentEntriesCsv } from '../backup.js';
 import { STORES, dbGetAll, getSetting } from '../db.js';
 import { healthScorePanelHtml, calendarPanelHtml, wireCalendarPanel } from './reports-extras.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderMultiTrendChart, renderNetSavingsBarChart, trimLeadingZeros } from '../charts.js';
 import { loadMonthlyRecap, recapHighlights, recapAsText, shareRecapImage } from '../monthly-recap.js';
+import { loadAnnualRecap, annualHighlights, annualAsText, shareAnnualImage } from '../annual-recap.js';
 import { t } from '../i18n.js';
 
 /** formatCurrency() insère des espaces insécables/fines (ex: séparateur de milliers en fr-FR) que
@@ -46,13 +47,46 @@ let repSavingsAsPercent = false;
 async function categoryOptionsHtml(type, selectedId) {
   const cats = await getCategoriesByType(type);
   return `<option value="">${t('Toutes catégories')}</option>` +
-    cats.map((c) => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    cats.map((c) => `<option value="${escapeHtml(c.id)}" ${c.id === selectedId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
 }
 
 /** Onglets « Dépenses et revenus » et « Budget et patrimoine » : les graphiques de Rapports, répartis par
     sujet au lieu d'un seul mur de sept cartes. Les graphiques annuels partagent le sélecteur d'année de
     la barre de période (reportYear), ceux du mois le sélecteur de mois (reportMonthKey) — un seul
     réglage cohérent sur toute la page. */
+/** Panneau « Frais Mobile Money » : ce que coûtent les envois et retraits, par opérateur et par mois. */
+async function mobileMoneyFeesPanelHtml(monthKey) {
+  const fees = await computeMobileMoneyFees(monthKey, 6);
+  const max = Math.max(1, ...fees.history.map((h) => h.total));
+  const body = !fees.hasData
+    ? `<div class="empty-state">${t("Aucun frais Mobile Money enregistré. Importez vos SMS de confirmation (Transactions > SMS) : les frais sont notés à part et totalisés ici.")}</div>`
+    : `
+      <div class="fee-hero">
+        <div class="fee-hero-value amount">${formatCurrency(fees.month.total, fees.currency)}</div>
+        <div class="fee-hero-sub">${fees.month.count
+          ? t('payés en {month} sur {count} opération(s) ({pct} % de vos dépenses)', { month: formatMonthLabel(monthKey), count: fees.month.count, pct: fees.month.share.toFixed(1) })
+          : t('Aucun frais en {month}', { month: formatMonthLabel(monthKey) })}</div>
+      </div>
+      ${fees.month.operators.map((o) => `
+        <div class="tx-row">
+          <div class="tx-main"><div class="tx-title">${escapeHtml(o.name)}</div>
+            <div class="share-bar"><span style="width:${Math.max(4, (o.total / Math.max(fees.month.total, 1)) * 100).toFixed(0)}%"></span></div></div>
+          <div class="tx-amount amount neg">${formatCurrency(o.total, fees.currency)}</div>
+        </div>`).join('')}
+      <div class="mini-bars" role="img" aria-label="${escapeHtml(t('Frais des 6 derniers mois'))}">
+        ${fees.history.map((h) => `
+          <div class="mini-bar"><span class="mini-bar-track"><span class="mini-bar-fill" style="height:${Math.max(3, (h.total / max) * 100).toFixed(0)}%"></span></span>
+            <span class="mini-bar-label">${escapeHtml(new Intl.DateTimeFormat(intlLocale(), { month: 'short' }).format(new Date(Number(h.monthKey.slice(0, 4)), Number(h.monthKey.slice(5, 7)) - 1, 1)))}</span>
+            <span class="mini-bar-value amount">${formatCurrency(h.total, fees.currency)}</span></div>`).join('')}
+      </div>
+      <p class="fs-13 c-muted mt-8">${t("Depuis janvier : {ytd}. À ce rythme, {projected} sur l'année.", { ytd: formatCurrency(fees.yearToDate, fees.currency), projected: formatCurrency(fees.projectedYear, fees.currency) })}</p>`;
+  return `
+    <div class="panel mt-16" id="mm-fees-panel">
+      <div class="panel-header"><h3>${t('Frais Mobile Money')} <span class="chart-card-period">· ${formatMonthLabel(monthKey)}</span></h3></div>
+      ${body}
+    </div>`;
+}
+
 async function spendingTabHtml() {
   const [expenseCatOptions, incomeCatOptions] = await Promise.all([
     categoryOptionsHtml('expense', repExpensesCategoryId),
@@ -97,7 +131,8 @@ async function spendingTabHtml() {
         </div>
         <div class="chart-canvas-wrap"><canvas id="rep-chart-net-savings"></canvas></div>
       </div>
-    </div>`;
+    </div>
+    ${await mobileMoneyFeesPanelHtml(reportMonthKey)}`;
 }
 
 async function budgetTabHtml() {
@@ -411,6 +446,45 @@ function wireRecapPanel(container, monthKey) {
   });
 }
 
+/** « Bilan de l'année à partager » : même principe que le bilan du mois, sur l'année choisie. */
+async function annualRecapPanelHtml(year) {
+  const recap = await loadAnnualRecap(year);
+  if (!recap.hasData) return '';
+  const lines = annualHighlights(recap);
+  return `
+    <div class="panel mt-16" id="annual-recap-panel">
+      <div class="panel-header"><h3>${t("Bilan de l'année à partager")} <span class="chart-card-period">· ${year}</span></h3></div>
+      <ul style="margin:0 0 12px;padding-left:18px;line-height:1.6;" class="fs-14">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;" class="fs-13 mb-12">
+        <input type="checkbox" id="annual-recap-hide-amounts"> ${t('Masquer les montants (garder les pourcentages)')}
+      </label>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;">
+        <button type="button" class="btn btn-primary" id="annual-recap-share-btn">${t("Partager l'image")}</button>
+        <button type="button" class="btn btn-ghost" id="annual-recap-copy-btn">${t('Copier le texte')}</button>
+      </div>
+    </div>`;
+}
+
+function wireAnnualRecapPanel(container, year) {
+  const panel = container.querySelector('#annual-recap-panel');
+  if (!panel) return;
+  const hide = () => panel.querySelector('#annual-recap-hide-amounts').checked;
+  panel.querySelector('#annual-recap-hide-amounts').addEventListener('change', async () => {
+    const recap = await loadAnnualRecap(year);
+    panel.querySelector('ul').innerHTML = annualHighlights(recap, { hideAmounts: hide() }).map((l) => `<li>${escapeHtml(l)}</li>`).join('');
+  });
+  panel.querySelector('#annual-recap-share-btn').addEventListener('click', async () => {
+    const recap = await loadAnnualRecap(year);
+    const outcome = await shareAnnualImage(recap, { hideAmounts: hide() });
+    if (outcome === 'downloaded') showToast(t("Image téléchargée : envoyez-la depuis votre galerie."));
+  });
+  panel.querySelector('#annual-recap-copy-btn').addEventListener('click', async () => {
+    const recap = await loadAnnualRecap(year);
+    try { await navigator.clipboard.writeText(annualAsText(recap, { hideAmounts: hide() })); showToast(t('Texte copié.')); }
+    catch { showToast(t("Impossible de copier : sélectionnez le texte à la main.")); }
+  });
+}
+
 /** « Par étiquette » : entrées, sorties et résultat du mois pour chaque étiquette (ex : « pro » pour
     une activité). Masqué tant qu'aucune opération n'est étiquetée. */
 async function tagSummaryPanelHtml(monthKey) {
@@ -448,6 +522,7 @@ async function summaryTabHtml() {
       <button type="button" class="btn btn-primary" id="rep-annual-pdf-btn">${t('Générer le bilan annuel PDF')}</button>
     </div>
     ${await recapPanelHtml(reportMonthKey)}
+    ${await annualRecapPanelHtml(reportYear)}
     ${await tagSummaryPanelHtml(reportMonthKey)}`;
 }
 
@@ -498,6 +573,7 @@ export async function renderReports() {
 
   if (reportTab === 'summary') {
     wireRecapPanel(container, reportMonthKey);
+    wireAnnualRecapPanel(container, reportYear);
     container.querySelector('#rep-annual-pdf-btn').onclick = () => generateAnnualPdfReport();
     container.querySelector('#rep-pdf-btn').onclick = () => generatePdfReport();
     container.querySelector('#rep-csv-month-btn').onclick = async () => { await exportTransactionsCsv(reportMonthKey); showToast(t('Export CSV généré.')); };

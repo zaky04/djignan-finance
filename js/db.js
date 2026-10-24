@@ -345,6 +345,7 @@ const REQUIRED_FIELDS = {
   [STORES.TONTINES]: { name: 'string', amount: 'number', currency: 'string' },
 };
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}/;
+const UNSAFE_ID_CHARS = /[<>"'`&\\\s]/;
 
 function rowMatchesRequiredFields(store, row) {
   const rules = REQUIRED_FIELDS[store];
@@ -376,6 +377,18 @@ export async function importAllData(data, { merge = false } = {}) {
     for (const row of rows) {
       const key = row && typeof row === 'object' && !Array.isArray(row) ? row[keyPath] : undefined;
       if ((typeof key !== 'string' && typeof key !== 'number') || key === '') throw new Error('Fichier de sauvegarde invalide.');
+      // Les identifiants sont écrits tels quels dans des attributs HTML (data-…-id="…") : un fichier forgé ne doit pas
+      // pouvoir y glisser de quoi en sortir. Un vrai identifiant (UUID…) ne contient jamais ces caractères.
+      if (store !== STORES.SETTINGS && typeof key === 'string' && UNSAFE_ID_CHARS.test(key)) throw new Error('Fichier de sauvegarde invalide.');
+      // Même contrôle sur les champs qui référencent un autre enregistrement (categoryId, walletId, walletIds…) :
+      // ils finissent eux aussi dans des attributs HTML (data-…, value des <option>).
+      if (store !== STORES.SETTINGS) {
+        for (const [field, v] of Object.entries(row)) {
+          if (!/Ids?$/.test(field)) continue;
+          const refs = Array.isArray(v) ? v : [v];
+          if (refs.some((r) => typeof r === 'string' && UNSAFE_ID_CHARS.test(r))) throw new Error('Fichier de sauvegarde invalide.');
+        }
+      }
     }
     const cleaned = rows.map(sanitizeImportedRow);
     if (!cleaned.every((row) => rowMatchesRequiredFields(store, row))) throw new Error('Fichier de sauvegarde invalide.');

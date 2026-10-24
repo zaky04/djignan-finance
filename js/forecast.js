@@ -18,7 +18,8 @@ import { STORES, dbGetAll, getSetting } from './db.js';
 import { walletBalancesAsOf, isDailyWallet } from './ledger.js';
 import { advanceDate } from './recurrence.js';
 import { roundDate } from './modules/tontines.js';
-import { convertAmount, localISODate, todayISO } from './utils.js';
+import { convertAmount, localISODate, todayISO, ZERO_DECIMAL_CURRENCIES } from './utils.js';
+import { unpaidInstallments } from './loan-schedule.js';
 
 function addDays(iso, n) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -63,6 +64,16 @@ export function buildCashflowForecast({ wallets = [], transactions = [], recurri
 
   // 2. Dettes et créances à échéance, pour ce qui reste dû.
   for (const d of debts) {
+    // Prêt à intérêts avec échéancier : chaque mensualité restante pèse à sa date (au lieu d'une seule échéance finale).
+    const installments = unpaidInstallments(d, payments, today, ZERO_DECIMAL_CURRENCIES.has(d.currency) ? 0 : 2);
+    if (installments.length) {
+      for (const row of installments) {
+        const amount = toBase(row.payment, d.currency);
+        if (d.type === 'debt') push(row.date, d.personName, -amount, 'debt', true);
+        else push(row.date, d.personName, amount, 'receivable', false);
+      }
+      continue;
+    }
     if (d.status === 'paid' || !d.dueDate) continue;
     const paid = payments.filter((p) => p.debtId === d.id).reduce((s, p) => s + p.amount, 0);
     const remaining = Math.max(0, (d.principal || 0) - paid);

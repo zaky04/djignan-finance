@@ -17,7 +17,8 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, getSetting, setSetting } from './db.js';
-import { formatCurrency, formatDate, todayISO } from './utils.js';
+import { formatCurrency, formatDate, todayISO, ZERO_DECIMAL_CURRENCIES } from './utils.js';
+import { unpaidInstallments } from './loan-schedule.js';
 import { roundDate } from './modules/tontines.js';
 import { t } from './i18n.js';
 
@@ -64,6 +65,13 @@ export function buildReminderPlan({ recurring = [], debts = [], payments = [], t
   }
 
   for (const d of debts) {
+    const nextInstallment = unpaidInstallments(d, payments, todayISO(), ZERO_DECIMAL_CURRENCIES.has(d.currency) ? 0 : 2)[0];
+    if (nextInstallment) {
+      const label = nextInstallment.date < todayISO() ? t('Mensualité en retard') : (d.type === 'debt' ? t('Mensualité de prêt à venir') : t('Mensualité à encaisser'));
+      const body = t('{name} — {amount} le {date}', { name: d.personName, amount: formatCurrency(nextInstallment.payment, d.currency), date: formatDate(nextInstallment.date) });
+      push(`inst-${d.id}-${nextInstallment.date}`, nextInstallment.date < todayISO() ? todayISO() : nextInstallment.date, 1, label, body);
+      push(`inst-${d.id}-${nextInstallment.date}`, nextInstallment.date < todayISO() ? todayISO() : nextInstallment.date, 0, label, body);
+    }
     if (d.status === 'paid' || !d.dueDate) continue;
     const paid = payments.filter((p) => p.debtId === d.id).reduce((s, p) => s + p.amount, 0);
     const remaining = Math.max(0, (d.principal || 0) - paid);

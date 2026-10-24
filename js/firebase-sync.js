@@ -158,6 +158,15 @@ function base64UrlEncode(bytes) {
   return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/** Paramètre `state` (RFC 6749 §10.12) : valeur aléatoire envoyée à Google puis exigée au retour, pour qu'une
+    redirection fabriquée par un tiers ne soit pas prise pour la réponse à NOTRE demande de connexion. Le PKCE
+    protège déjà l'échange du code ; `state` ferme aussi la porte à une réponse non sollicitée. */
+function generateOAuthState() {
+  const array = new Uint8Array(16);
+  crypto.getRandomValues(array);
+  return base64UrlEncode(array);
+}
+
 function generateCodeVerifier() {
   const array = new Uint8Array(32);
   crypto.getRandomValues(array);
@@ -202,8 +211,10 @@ async function signInWithGoogleDesktop() {
   const redirectUri = `http://127.0.0.1:${port}`;
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await pkceChallenge(codeVerifier);
+  const oauthState = generateOAuthState();
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('state', oauthState);
   authUrl.searchParams.set('client_id', googleDesktopClientId);
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('response_type', 'code');
@@ -219,8 +230,10 @@ async function signInWithGoogleDesktop() {
     const pending = pendingNativeCallback;
     pendingNativeCallback = null;
     if (!pending) return;
-    const { code, error } = evt.payload;
-    if (error) pending.reject(new Error(error));
+    const { code, error, state } = evt.payload;
+    // Le shell Windows actuel ne renvoie pas encore `state` (undefined) : on ne le refuse que s'il est présent ET différent.
+    if (state != null && state !== oauthState) pending.reject(new Error(t('Connexion annulée.')));
+    else if (error) pending.reject(new Error(error));
     else if (code) pending.resolve(code);
     else pending.reject(new Error(t('Connexion annulée.')));
   });
@@ -241,8 +254,10 @@ async function signInWithGoogleAndroid() {
   const { Browser, App } = window.Capacitor.Plugins;
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await pkceChallenge(codeVerifier);
+  const oauthState = generateOAuthState();
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('state', oauthState);
   authUrl.searchParams.set('client_id', googleAndroidClientId);
   authUrl.searchParams.set('redirect_uri', ANDROID_REDIRECT_URI);
   authUrl.searchParams.set('response_type', 'code');
@@ -260,7 +275,8 @@ async function signInWithGoogleAndroid() {
     const params = new URLSearchParams(queryStart >= 0 ? data.url.slice(queryStart + 1) : '');
     const code = params.get('code');
     const error = params.get('error');
-    if (error) pending.reject(new Error(error));
+    if (params.get('state') !== oauthState) pending.reject(new Error(t('Connexion annulée.')));
+    else if (error) pending.reject(new Error(error));
     else if (code) pending.resolve(code);
     else pending.reject(new Error(t('Connexion annulée.')));
   });

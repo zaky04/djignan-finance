@@ -502,6 +502,264 @@ const EN = {
     "Delete this history entry and the {amount} loan that finances it?",
   "Prêt supprimé avec l'apport qu'il finançait":
     "Loan deleted along with the contribution it financed",
+  "dont intérêts : {amount}":
+    "of which interest: {amount}",
+  "Intérêts payés":
+    "Interest paid",
+  "Mensualité prévue":
+    "Planned monthly payment",
+  "Total des intérêts prévus":
+    "Total planned interest",
+  "Échéancier prévu":
+    "Planned schedule",
+  "Capital":
+    "Principal",
+  "Reconnaissance de dette (PDF)":
+    "Acknowledgement of debt (PDF)",
+  "Échéancier":
+    "Repayment schedule",
+  "Intérêts courus (estimation)":
+    "Accrued interest (estimate)",
+  "Intérêts déjà payés":
+    "Interest already paid",
+  "Échéance en retard":
+    "Overdue instalment",
+  "Prochaine mensualité":
+    "Next instalment",
+  "Durée du prêt en mois (optionnel — pour l'échéancier)":
+    "Loan term in months (optional — for the schedule)",
+  "Montant versé (capital + intérêts)":
+    "Amount paid (principal + interest)",
+  "dont intérêts":
+    "of which interest",
+  "Capital remboursé : {capital} · intérêts : {interest} (intérêts courus estimés : {accrued}, modifiable)":
+    "Principal repaid: {capital} · interest: {interest} (estimated accrued interest: {accrued}, editable)",
+  "Intérêts courus estimés depuis le dernier remboursement : {accrued}. Vous pouvez les modifier.":
+    "Estimated interest accrued since the last repayment: {accrued}. You can edit it.",
+  "Les intérêts ({interest}) dépassent le montant versé ({total}) : augmentez le montant versé ou corrigez les intérêts.":
+    "The interest ({interest}) exceeds the amount paid ({total}): increase the amount paid or correct the interest.",
+  "Ce versement ne couvre que des intérêts : le capital restant dû ne baisse pas.":
+    "This payment only covers interest: the outstanding principal does not decrease.",
+  "Intérêts — {name}":
+    "Interest — {name}",
+  "Intérêts d'un prêt":
+    "Loan interest",
+  "Indiquez la durée du prêt (Modifier) pour obtenir l'échéancier.":
+    "Enter the loan term (Edit) to get the repayment schedule.",
+  "Payée":
+    "Paid",
+  "En retard":
+    "Overdue",
+  "À venir":
+    "Upcoming",
+  "Coût total du prêt":
+    "Total cost of the loan",
+  "Retard : il manque {amount} pour être à jour des échéances passées.":
+    "Behind: {amount} is missing to be up to date with past instalments.",
+  "Capital {principal} · intérêts {interest} · restant {balance}":
+    "Principal {principal} · interest {interest} · remaining {balance}",
+  "Enregistrer la prochaine mensualité":
+    "Record the next instalment",
+  "Échéancier — {name}":
+    "Schedule — {name}",
+  "Intérêts de prêt":
+    "Loan interest",
+  "Intérêts de prêt payés":
+    "Loan interest paid",
+  "Acheté via {names}":
+    "Bought via {names}",
+  "Apport auto {amount} {freq} depuis {names}":
+    "Auto contribution {amount} {freq} from {names}",
+  "Apport auto en pause ({amount} {freq})":
+    "Auto contribution paused ({amount} {freq})",
+  "par semaine":
+    "weekly",
+  "par mois":
+    "monthly",
+  "par an":
+    "yearly",
+  "Chaque portefeuille ne peut apparaître qu'une fois.":
+    "Each wallet can only appear once.",
+  "Provisions":
+    "Provisions",
+  "Événement":
+    "Event",
+  "Ex : Tabaski":
+    "e.g. Tabaski",
+  "Montant à prévoir ({currency})":
+    "Amount to plan for ({currency})",
+  "Mois de l'événement":
+    "Month of the event",
+  "Créer la provision":
+    "Create the provision",
+  "Modifier la provision":
+    "Edit the provision",
+  "Nouvelle provision":
+    "New provision",
+  "À mettre de côté : {amount} par mois pendant {count} mois (jusqu'en {month}).":
+    "To set aside: {amount} per month for {count} month(s) (until {month}).",
+  "Cette fête se déplace d'une dizaine de jours chaque année : vérifiez le mois.":
+    "This holiday moves about ten days every year: check the month.",
+  "Provision enregistrée : {amount} par mois pendant {count} mois.":
+    "Provision saved: {amount} per month for {count} month(s).",
+  "Événement passé":
+    "Event passed",
+  "dans {count} mois":
+    "in {count} month(s)",
+  "Mis de côté":
+    "Set aside",
+  "En retard de {amount} : une partie a été dépensée avant l'événement.":
+    "Behind by {amount}: part of it was spent before the event.",
+  "Reconduire pour l'an prochain":
+    "Renew for next year",
+  "Provisions pour événements":
+    "Provisions for events",
+  "+ Nouvelle provision":
+    "+ New provision",
+  "Tabaski, rentrée scolaire, fêtes, cérémonies : une grosse dépense prévisible se prépare mois après mois. Djignan répartit l'objectif en mensualités (budgets en mode enveloppe) pour que l'argent soit là le jour J.":
+    "Tabaski, back to school, holidays, ceremonies: a big predictable expense is prepared month after month. Djignan splits the goal into monthly amounts (envelope-mode budgets) so the money is there on the day.",
+  "Aucune provision. Créez-en une pour la Tabaski, la rentrée scolaire ou vos fêtes de fin d'année.":
+    "No provisions. Create one for Tabaski, back to school or your end-of-year holidays.",
+  "Provision reconduite : {amount} par mois pendant {count} mois.":
+    "Provision renewed: {amount} per month for {count} month(s).",
+  "Supprimer la provision « {name} » ? Ses budgets à venir sont retirés ; la catégorie et vos dépenses restent.":
+    "Delete the provision “{name}”? Its upcoming budgets are removed; the category and your expenses stay.",
+  "Provision supprimée.":
+    "Provision deleted.",
+  "Tabaski":
+    "Tabaski",
+  "Korité":
+    "Eid al-Fitr (Korité)",
+  "Rentrée scolaire":
+    "Back to school",
+  "Fêtes de fin d'année":
+    "End-of-year holidays",
+  "Cérémonie (mariage, baptême, deuil…)":
+    "Ceremony (wedding, baptism, funeral…)",
+  "Autre événement":
+    "Other event",
+  "Aucun frais Mobile Money enregistré. Importez vos SMS de confirmation (Transactions > SMS) : les frais sont notés à part et totalisés ici.":
+    "No Mobile Money fees recorded. Import your confirmation SMS (Transactions > SMS): fees are recorded separately and totalled here.",
+  "payés en {month} sur {count} opération(s) ({pct} % de vos dépenses)":
+    "paid in {month} across {count} operation(s) ({pct}% of your spending)",
+  "Aucun frais en {month}":
+    "No fees in {month}",
+  "Frais des 6 derniers mois":
+    "Fees over the last 6 months",
+  "Depuis janvier : {ytd}. À ce rythme, {projected} sur l'année.":
+    "Since January: {ytd}. At this rate, {projected} over the year.",
+  "Frais Mobile Money":
+    "Mobile Money fees",
+  "Non précisé":
+    "Unspecified",
+  "Bilan de l'année à partager":
+    "Year review to share",
+  "Vous avez dépensé {amount} en {year} ({avg} par mois), soit {pct} % de plus qu'en {prev}.":
+    "You spent {amount} in {year} ({avg} per month), {pct}% more than in {prev}.",
+  "Vous avez dépensé {amount} en {year} ({avg} par mois), soit {pct} % de moins qu'en {prev}.":
+    "You spent {amount} in {year} ({avg} per month), {pct}% less than in {prev}.",
+  "Vous avez dépensé {amount} en {year}, soit {avg} par mois en moyenne.":
+    "You spent {amount} in {year}, about {avg} per month on average.",
+  "Vous avez mis de côté {amount} sur l'année ({pct} % de vos entrées).":
+    "You set aside {amount} over the year ({pct}% of your income).",
+  "Vos dépenses dépassent vos entrées de {amount} sur l'année.":
+    "Your spending exceeds your income by {amount} over the year.",
+  "Votre meilleur mois : {month} ({amount} mis de côté).":
+    "Your best month: {month} ({amount} set aside).",
+  "Le mois le plus cher : {month} ({amount} de dépenses).":
+    "Your priciest month: {month} ({amount} spent).",
+  "Votre patrimoine a progressé de {amount} sur l'année.":
+    "Your net worth grew by {amount} over the year.",
+  "Votre patrimoine a reculé de {amount} sur l'année.":
+    "Your net worth fell by {amount} over the year.",
+  "Mon année — {year}":
+    "My year — {year}",
+  "Article 1 — Reconnaissance de dette":
+    "Article 1 — Acknowledgement of debt",
+  "{debtor} reconnaît devoir à {creditor} la somme de {amount} ({words}){reason}, mise à disposition le {date}.":
+    "{debtor} acknowledges owing {creditor} the sum of {amount} ({words}){reason}, made available on {date}.",
+  ", au titre de : {reason}":
+    ", in respect of: {reason}",
+  "La somme est remboursable en {n} mensualités de {payment}, la première le {first} et la dernière le {last}.":
+    "The sum is repayable in {n} monthly instalments of {payment}, the first on {first} and the last on {last}.",
+  "La somme est remboursable au plus tard le {date}.":
+    "The sum is repayable no later than {date}.",
+  "La somme est remboursable selon les modalités convenues entre les parties.":
+    "The sum is repayable on the terms agreed between the parties.",
+  "Article 2 — Remboursement":
+    "Article 2 — Repayment",
+  "Article 3 — Intérêts":
+    "Article 3 — Interest",
+  "Le prêt est consenti au taux d'intérêt annuel de {rate} %.{extra}":
+    "The loan is granted at an annual interest rate of {rate}%.{extra}",
+  "Total des intérêts prévus : {amount}.":
+    "Total planned interest: {amount}.",
+  "Le prêt est consenti sans intérêt.":
+    "The loan is granted interest-free.",
+  "Article 4 — Sommes déjà remboursées":
+    "Article 4 — Amounts already repaid",
+  "À la date du {date}, {paid} ont déjà été remboursés ; il reste {remaining} à rembourser.":
+    "As of {date}, {paid} has already been repaid; {remaining} remains to be repaid.",
+  "RECONNAISSANCE DE DETTE":
+    "ACKNOWLEDGEMENT OF DEBT",
+  "Fait en deux exemplaires originaux, à {place}, le {date}.":
+    "Done in two original copies, at {place}, on {date}.",
+  "Mention manuscrite du débiteur : « Bon pour reconnaissance de dette de la somme de {amount} ({words}) ».":
+    "Debtor's handwritten note: “Good for acknowledgement of a debt of {amount} ({words})”.",
+  "Document établi pour servir de preuve entre les parties. Il ne remplace ni un acte notarié ni un conseil juridique.":
+    "Document drawn up as evidence between the parties. It does not replace a notarial deed or legal advice.",
+  "Entre les soussignés :":
+    "Between the undersigned:",
+  "Le débiteur":
+    "The debtor",
+  "Le créancier":
+    "The creditor",
+  "Signature précédée de la mention manuscrite":
+    "Signature preceded by the handwritten note",
+  "Lu et approuvé — signature":
+    "Read and approved — signature",
+  "Témoin 1 — nom et signature":
+    "Witness 1 — name and signature",
+  "Témoin 2 — nom et signature":
+    "Witness 2 — name and signature",
+  "Vous devez cette somme : c'est vous qui signez, {name} contresigne.":
+    "You owe this sum: you sign, {name} countersigns.",
+  "{name} vous doit cette somme : c'est {name} qui doit signer, vous contresignez.":
+    "{name} owes you this sum: {name} must sign, you countersign.",
+  "Fait à (ville)":
+    "Done at (city)",
+  "Date du document":
+    "Document date",
+  "Motif du prêt (optionnel)":
+    "Purpose of the loan (optional)",
+  "Modalités de remboursement supplémentaires (optionnel)":
+    "Additional repayment terms (optional)",
+  "Ajouter deux espaces pour des témoins":
+    "Add two spaces for witnesses",
+  "Partager":
+    "Share",
+  "Reconnaissance de dette — {name}":
+    "Acknowledgement of debt — {name}",
+  "Impression bloquée : le PDF a été téléchargé, ouvrez-le pour l'imprimer.":
+    "Printing blocked: the PDF was downloaded, open it to print.",
+  "Reconnaissance de dette":
+    "Acknowledgement of debt",
+  "Partage indisponible ici : le PDF a été téléchargé, envoyez-le depuis vos fichiers.":
+    "Sharing isn't available here: the PDF was downloaded, send it from your files.",
+  "Mode discret : masquer les montants à chaque ouverture":
+    "Discreet mode: hide amounts every time the app opens",
+  "Les montants restent masqués jusqu'à ce que vous touchiez l'œil de la barre du haut : pratique dans les transports ou en public.":
+    "Amounts stay hidden until you tap the eye in the top bar: handy on public transport or in public.",
+  "Mode discret activé : les montants seront masqués à chaque ouverture.":
+    "Discreet mode on: amounts will be hidden every time the app opens.",
+  "Mode discret désactivé.":
+    "Discreet mode off.",
+  "Mensualité en retard":
+    "Instalment overdue",
+  "Mensualité de prêt à venir":
+    "Loan instalment due soon",
+  "Mensualité à encaisser":
+    "Instalment to collect",
   'Récurrence réactivée : prochaine échéance le {date}.': 'Recurring entry resumed: next occurrence on {date}.',
   "Le capital initial et la devise ne peuvent plus changer : l'achat a déjà été enregistré. Utilisez l'historique (apport, retrait, valorisation).":
     'Initial capital and currency can no longer change: the purchase is already recorded. Use the history (contribution, withdrawal, valuation).',

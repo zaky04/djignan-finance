@@ -51,7 +51,7 @@ function goalCardHtml(g, progress) {
     return `<div class="tx-sub">${escapeHtml(w.name)} : ${formatCurrency(w.allocated, g.currency)}${locked ? ` · ${t('bloqué jusqu\'au {date}', { date: formatDate(w.unlockDate) })}` : ''}</div>`;
   }).join('');
   return `
-    <div class="summary-card" data-goal-id="${g.id}">
+    <div class="summary-card" data-goal-id="${escapeHtml(g.id)}">
       <div style="display:flex;gap:14px;align-items:center;">
         <div style="position:relative;width:72px;height:72px;flex-shrink:0;">
           ${gaugeSvg(pct, color)}
@@ -127,11 +127,11 @@ export async function openGoalModal(g = null) {
           const value = typedShares.has(w.id) ? typedShares.get(w.id) : String(currentShare.get(w.id) || 0);
           return `<div style="padding:6px 0;">
             <label style="display:flex;align-items:center;gap:10px;cursor:pointer;" class="fs-14">
-              <input type="checkbox" name="walletIds" value="${w.id}" ${isChecked ? 'checked' : ''}>
+              <input type="checkbox" name="walletIds" value="${escapeHtml(w.id)}" ${isChecked ? 'checked' : ''}>
               ${escapeHtml(w.name)} <span class="badge">${escapeHtml(t(walletUsage(w) === 'blocked' ? 'Bloqué' : 'Épargne'))}</span>
             </label>
-            <div style="display:flex;align-items:center;gap:8px;margin:4px 0 0 28px;font-size:13px;color:var(--text-muted);" ${isChecked ? '' : 'hidden'} data-share-row="${w.id}">
-              ${t('Part de cet objectif')} <input type="number" step="0.01" min="0" data-share-input="${w.id}" value="${escapeHtml(value)}" style="width:120px;padding:6px 8px;">
+            <div style="display:flex;align-items:center;gap:8px;margin:4px 0 0 28px;font-size:13px;color:var(--text-muted);" ${isChecked ? '' : 'hidden'} data-share-row="${escapeHtml(w.id)}">
+              ${t('Part de cet objectif')} <input type="number" step="0.01" min="0" data-share-input="${escapeHtml(w.id)}" value="${escapeHtml(value)}" style="width:120px;padding:6px 8px;">
               <span>${t('Libre : {amount}', { amount: formatCurrency(free, currency) })}</span>
             </div>
           </div>`;
@@ -164,7 +164,7 @@ export async function openGoalModal(g = null) {
     const allocations = {};
     const wallets = await dbGetAll(STORES.WALLETS);
     for (const id of walletIds) {
-      const wanted = safeNumber(parseFloat(form.querySelector(`[data-share-input="${id}"]`)?.value));
+      const wanted = safeNumber(parseFloat(form.querySelector(`[data-share-input="${escapeHtml(id)}"]`)?.value));
       const mine = g && !g.archived ? (currentShare.get(id) || 0) : 0;
       const free = Math.max(0, (allocation.wallets.get(id)?.free ?? 0) + mine);
       if (wanted < 0 || wanted > free + 0.005) {
@@ -209,7 +209,7 @@ async function pickLinkedWallet(g, mode) {
     let done = false;
     const modal = openModal(`
       <p style="margin:0 0 12px;" class="fs-13 c-muted">${mode === 'deposit' ? t('Dans quel portefeuille épargner ?') : t('Depuis quel portefeuille récupérer ?')}</p>
-      <div class="proof-actions" style="flex-direction:column;">${wallets.map((w) => `<button type="button" class="btn btn-ghost" data-pick="${w.id}">${escapeHtml(w.name)}</button>`).join('')}</div>`,
+      <div class="proof-actions" style="flex-direction:column;">${wallets.map((w) => `<button type="button" class="btn btn-ghost" data-pick="${escapeHtml(w.id)}">${escapeHtml(w.name)}</button>`).join('')}</div>`,
     { title: g.name, onClose: () => { if (!done) resolve(null); } });
     modal.el.querySelectorAll('[data-pick]').forEach((btn) => btn.addEventListener('click', () => {
       done = true;

@@ -321,7 +321,7 @@ async function renderFavorites(panelEl) {
     const cur = wallets.find((w) => w.id === x.walletId)?.currency || 'EUR';
     const amount = x.amount > 0 ? ` · ${escapeHtml(formatCurrency(x.amount, cur))}` : '';
     const sign = x.type === 'income' ? '+' : '−';
-    return `<button type="button" class="qa-chip" data-favorite-id="${x.id}">${sign} ${escapeHtml(x.label)}${amount}</button>`;
+    return `<button type="button" class="qa-chip" data-favorite-id="${escapeHtml(x.id)}">${sign} ${escapeHtml(x.label)}${amount}</button>`;
   }).join('');
 }
 

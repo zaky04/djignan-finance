@@ -15,14 +15,15 @@ import { t as tr } from './i18n.js';
 
 const MASK = '•••';
 
-/** Totaux par catégorie (dépenses) et entrées/sorties d'un mois, en devise de base. */
-function monthTotals(monthKey, { transactions, wallets, categories, rates, baseCurrency }) {
+/** Totaux par catégorie (dépenses) et entrées/sorties d'une période, en devise de base. `prefix` est un mois
+    (« 2026-10 ») ou une année (« 2026 ») : une date y appartient si elle commence par ce préfixe. */
+export function periodTotals(prefix, { transactions, wallets, categories, rates, baseCurrency }) {
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
   const catName = Object.fromEntries(categories.map((c) => [c.id, c.name]));
   const byCategory = new Map();
   let income = 0; let expenses = 0; let biggest = null; const days = new Set();
   for (const tx of transactions) {
-    if (!tx.date || !tx.date.startsWith(monthKey) || tx.debtId || isInvestmentMovementExcluded(tx)) continue;
+    if (!tx.date || !tx.date.startsWith(prefix) || tx.debtId || isInvestmentMovementExcluded(tx)) continue;
     if (tx.type !== 'income' && tx.type !== 'expense') continue;
     const amount = convertAmount(Number(tx.amount) || 0, walletCurrency[tx.walletId] || baseCurrency, baseCurrency, rates, baseCurrency);
     if (tx.type === 'income') { income += amount; continue; }
@@ -36,6 +37,8 @@ function monthTotals(monthKey, { transactions, wallets, categories, rates, baseC
   }
   return { income, expenses, byCategory, biggest, daysWithSpending: days.size };
 }
+
+const monthTotals = periodTotals;
 
 export function buildMonthlyRecap({ monthKey, transactions = [], wallets = [], categories = [], budgets = [], rates = [], baseCurrency = 'XOF' }) {
   const data = { transactions, wallets, categories, rates, baseCurrency };
@@ -141,7 +144,7 @@ export function renderRecapCard(recap, { hideAmounts = false } = {}) {
 
   const font = (size, weight = 400) => `${weight} ${size}px "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif`;
   ctx.fillStyle = '#c9a24a'; ctx.font = font(34, 700); ctx.fillText('DJIGNAN', 80, 110);
-  ctx.fillStyle = '#ffffff'; ctx.font = font(64, 800); ctx.fillText(formatMonthLabel(recap.monthKey), 80, 200);
+  ctx.fillStyle = '#ffffff'; ctx.font = font(64, 800); ctx.fillText(recap.title || formatMonthLabel(recap.monthKey), 80, 200);
 
   const kpis = [[tr('Entrées'), money(recap.income), '#4cc38a'], [tr('Sorties'), money(recap.expenses), '#f08071'], [tr('Épargne nette'), money(recap.net), recap.net >= 0 ? '#4cc38a' : '#f08071']];
   kpis.forEach(([label, value, color], i) => {
@@ -164,7 +167,7 @@ export function renderRecapCard(recap, { hideAmounts = false } = {}) {
   y += 70;
   ctx.fillStyle = '#ffffff'; ctx.font = font(34, 700); ctx.fillText(tr('Ce qu’il faut retenir'), 80, y);
   ctx.font = font(31);
-  for (const line of recapHighlights(recap, { hideAmounts }).slice(0, 4)) {
+  for (const line of (recap.linesFn ? recap.linesFn({ hideAmounts }) : recapHighlights(recap, { hideAmounts })).slice(0, 4)) {
     ctx.fillStyle = '#dfe3f5';
     for (const [i, part] of wrapText(ctx, line, W - 200).entries()) {
       y += 46;
@@ -180,10 +183,10 @@ export function renderRecapCard(recap, { hideAmounts = false } = {}) {
 /** Partage l'image (Web Share avec fichier) ; à défaut, la télécharge. Renvoie 'shared' | 'downloaded' | 'cancelled'. */
 export async function shareRecapImage(recap, opts = {}) {
   const blob = await renderRecapCard(recap, opts);
-  const file = new File([blob], `djignan-bilan-${recap.monthKey}.png`, { type: 'image/png' });
+  const file = new File([blob], `djignan-bilan-${recap.fileKey || recap.monthKey}.png`, { type: 'image/png' });
   if (navigator.canShare?.({ files: [file] })) {
     try {
-      await navigator.share({ files: [file], text: recapAsText(recap, opts) });
+      await navigator.share({ files: [file], text: recap.textFn ? recap.textFn(opts) : recapAsText(recap, opts) });
       return 'shared';
     } catch (err) {
       if (err?.name === 'AbortError') return 'cancelled';

@@ -9,7 +9,8 @@
 
 import { STORES, dbGetAll, getSetting, setSetting } from './db.js';
 import { computeBudgetVsActual, getAllWalletBalances, computeSpendingBetween } from './ledger.js';
-import { formatCurrency, formatDate, currentMonthKey, percentage, todayISO, localISODate } from './utils.js';
+import { formatCurrency, formatDate, currentMonthKey, percentage, todayISO, localISODate, ZERO_DECIMAL_CURRENCIES } from './utils.js';
+import { unpaidInstallments } from './loan-schedule.js';
 import { t } from './i18n.js';
 
 /** Lundi (YYYY-MM-DD) de la semaine contenant `date`. */
@@ -145,6 +146,19 @@ export async function checkAndNotify() {
   // ---- Échéances de dettes/créances dans les 3 prochains jours ----
   const [debts, debtPayments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
   for (const d of debts) {
+    // Mensualité d'un prêt à intérêts : prévenir quelques jours avant (une seule rappel par échéance).
+    const nextInstallment = unpaidInstallments(d, debtPayments, today, ZERO_DECIMAL_CURRENCIES.has(d.currency) ? 0 : 2)[0];
+    if (nextInstallment && nextInstallment.date <= horizonStr) {
+      const instKey = `${d.id}:inst:${nextInstallment.date}`;
+      if (!notifiedDebts[instKey]) {
+        const overdue = nextInstallment.date < today;
+        const ok = await fireNotification(overdue ? t('Mensualité en retard') : (d.type === 'debt' ? t('Mensualité de prêt à venir') : t('Mensualité à encaisser')), {
+          body: t('{name} — {amount} le {date}', { name: d.personName, amount: formatCurrency(nextInstallment.payment, d.currency), date: formatDate(nextInstallment.date) }),
+          tag: `debt-${instKey}`,
+        });
+        if (ok) { notifiedDebts[instKey] = true; debtsChanged = true; }
+      }
+    }
     if (d.status === 'paid' || !d.dueDate) continue;
     if (d.dueDate < today || d.dueDate > horizonStr) continue;
     const key = `${d.id}:${d.dueDate}`;

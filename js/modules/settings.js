@@ -63,7 +63,7 @@ function openCsvMappingModal(analysis) {
     const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
     const walletSelect = modal.el.querySelector('#csv-map-wallet');
     walletSelect.innerHTML = wallets.length
-      ? wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
+      ? wallets.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
       : `<option value="">${t("Créez un portefeuille d'abord")}</option>`;
   })();
 
@@ -131,6 +131,7 @@ async function renderSecuritySection(container) {
   const bioSupported = await isBiometricAvailable();
   const bioConfigured = await isBiometricConfigured();
   const autoLockMinutes = await getSetting('autoLockMinutes', 0);
+  const privacyAutoHide = await getSetting('privacyAutoHide', false);
 
   container.innerHTML = `
     <div class="panel mb-16">
@@ -150,11 +151,21 @@ async function renderSecuritySection(container) {
           `}
         </span>
       </div>
+      <label class="stat-row mt-10" style="cursor:pointer;">
+        <span class="stat-row-label">${t("Mode discret : masquer les montants à chaque ouverture")}</span>
+        <input type="checkbox" id="privacy-auto-hide" ${privacyAutoHide ? 'checked' : ''}>
+      </label>
+      <p class="fs-12 c-muted mt-4">${t("Les montants restent masqués jusqu'à ce que vous touchiez l'œil de la barre du haut : pratique dans les transports ou en public.")}</p>
       <div class="stat-row mt-10">
         <span class="stat-row-label">${t("Verrouillage automatique après inactivité")}</span>
         <select id="auto-lock-select" aria-label="${t('Verrouillage automatique après inactivité')}">${AUTO_LOCK_OPTIONS.map(([v, l]) => `<option value="${v}" ${v === autoLockMinutes ? 'selected' : ''}>${t(l)}</option>`).join('')}</select>
       </div>
     </div>`;
+
+  container.querySelector('#privacy-auto-hide').addEventListener('change', async (e) => {
+    await setSetting('privacyAutoHide', e.target.checked);
+    showToast(e.target.checked ? t('Mode discret activé : les montants seront masqués à chaque ouverture.') : t('Mode discret désactivé.'));
+  });
 
   container.querySelector('#auto-lock-select').addEventListener('change', async (e) => {
     await setSetting('autoLockMinutes', parseInt(e.target.value, 10) || 0);

@@ -163,7 +163,7 @@ async function openWalletModal(wallet = null, { onDone = null, preset = null } =
     // active qui le débite/crédite continuerait sinon à le faire en silence, sans que l'utilisateur
     // puisse la voir ni la corriger depuis un sélecteur — on la lui fait d'abord changer.
     if (wallet && usage !== 'current' && walletUsage(wallet) === 'current') {
-      const linked = (await dbGetAll(STORES.RECURRING)).filter((r) => r.active && r.walletId === wallet.id);
+      const linked = (await dbGetAll(STORES.RECURRING)).filter((r) => r.active && (r.walletId === wallet.id || (r.splits || []).some((s) => s.walletId === wallet.id)));
       if (linked.length) {
         showToast(t('Ce portefeuille est utilisé par {count} récurrence(s) active(s) : changez-les ou désactivez-les d\'abord.', { count: linked.length }));
         return;
@@ -211,7 +211,7 @@ function walletCardHtml(w) {
   const lockedUntil = withdrawalLockedUntil(w);
   const usageBadge = usage === 'current' ? '' : `<span class="badge badge-accent ml-6">${usage === 'blocked' ? LOCK_ICON + ' ' : ''}${escapeHtml(t(WALLET_USAGES[usage]))}</span>`;
   return `
-    <div class="summary-card" data-wallet-id="${w.id}">
+    <div class="summary-card" data-wallet-id="${escapeHtml(w.id)}">
       <div class="card-title-row">
         <div style="display:flex;align-items:center;gap:10px;">
           <div class="tx-icon" style="color:${meta.color};background:${meta.color}22;">${meta.icon}</div>
@@ -287,7 +287,7 @@ export async function openWalletMoveModal(wallet, mode = 'deposit', { onDone = n
     otherRow.hidden = currentMode === 'interest';
     form.elements.otherWalletId.required = currentMode !== 'interest';
     otherLabel.textContent = currentMode === 'deposit' ? t('Depuis le portefeuille') : t('Vers le portefeuille');
-    form.elements.otherWalletId.innerHTML = dailyWallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
+    form.elements.otherWalletId.innerHTML = dailyWallets.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
       || `<option value="">${t('Aucun portefeuille courant dans cette devise')}</option>`;
     const lockedUntil = withdrawalLockedUntil(wallet);
     hintEl.textContent = currentMode === 'withdraw' && lockedUntil
@@ -525,7 +525,7 @@ export function initWalletsModule() {
           showToast(t("Ce portefeuille est lié à l'objectif d'épargne « {name} » : déliez-le d'abord.", { name: linkedGoal.name }));
           return;
         }
-        const linkedRec = (await dbGetAll(STORES.RECURRING)).filter((r) => r.active && r.walletId === walletId);
+        const linkedRec = (await dbGetAll(STORES.RECURRING)).filter((r) => r.active && (r.walletId === walletId || (r.splits || []).some((s) => s.walletId === walletId)));
         if (linkedRec.length) {
           showToast(t('Ce portefeuille est utilisé par {count} récurrence(s) active(s) : changez-les ou désactivez-les d\'abord.', { count: linkedRec.length }));
           return;

@@ -140,7 +140,7 @@ async function openTontineForm(existing = null) {
     const currency = locked ? baseCurrency : readCurrencyValue(form);
     const matching = wallets.filter((w) => w.currency === currency);
     walletSelect.innerHTML = matching.length
-      ? matching.map((w) => `<option value="${w.id}" ${w.id === existing?.walletId ? 'selected' : ''}>${escapeHtml(w.name)}</option>`).join('')
+      ? matching.map((w) => `<option value="${escapeHtml(w.id)}" ${w.id === existing?.walletId ? 'selected' : ''}>${escapeHtml(w.name)}</option>`).join('')
       : `<option value="">${tr('Aucun portefeuille en {currency}', { currency })}</option>`;
   };
   refreshWallets();
@@ -199,12 +199,12 @@ async function openTontineDetail(tontineId, roundIndex = null) {
     const paid = hasPaid(tontine, round, m.id);
     const isBeneficiary = beneficiary?.id === m.id;
     const remind = !paid && !m.isMe && !isBeneficiary
-      ? `<button type="button" class="btn btn-ghost" data-remind="${m.id}">${tr('Relancer')}</button>` : '';
+      ? `<button type="button" class="btn btn-ghost" data-remind="${escapeHtml(m.id)}">${tr('Relancer')}</button>` : '';
     return `<div class="tx-row">
       <div class="tx-main"><div class="tx-title">${escapeHtml(m.isMe ? tr('Moi') : m.name)}${isBeneficiary ? ` <span class="badge badge-pos">${tr('Reçoit le pot')}</span>` : ''}</div>
         <div class="tx-sub">${paid ? tr('A cotisé') : tr('N\'a pas encore cotisé')}</div></div>
       ${remind}
-      <button type="button" class="btn ${paid ? 'btn-ghost' : 'btn-primary'}" data-toggle-paid="${m.id}">${paid ? svgIcon('check', 16) + ' ' + tr('Payé') : tr('Marquer payé')}</button>
+      <button type="button" class="btn ${paid ? 'btn-ghost' : 'btn-primary'}" data-toggle-paid="${escapeHtml(m.id)}">${paid ? svgIcon('check', 16) + ' ' + tr('Payé') : tr('Marquer payé')}</button>
     </div>`;
   }).join('');
 
@@ -329,7 +329,7 @@ function cardHtml(tontine) {
   const cur = tontine.currency;
   const mePaid = hasPaid(tontine, round, tontine.members.find((m) => m.isMe)?.id);
   return `
-    <div class="summary-card" data-tontine-id="${tontine.id}">
+    <div class="summary-card" data-tontine-id="${escapeHtml(tontine.id)}">
       <div class="card-title-row">
         <div>
           <div class="fw-700 fs-15">${escapeHtml(tontine.name)}</div>

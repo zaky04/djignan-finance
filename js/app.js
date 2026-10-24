@@ -9,6 +9,7 @@ import './app-mode.js'; // en tout premier : pose .is-app avant le moindre rendu
 import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAULT_CATEGORIES } from './db.js';
 import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigured } from './auth.js';
 import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
+import { setAutoMasking } from './privacy.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
 import { checkWeeklyBackupReminder, importEncryptedBackup } from './backup.js';
 import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, warmUpGoogleSignIn, initCloudAutoBackup } from './firebase-sync.js';
@@ -150,6 +151,7 @@ function applyTheme(theme) {
 
 function applyPrivacy(hidden) {
   document.body.dataset.privacy = hidden ? 'hidden' : 'visible';
+  setAutoMasking(hidden);
   document.getElementById('privacy-toggle')?.setAttribute('aria-pressed', String(hidden));
 }
 
@@ -748,6 +750,9 @@ async function onUnlocked() {
   document.getElementById('app').hidden = false;
   markActivity();
   await generateDueRecurring();
+  // Mode discret : les montants sont masqués dès l'ouverture (dans le métro, au bureau…) — l'œil de la barre du haut
+  // les réaffiche d'un geste. Non mémorisé : ça ne change pas le choix manuel enregistré pour les autres cas.
+  if (await getSetting('privacyAutoHide', false)) { appState.privacyHidden = true; applyPrivacy(true); }
   navigateTo('dashboard');
   applyShortcutParams();
   await applyShareTarget();

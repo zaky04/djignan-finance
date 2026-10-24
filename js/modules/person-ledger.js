@@ -235,7 +235,8 @@ export async function openPersonLedger(personName, debts, payments, actions = {}
       <div class="panel-header mt-6"><h3>${t('En cours')}</h3></div>
       ${activeDebts.map((d) => `<div class="tx-row">
         <div class="tx-main"><div class="tx-title">${escapeHtml(d.type === 'receivable' ? t('Créance') : t('Dette'))} · ${escapeHtml(formatCurrency(d.remaining, d.currency))}</div><div class="tx-sub">${escapeHtml(d.note || '')}${d.dueDate ? (d.note ? ' · ' : '') + t('Échéance : {date}', { date: formatDate(d.dueDate) }) : ''}</div></div>
-        <button type="button" class="btn btn-ghost" data-person-pay="${d.id}">${t('Rembourser')}</button>
+        <button type="button" class="btn btn-ghost" data-person-pay="${escapeHtml(d.id)}">${t('Rembourser')}</button>
+        ${actions.onAcknowledge ? `<button type="button" class="btn btn-ghost" data-person-ack="${escapeHtml(d.id)}">${t('Reconnaissance de dette')}</button>` : ''}
       </div>`).join('')}` : ''}
     <div class="panel-header mt-14"><h3>${t('Historique')}</h3></div>
     <div class="tx-list">${eventsHtml || `<div class="tx-empty">${t('Aucun mouvement.')}</div>`}</div>
@@ -263,6 +264,12 @@ export async function openPersonLedger(personName, debts, payments, actions = {}
   });
 
   modal.el.querySelector('#person-new-btn')?.addEventListener('click', () => { modal.close(); actions.onNew(statement.name); });
+  modal.el.querySelectorAll('[data-person-ack]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const debt = activeDebts.find((d) => d.id === btn.dataset.personAck);
+      if (debt) actions.onAcknowledge(debt);
+    });
+  });
   modal.el.querySelectorAll('[data-person-pay]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const debt = activeDebts.find((d) => d.id === btn.dataset.personPay);

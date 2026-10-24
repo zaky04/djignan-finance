@@ -1102,3 +1102,64 @@ export async function checkUnusualExpense(categoryId, amount, walletId, excludeI
 
   return { average, amount: amountBase, ratio: amountBase / average, currency: baseCurrency };
 }
+
+/* ---------- Frais Mobile Money ---------- */
+// Catégories de frais reconnues (l'import de SMS en crée une « Frais » ; sms-import.js l'importe d'ici).
+export const FEE_CATEGORY_VARIANTS = ['Frais', 'Fees', 'Frais bancaires', 'Frais de transaction', 'Bank fees'];
+
+/** Une transaction est-elle un frais Mobile Money ? Les frais créés par l'import de SMS portent mmFee ;
+    les plus anciens se reconnaissent à leur référence (« …#frais ») ou à l'étiquette « sms » + catégorie de frais. */
+export function isMobileMoneyFee(t, feeCategoryIds) {
+  if (t.type !== 'expense') return false;
+  if (t.mmFee) return true;
+  if (typeof t.externalRef === 'string' && t.externalRef.endsWith('#frais')) return true;
+  return Array.isArray(t.tags) && t.tags.includes('sms') && feeCategoryIds.has(t.categoryId);
+}
+
+/** Opérateur d'un frais : champ provider (imports récents), sinon le début du libellé
+    (« Frais — Orange Money · Envoi à… »), sinon le nom du portefeuille. */
+function feeOperator(t, walletName) {
+  if (t.provider) return t.provider;
+  const m = /^(?:Frais|Fees?)\s*—\s*(.+?)\s·\s/.exec(t.note || '');
+  if (m) return m[1];
+  return walletName || tr('Non précisé');
+}
+
+/** Frais Mobile Money payés : total du mois par opérateur, historique des `monthsBack` derniers mois,
+    cumul de l'année et projection annuelle — pour que ce coût, d'ordinaire invisible, saute aux yeux. */
+export async function computeMobileMoneyFees(monthKey = currentMonthKey(), monthsBack = 6) {
+  const { wallets, transactions, categories, rates, baseCurrency } = await ctx();
+  const walletById = Object.fromEntries(wallets.map((w) => [w.id, w]));
+  const feeCats = new Set(categories.filter((c) => c.type === 'expense' && FEE_CATEGORY_VARIANTS.includes(c.name)).map((c) => c.id));
+  const keys = [];
+  for (let i = monthsBack - 1; i >= 0; i--) keys.push(monthKeyOffset(monthKey, -i));
+  const history = new Map(keys.map((k) => [k, 0]));
+  const byOperator = new Map();
+  const year = monthKey.slice(0, 4);
+  let monthTotal = 0; let monthCount = 0; let monthExpenses = 0; let yearToDate = 0; let yearCount = 0;
+  for (const t of transactions) {
+    if (t.type !== 'expense' || !t.date || t.debtId || isInvestmentMovementExcluded(t)) continue;
+    const month = t.date.slice(0, 7);
+    const wallet = walletById[t.walletId];
+    const amount = toBase(Number(t.amount) || 0, wallet?.currency || baseCurrency, rates, baseCurrency);
+    if (month === monthKey) monthExpenses += amount;
+    if (!isMobileMoneyFee(t, feeCats)) continue;
+    if (history.has(month)) history.set(month, history.get(month) + amount);
+    if (t.date.startsWith(year) && month <= monthKey) { yearToDate += amount; yearCount++; }
+    if (month === monthKey) {
+      monthTotal += amount; monthCount++;
+      const name = feeOperator(t, wallet?.name);
+      const row = byOperator.get(name) || { name, total: 0, count: 0 };
+      row.total += amount; row.count++;
+      byOperator.set(name, row);
+    }
+  }
+  const monthsElapsed = Math.max(1, Number(monthKey.slice(5, 7)));
+  return {
+    currency: baseCurrency,
+    month: { total: monthTotal, count: monthCount, share: monthExpenses > 0 ? (monthTotal / monthExpenses) * 100 : 0, operators: [...byOperator.values()].sort((a, b) => b.total - a.total) },
+    history: keys.map((k) => ({ monthKey: k, total: Math.round(history.get(k) * 100) / 100 })),
+    yearToDate, yearCount, projectedYear: (yearToDate / monthsElapsed) * 12,
+    hasData: yearCount > 0 || [...history.values()].some((v) => v > 0),
+  };
+}

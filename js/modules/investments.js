@@ -44,7 +44,7 @@ const HISTORY_ICON = svgIcon('history', 16);
 function walletOptionsHtml(wallets, currency) {
   const matching = wallets.filter((w) => w.currency === currency);
   if (!matching.length) return `<option value="">${t('Aucun portefeuille en {currency}', { currency: escapeHtml(currency) })}</option>`;
-  return matching.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
+  return matching.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
 }
 
 /* ---------- Répartition d'un mouvement d'argent sur plusieurs portefeuilles ----------
@@ -64,7 +64,7 @@ function walletSplitRowHtml(wallets, currency, optionsHtml = null) {
 /** Câble un bloc "répartir sur plusieurs portefeuilles" : bouton de bascule, lignes
     portefeuille/montant dynamiques, total courant. `getWallets`/`getCurrency` sont des fonctions
     (pas des valeurs figées) car la devise peut changer après ouverture du formulaire. */
-function wireWalletSplit({ toggleBtn, singleSelect, splitWrap, listEl, addBtn, totalEl, getWallets, getCurrency, getOptionsHtml = null }) {
+export function wireWalletSplit({ toggleBtn, singleSelect, splitWrap, listEl, addBtn, totalEl, getWallets, getCurrency, getOptionsHtml = null }) {
   let splitMode = false;
   // `getOptionsHtml` (optionnel) remplace la liste de portefeuilles par défaut : un dividende peut
   // aussi être RÉINVESTI directement (autre investissement), destination qui n'est pas un
@@ -109,8 +109,22 @@ function wireWalletSplit({ toggleBtn, singleSelect, splitWrap, listEl, addBtn, t
   toggleBtn.addEventListener('click', () => setSplitMode(!splitMode));
   addBtn.addEventListener('click', () => { addRow(); updateTotal(); });
 
+  /** Remplace les lignes par des valeurs données (édition d'une répartition existante). */
+  function setRows(rows) {
+    listEl.innerHTML = '';
+    for (const r of rows) {
+      addRow();
+      const row = listEl.lastElementChild;
+      row.querySelector('.split-wallet').value = r.walletId;
+      row.querySelector('.split-amount').value = r.amount;
+    }
+    updateTotal();
+  }
+
   return {
     isSplit: () => splitMode,
+    setMode: setSplitMode,
+    setRows,
     refreshRowWallets,
     getRows: () => [...listEl.querySelectorAll('[data-split-row]')]
       .map((row) => ({ walletId: row.querySelector('.split-wallet').value, amount: safeNumber(parseFloat(row.querySelector('.split-amount').value)) }))
@@ -136,18 +150,19 @@ export async function ensureInvestmentCategoryId(txType) {
   return category.id;
 }
 
-function computeMetrics(inv, entries) {
+function computeMetrics(inv, entries, loanInterestPaid = 0) {
   const own = entries.filter((e) => e.investmentId === inv.id);
   const contributions = own.filter((e) => e.type === 'contribution').reduce((s, e) => s + e.amount, 0);
   const withdrawals = own.filter((e) => e.type === 'withdrawal').reduce((s, e) => s + e.amount, 0);
   const dividends = own.filter((e) => e.type === 'dividend').reduce((s, e) => s + e.amount, 0);
   const netInvested = (inv.capitalInvested || 0) + contributions - withdrawals;
   const currentValue = investmentValueAsOf(inv, entries, null);
-  const gain = currentValue - netInvested + dividends;
+  // Les intérêts payés sur le(s) prêt(s) qui financent cet investissement sont un coût : ils viennent en déduction du gain.
+  const gain = currentValue - netInvested + dividends - loanInterestPaid;
   const roiPct = netInvested ? (gain / netInvested) * 100 : 0;
   const yearsHeld = Math.max((Date.now() - new Date(inv.createdAt).getTime()) / (365.25 * 24 * 3600 * 1000), 1 / 12);
   const annualizedYieldPct = roiPct / yearsHeld;
-  return { netInvested, currentValue, dividends, gain, roiPct, annualizedYieldPct };
+  return { netInvested, currentValue, dividends, gain, roiPct, annualizedYieldPct, loanInterestPaid };
 }
 
 /** Fiche à exporter (PDF/Excel) pour cet investissement : voir proof-export.js pour le format. */
@@ -159,7 +174,7 @@ async function buildInvestmentProof(inv) {
   const own = allEntries
     .filter((e) => e.investmentId === inv.id)
     .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt || '').localeCompare(b.createdAt || ''));
-  const metrics = computeMetrics(inv, allEntries);
+  const metrics = computeMetrics(inv, allEntries, loan?.interestPaid || 0);
   const cur = inv.currency;
   const sumOf = (type) => own.filter((e) => e.type === type).reduce((s, e) => s + e.amount, 0);
   const declarant = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || t('Utilisateur');
@@ -202,6 +217,7 @@ async function buildInvestmentProof(inv) {
           [t('Capital net investi'), money(metrics.netInvested)],
           [t('Valeur actuelle'), money(metrics.currentValue)],
           [t('Dividendes perçus'), money(metrics.dividends)],
+          ...(metrics.loanInterestPaid > 0 ? [[t('Intérêts de prêt payés'), money(metrics.loanInterestPaid)]] : []),
           [t('Plus/moins-value + revenus'), money(metrics.gain)],
           [t('ROI global'), formatPercent(metrics.roiPct)],
           [t('Rendement annualisé'), formatPercent(metrics.annualizedYieldPct)],
@@ -271,21 +287,39 @@ function loansFor(inv, debts, debtPayments) {
   const own = debts.filter((d) => d.investmentId === inv.id || d.id === inv.loanDebtId);
   if (!own.length) return null;
   const loans = own.map((debt) => {
-    const paid = debtPayments.filter((p) => p.debtId === debt.id).reduce((s, p) => s + (p.amount || 0), 0);
-    return { debt, paid, remaining: Math.max(0, (debt.principal || 0) - paid) };
+    const own = debtPayments.filter((p) => p.debtId === debt.id);
+    const paid = own.reduce((s, p) => s + (p.amount || 0), 0);
+    return { debt, paid, remaining: Math.max(0, (debt.principal || 0) - paid), interestPaid: own.reduce((s, p) => s + (Number(p.interestPart) || 0), 0) };
   });
   return {
     loans,
     principal: loans.reduce((s, l) => s + (l.debt.principal || 0), 0),
     paid: loans.reduce((s, l) => s + l.paid, 0),
     remaining: loans.reduce((s, l) => s + l.remaining, 0),
+    interestPaid: loans.reduce((s, l) => s + l.interestPaid, 0),
   };
 }
 
-function investmentCardHtml(inv, metrics, loan = null) {
+const FREQ_PER = { weekly: 'par semaine', monthly: 'par mois', yearly: 'par an' };
+
+/** Pastilles « portefeuille lié » d'une carte : d'où est venu l'argent de l'achat, et quel apport automatique
+    (récurrence) alimente encore l'investissement — jusqu'ici invisibles sans ouvrir l'historique. */
+function linkChipsHtml(links) {
+  if (!links) return '';
+  const chips = [];
+  if (links.purchaseWallets.length) chips.push(`<span class="link-chip">${svgIcon('wallet', 14)} ${t('Acheté via {names}', { names: escapeHtml(links.purchaseWallets.join(', ')) })}</span>`);
+  for (const d of links.dca) {
+    chips.push(`<span class="link-chip ${d.active ? '' : 'is-paused'}">${svgIcon('repeat', 14)} ${d.active
+      ? t('Apport auto {amount} {freq} depuis {names}', { amount: formatCurrency(d.amount, d.currency), freq: t(FREQ_PER[d.frequency] || d.frequency), names: escapeHtml(d.wallets.join(', ')) })
+      : t('Apport auto en pause ({amount} {freq})', { amount: formatCurrency(d.amount, d.currency), freq: t(FREQ_PER[d.frequency] || d.frequency) })}</span>`);
+  }
+  return chips.length ? `<div class="inv-links">${chips.join('')}</div>` : '';
+}
+
+function investmentCardHtml(inv, metrics, loan = null, links = null) {
   const positive = metrics.gain >= 0;
   return `
-    <div class="summary-card" data-investment-id="${inv.id}">
+    <div class="summary-card" data-investment-id="${escapeHtml(inv.id)}">
       <div class="card-title-row">
         <div>
           <span class="badge badge-accent">${escapeHtml(t(ASSET_CLASSES[inv.assetClass] || inv.assetClass))}</span>
@@ -293,6 +327,7 @@ function investmentCardHtml(inv, metrics, loan = null) {
           ${inv.description
             ? `<div class="tx-sub inv-desc">${escapeHtml(inv.description)}</div>`
             : `<span class="badge badge-neg mt-6">${t('Description manquante')}</span>`}
+          ${linkChipsHtml(links)}
         </div>
         <div class="card-actions">
           ${loan && loan.remaining > 0.005 ? `<button type="button" class="icon-btn" data-action="repay" aria-label="${t('Rembourser le prêt')}" title="${t('Rembourser le prêt')}">${REPAY_ICON}</button>` : ''}
@@ -305,6 +340,7 @@ function investmentCardHtml(inv, metrics, loan = null) {
       <div class="stat-row"><span class="stat-row-label">${t('Capital net investi')}</span><span class="amount" data-value="${metrics.netInvested}">${formatCurrency(metrics.netInvested, inv.currency)}</span></div>
       <div class="stat-row"><span class="stat-row-label">${t('Valeur actuelle')}</span><span class="amount" data-value="${metrics.currentValue}">${formatCurrency(metrics.currentValue, inv.currency)}</span></div>
       <div class="stat-row"><span class="stat-row-label">${t('Dividendes perçus')}</span><span class="amount" data-value="${metrics.dividends}">${formatCurrency(metrics.dividends, inv.currency)}</span></div>
+      ${metrics.loanInterestPaid > 0 ? `<div class="stat-row"><span class="stat-row-label">${t('Intérêts de prêt payés')}</span><span class="amount neg" data-value="${escapeHtml(metrics.loanInterestPaid)}">−${formatCurrency(metrics.loanInterestPaid, inv.currency)}</span></div>` : ''}
       <div class="stat-row"><span class="stat-row-label">${t('Plus/moins-value + revenus')}</span><span class="badge ${positive ? 'badge-pos' : 'badge-neg'}">${positive ? '+' : ''}${formatCurrency(metrics.gain, inv.currency)}</span></div>
       <div class="stat-row"><span class="stat-row-label">${t('ROI global')}</span><span class="badge ${metrics.roiPct >= 0 ? 'badge-pos' : 'badge-neg'}">${formatPercent(metrics.roiPct)}</span></div>
       <div class="stat-row"><span class="stat-row-label">${t('Rendement annualisé')}</span><span class="badge ${metrics.annualizedYieldPct >= 0 ? 'badge-pos' : 'badge-neg'}">${formatPercent(metrics.annualizedYieldPct)}</span></div>
@@ -604,7 +640,7 @@ async function openHistoryModal(inv) {
     </form>
     <div id="entry-list">
       ${entries.length ? entries.map((e) => `
-        <div class="tx-row" data-entry-id="${e.id}">
+        <div class="tx-row" data-entry-id="${escapeHtml(e.id)}">
           <div class="tx-main">
             <div class="tx-title">${t(ENTRY_TYPE_LABELS[e.type])}${e.note ? ' · ' + escapeHtml(e.note) : ''}</div>
             <div class="tx-sub">${formatDate(e.date)}</div>
@@ -907,18 +943,31 @@ function renderYieldTable(rows, baseCurrency, rates, threshold, showAlert) {
 export async function renderInvestments() {
   const container = document.getElementById('investments-content');
   if (!container) return;
-  const [investments, entries, { rates, baseCurrency }, threshold, debts, debtPayments] = await Promise.all([
+  const [investments, entries, { rates, baseCurrency }, threshold, debts, debtPayments, wallets, recurring, transactions] = await Promise.all([
     dbGetAll(STORES.INVESTMENTS), dbGetAll(STORES.INVESTMENT_ENTRIES), getExchangeRates(),
     getSetting('investmentAllocationAlertThreshold', DEFAULT_ALLOCATION_ALERT_THRESHOLD),
     dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS),
+    dbGetAll(STORES.WALLETS), dbGetAll(STORES.RECURRING), dbGetAll(STORES.TRANSACTIONS),
   ]);
+  const walletName = new Map(wallets.map((w) => [w.id, w.name]));
+  const linksFor = (inv) => {
+    // Portefeuille(s) de l'achat initial : le champ walletId (achat sur un seul portefeuille), sinon les
+    // portefeuilles des transactions d'achat (achat réparti sur plusieurs).
+    const ids = new Set(inv.walletId ? [inv.walletId] : transactions.filter((x) => x.investmentId === inv.id && x.investmentMovementType === 'purchase').map((x) => x.walletId));
+    const dca = recurring.filter((r) => r.investmentId === inv.id).map((r) => {
+      const parts = Array.isArray(r.splits) && r.splits.length ? r.splits : [{ walletId: r.walletId, amount: r.amount }];
+      return { active: !!r.active, amount: r.amount, currency: inv.currency, frequency: r.frequency, wallets: parts.map((p) => walletName.get(p.walletId) || '—') };
+    });
+    return { purchaseWallets: [...ids].map((id) => walletName.get(id)).filter(Boolean), dca };
+  };
 
   if (!investments.length) {
     container.innerHTML = `<div class="empty-state">${t('Aucun investissement suivi. Ajoutez votre premier actif (immobilier, actions, business…).')}</div>`;
     return;
   }
 
-  const allRows = investments.map((inv) => ({ inv, metrics: computeMetrics(inv, entries), loan: loansFor(inv, debts, debtPayments) }));
+  const allRows = investments.map((inv) => ({ inv, metrics: null, loan: loansFor(inv, debts, debtPayments), links: linksFor(inv) }));
+  for (const r of allRows) r.metrics = computeMetrics(r.inv, entries, r.loan?.interestPaid || 0);
   const rows = allRows.filter((r) => {
     if (assetFilter === 'physical') return PHYSICAL_ASSET_CLASSES.includes(r.inv.assetClass);
     if (assetFilter === 'financial') return !PHYSICAL_ASSET_CLASSES.includes(r.inv.assetClass);
@@ -931,7 +980,7 @@ export async function renderInvestments() {
       <button type="button" class="tab-btn ${assetFilter === 'financial' ? 'is-active' : ''}" data-asset-filter="financial">${t('Actifs financiers')}</button>
       <button type="button" class="tab-btn ${assetFilter === 'physical' ? 'is-active' : ''}" data-asset-filter="physical">${t('Biens physiques')}</button>
     </div>
-    <div class="grid-cards mb-18">${rows.length ? rows.map((r) => investmentCardHtml(r.inv, r.metrics, r.loan)).join('') : `<div class="empty-state">${t('Aucun actif dans cette catégorie.')}</div>`}</div>
+    <div class="grid-cards mb-18">${rows.length ? rows.map((r) => investmentCardHtml(r.inv, r.metrics, r.loan, r.links)).join('') : `<div class="empty-state">${t('Aucun actif dans cette catégorie.')}</div>`}</div>
     <div class="chart-card mb-18">
       <h3>${t('Évolution de la valeur du portefeuille')}</h3>
       <div class="chart-canvas-wrap"><canvas id="chart-investments-trend"></canvas></div>
@@ -987,7 +1036,7 @@ export function initInvestmentsModule() {
         // Plusieurs prêts sur cet investissement : on choisit celui qu'on rembourse.
         const picker = openModal(`
           <p style="margin:0 0 12px;" class="fs-13 c-muted">${t('Quel prêt voulez-vous rembourser ?')}</p>
-          <div class="proof-actions" style="flex-direction:column;">${open.map((l) => `<button type="button" class="btn btn-ghost" data-pick-loan="${l.debt.id}">${escapeHtml(l.debt.personName)} — ${t('{amount} restant', { amount: formatCurrency(l.remaining, inv.currency) })}</button>`).join('')}</div>`,
+          <div class="proof-actions" style="flex-direction:column;">${open.map((l) => `<button type="button" class="btn btn-ghost" data-pick-loan="${escapeHtml(l.debt.id)}">${escapeHtml(l.debt.personName)} — ${t('{amount} restant', { amount: formatCurrency(l.remaining, inv.currency) })}</button>`).join('')}</div>`,
         { title: inv.name });
         picker.el.querySelectorAll('[data-pick-loan]').forEach((b) => b.addEventListener('click', () => {
           picker.close();

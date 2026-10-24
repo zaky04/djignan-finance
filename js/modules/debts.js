@@ -5,10 +5,12 @@
 
 import { STORES, dbGetAll, dbPut, dbDelete, dbAdd, dbWriteBatch, logAudit, getSetting } from '../db.js';
 import { getExchangeRates, computeDebtHistory, isDailyWallet } from '../ledger.js';
-import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, percentage, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
+import { uuid, formatCurrency, formatDate, formatPercent, escapeHtml, todayISO, percentage, convertAmount, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber, ZERO_DECIMAL_CURRENCIES } from '../utils.js';
+import { buildSchedule, scheduleStatus, accruedInterest, roundTo } from '../loan-schedule.js';
 import { notifyDataChanged } from '../state.js';
 import { renderNetWorthTrendChart } from '../charts.js';
 import { openProofExportModal, PRINT_ICON } from '../proof-export.js';
+import { openDebtAcknowledgementModal } from '../debt-acknowledgement.js';
 import { openPersonLedger, summarizePeople, openPersonReminder } from './person-ledger.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // initDebtsModule() (handler de suppression) — voir le même piège documenté dans dashboard.js/
@@ -21,6 +23,29 @@ const DELETE_ICON = svgIcon('trash', 16);
 const PERSON_ICON = svgIcon('person', 16);
 const PAY_ICON = svgIcon('pay', 16);
 const REMIND_ICON = svgIcon('message', 16);
+const SCHEDULE_ICON = svgIcon('history', 16);
+const ACK_ICON = svgIcon('receipt', 16);
+
+const decimalsOf = (currency) => (ZERO_DECIMAL_CURRENCIES.has(currency) ? 0 : 2);
+
+/** Intérêts déjà payés sur une dette (somme des parts d'intérêts de ses remboursements). */
+function interestPaidOf(debt, payments) {
+  return payments.filter((p) => p.debtId === debt.id).reduce((s, p) => s + (Number(p.interestPart) || 0), 0);
+}
+
+/** Vue d'ensemble d'un prêt à intérêts : restant dû, intérêts courus depuis le dernier remboursement,
+    échéancier (si une durée est renseignée) et son état au regard de ce qui a été versé. */
+function loanSnapshot(d, payments, today = todayISO()) {
+  const own = payments.filter((p) => p.debtId === d.id);
+  const rem = Math.max(0, (d.principal || 0) - own.reduce((s, p) => s + p.amount, 0));
+  const decimals = decimalsOf(d.currency);
+  const lastDate = own.map((p) => p.date || '').sort().pop() || d.startDate;
+  const accrued = accruedInterest(rem, d.interestRate, lastDate, today, decimals);
+  const schedule = buildSchedule({ principal: d.principal, annualRatePct: d.interestRate, termMonths: d.termMonths, startDate: d.startDate, decimals });
+  const cashPaid = own.reduce((s, p) => s + p.amount + (Number(p.interestPart) || 0), 0);
+  const status = schedule.rows.length ? scheduleStatus(schedule, cashPaid, today) : null;
+  return { rem, accrued, schedule, status, interestPaid: interestPaidOf(d, payments) };
+}
 
 function remaining(debt, payments) {
   const paid = payments.filter((p) => p.debtId === debt.id).reduce((s, p) => s + p.amount, 0);
@@ -57,7 +82,7 @@ export async function deleteDebtCascade(debtId) {
   const debt = (await dbGetAll(STORES.DEBTS)).find((x) => x.id === debtId);
   if (!debt) return null;
   const payments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === debtId);
-  const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((t) => t.debtId === debtId);
+  const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((t) => t.debtId === debtId || t.debtInterestId === debtId);
   // Une seule transaction IndexedDB pour toutes ces suppressions (voir dbWriteBatch, db.js) : sans
   // ça, une interruption en cours de route pouvait laisser des remboursements/transactions orphelins
   // (la dette supprimée mais ses mouvements de portefeuille toujours là, ou l'inverse).
@@ -113,11 +138,13 @@ async function buildDebtProof(d) {
   const rem = Math.max(0, (d.principal || 0) - paid);
   const declarant = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || tr('Utilisateur');
 
+  const snap = loanSnapshot(d, allPayments);
   let running = d.principal || 0;
   const rows = [[{ date: d.startDate }, isDebt ? tr('Ouverture de la dette') : tr("Ouverture de la créance"), d.note || '', money(d.principal || 0), money(running)]];
   for (const p of own) {
     running = Math.max(0, running - p.amount);
-    rows.push([{ date: p.date }, tr('Remboursement'), p.note || '', money(p.amount), money(running)]);
+    const interestNote = p.interestPart > 0 ? tr('dont intérêts : {amount}', { amount: formatCurrency(p.interestPart, cur) }) : '';
+    rows.push([{ date: p.date }, tr('Remboursement'), [p.note, interestNote].filter(Boolean).join(' · '), money(p.amount), money(running)]);
   }
 
   return {
@@ -147,6 +174,8 @@ async function buildDebtProof(d) {
         heading: tr('Synthèse'),
         rows: [
           [tr('Total remboursé'), money(paid)],
+          ...(d.interestRate > 0 ? [[tr('Intérêts payés'), money(snap.interestPaid)]] : []),
+          ...(snap.schedule.rows.length ? [[tr('Mensualité prévue'), money(snap.schedule.payment)], [tr("Total des intérêts prévus"), money(snap.schedule.totalInterest)]] : []),
           [tr('Restant dû'), money(rem)],
           [tr('Taux de remboursement'), formatPercent(percentage(paid, d.principal), 0)],
         ],
@@ -163,6 +192,18 @@ async function buildDebtProof(d) {
         ],
         rows,
       },
+      ...(snap.schedule.rows.length ? [{
+        type: 'table',
+        heading: tr('Échéancier prévu'),
+        columns: [
+          { label: tr('Échéance'), align: 'left', weight: 2.4 },
+          { label: `${tr('Mensualité')} (${cur})`, align: 'right', weight: 2.8 },
+          { label: `${tr('Intérêts')} (${cur})`, align: 'right', weight: 2.6 },
+          { label: `${tr('Capital')} (${cur})`, align: 'right', weight: 2.6 },
+          { label: `${tr('Restant dû')} (${cur})`, align: 'right', weight: 2.8 },
+        ],
+        rows: snap.schedule.rows.map((row) => [{ date: row.date }, money(row.payment), money(row.interest), money(row.principal), money(row.balance)]),
+      }] : []),
     ],
   };
 }
@@ -172,8 +213,9 @@ function debtCardHtml(d, payments, investmentName = null) {
   const rem = Math.max(0, (d.principal || 0) - paid);
   const pct = percentage(paid, d.principal);
   const isDebt = d.type === 'debt';
+  const loan = d.interestRate > 0 ? loanSnapshot(d, payments) : null;
   return `
-    <div class="summary-card" data-debt-id="${d.id}">
+    <div class="summary-card" data-debt-id="${escapeHtml(d.id)}">
       <div class="card-title-row">
         <div>
           <span class="badge ${isDebt ? 'badge-neg' : 'badge-pos'}">${isDebt ? tr('Dette') : tr('Créance')}</span>
@@ -185,6 +227,8 @@ function debtCardHtml(d, payments, investmentName = null) {
           ${!isDebt && rem > 0.005 ? `<button type="button" class="icon-btn" data-action="remind" aria-label="${tr('Relancer')}" title="${tr('Relancer par WhatsApp ou SMS')}">${REMIND_ICON}</button>` : ''}
           <button type="button" class="icon-btn" data-action="person" aria-label="${tr('Fiche de la personne')}" title="${tr('Fiche de la personne')}">${PERSON_ICON}</button>
           <button type="button" class="icon-btn" data-action="export" aria-label="${tr('Exporter / imprimer')}" title="${tr('Exporter / imprimer')}">${PRINT_ICON}</button>
+          ${rem > 0.005 ? `<button type="button" class="icon-btn" data-action="acknowledge" aria-label="${tr('Reconnaissance de dette (PDF)')}" title="${tr('Reconnaissance de dette (PDF)')}">${ACK_ICON}</button>` : ''}
+          ${loan?.schedule.rows.length ? `<button type="button" class="icon-btn" data-action="schedule" aria-label="${tr('Échéancier')}" title="${tr('Échéancier')}">${SCHEDULE_ICON}</button>` : ''}
           <button type="button" class="icon-btn" data-action="pay" aria-label="${tr('Enregistrer un remboursement')}" title="${tr('Enregistrer un remboursement')}">${PAY_ICON}</button>
           <button type="button" class="icon-btn" data-action="edit" aria-label="${tr('Modifier')}" title="${tr('Modifier')}">${EDIT_ICON}</button>
           <button type="button" class="icon-btn" data-action="delete" aria-label="${tr('Supprimer')}" title="${tr('Supprimer')}">${DELETE_ICON}</button>
@@ -199,6 +243,9 @@ function debtCardHtml(d, payments, investmentName = null) {
       <div class="stat-row"><span class="stat-row-label">${tr('Restant dû')}</span><span class="amount" data-value="${rem}">${formatCurrency(rem, d.currency)}</span></div>
       ${d.interestRate ? `<div class="stat-row"><span class="stat-row-label">${tr("Taux d'intérêt annuel")}</span><span>${formatPercent(d.interestRate, 1)}</span></div>` : ''}
       ${d.dueDate ? `<div class="stat-row"><span class="stat-row-label">${tr('Échéance')}</span><span>${formatDate(d.dueDate)}</span></div>` : ''}
+      ${loan && rem > 0.005 ? `<div class="stat-row"><span class="stat-row-label">${tr('Intérêts courus (estimation)')}</span><span class="amount">${formatCurrency(loan.accrued, d.currency)}</span></div>` : ''}
+      ${loan && loan.interestPaid > 0 ? `<div class="stat-row"><span class="stat-row-label">${tr('Intérêts déjà payés')}</span><span class="amount">${formatCurrency(loan.interestPaid, d.currency)}</span></div>` : ''}
+      ${loan?.status?.next && rem > 0.005 ? `<div class="stat-row"><span class="stat-row-label">${loan.status.next.status === 'due' ? tr('Échéance en retard') : tr('Prochaine mensualité')}</span><span class="${loan.status.next.status === 'due' ? 'c-neg' : ''}">${formatCurrency(loan.status.next.payment, d.currency)} · ${formatDate(loan.status.next.date)}</span></div>` : ''}
     </div>`;
 }
 function debt_paid_of(d, payments) {
@@ -213,7 +260,7 @@ function latestPaymentDate(d, payments) {
 function paidDebtRowHtml(d, paidDate) {
   const isDebt = d.type === 'debt';
   return `
-    <div class="tx-row" data-debt-id="${d.id}">
+    <div class="tx-row" data-debt-id="${escapeHtml(d.id)}">
       <div class="tx-main">
         <div class="tx-title">${escapeHtml(d.personName)}</div>
         <div class="tx-sub">${formatDate(paidDate)}${d.note ? ' · ' + escapeHtml(d.note) : ''}</div>
@@ -229,7 +276,7 @@ function paidDebtRowHtml(d, paidDate) {
 function walletOptionsHtml(wallets, currency) {
   const matching = wallets.filter((w) => w.currency === currency);
   if (!matching.length) return `<option value="">${tr('Aucun portefeuille en {currency}', { currency: escapeHtml(currency) })}</option>`;
-  return matching.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
+  return matching.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
 }
 
 function debtFormHtml(d, defaultCurrency) {
@@ -256,6 +303,7 @@ function debtFormHtml(d, defaultCurrency) {
         <select name="walletId"></select>
       </div>` : ''}
       <div class="form-row"><label>${tr("Taux d'intérêt annuel % (optionnel)")}</label><input type="number" step="0.01" min="0" name="interestRate" value="${d?.interestRate ?? ''}"></div>
+      <div class="form-row"><label>${tr("Durée du prêt en mois (optionnel — pour l'échéancier)")}</label><input type="number" step="1" min="1" max="600" name="termMonths" value="${d?.termMonths ?? ''}"></div>
       <div class="form-row"><label>${tr('Date de départ')}</label><input type="date" name="startDate" value="${d?.startDate || todayISO()}"></div>
       <div class="form-row"><label>${tr('Échéance (optionnel)')}</label><input type="date" name="dueDate" value="${d?.dueDate || ''}"></div>
       <div class="form-row"><label>${tr('Note (optionnel)')}</label><input type="text" name="note" maxlength="140" value="${escapeHtml(d?.note || '')}"></div>
@@ -312,6 +360,7 @@ export async function openDebtModal(d = null, { personName = '' } = {}) {
       principal: safeNumber(parseFloat(fd.get('principal'))),
       currency,
       interestRate: safeNumber(parseFloat(fd.get('interestRate'))),
+      termMonths: Math.floor(safeNumber(parseInt(fd.get('termMonths'), 10))) || null,
       startDate: fd.get('startDate') || todayISO(),
       dueDate: fd.get('dueDate') || null,
       status: d?.status || 'active',
@@ -375,24 +424,88 @@ export async function openDebtModal(d = null, { personName = '' } = {}) {
   });
 }
 
-export async function openPaymentModal(d) {
+/** Catégorie des intérêts d'un prêt : « Intérêts de prêt » (charge, dette) ou « Intérêts » (revenu,
+    créance). Contrairement au capital remboursé (exclu des budgets, simple mouvement de dette), les
+    intérêts sont un vrai coût / un vrai gain : ils comptent dans les dépenses et les revenus. */
+const LOAN_INTEREST_CATEGORY_VARIANTS = {
+  expense: ['Intérêts de prêt', 'Loan interest'],
+  income: ['Intérêts', 'Interest', 'Intérêts perçus'],
+};
+async function ensureLoanInterestCategoryId(txType) {
+  const categories = await dbGetAll(STORES.CATEGORIES);
+  const existing = categories.find((c) => c.type === txType && LOAN_INTEREST_CATEGORY_VARIANTS[txType].includes(c.name));
+  if (existing) return existing.id;
+  const category = { id: uuid(), name: tr(txType === 'expense' ? 'Intérêts de prêt' : 'Intérêts'), type: txType, parentId: null, createdAt: new Date().toISOString() };
+  await dbAdd(STORES.CATEGORIES, category);
+  return category.id;
+}
+
+export async function openPaymentModal(d, { prefill = null } = {}) {
   const wallets = (await dbGetAll(STORES.WALLETS)).filter(isDailyWallet);
+  const hasInterest = d.interestRate > 0;
+  const allPayments = await dbGetAll(STORES.DEBT_PAYMENTS);
+  const decimals = decimalsOf(d.currency);
+  const owedNow = remaining(d, allPayments.filter((p) => p.debtId === d.id));
+  const suggestedInterest = hasInterest ? loanSnapshot(d, allPayments).accrued : 0;
+  const initialInterest = prefill?.interest ?? (suggestedInterest > 0 ? suggestedInterest : '');
   const modal = openModal(`
     <form id="payment-form">
-      <div class="form-row"><label>${tr('Montant remboursé')}</label><input type="number" step="0.01" min="0" name="amount" required autofocus></div>
+      <div class="form-row"><label>${hasInterest ? tr('Montant versé (capital + intérêts)') : tr('Montant remboursé')}</label><input type="number" step="0.01" min="0" name="amount" required autofocus value="${prefill?.total ?? ''}"></div>
+      ${hasInterest ? `
+      <div class="form-row"><label>${tr('dont intérêts')}</label><input type="number" step="0.01" min="0" name="interestPart" value="${initialInterest}">
+        <p class="fs-12 c-muted mt-6" id="payment-split-hint"></p></div>` : ''}
       <div class="form-row"><label>${tr('Portefeuille')}</label><select name="walletId" required>${walletOptionsHtml(wallets, d.currency)}</select></div>
       <div class="form-row"><label>${tr('Date')}</label><input type="date" name="date" value="${todayISO()}"></div>
       <div class="form-row"><label>${tr('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
       <button type="submit" class="btn btn-primary btn-block">${tr('Enregistrer')}</button>
     </form>`, { title: tr('Remboursement — {name}', { name: d.personName }) });
 
-  modal.el.querySelector('#payment-form').addEventListener('submit', async (e) => {
+  const form = modal.el.querySelector('#payment-form');
+  const hintEl = modal.el.querySelector('#payment-split-hint');
+  // Les intérêts courus ne sont qu'une ESTIMATION (taux qui varie, retard, franchise, intérêts renégociés…) : tant que
+  // l'utilisateur n'a pas touché au champ « dont intérêts », il suit le montant versé (jamais plus que ce montant, le
+  // reste est du capital) ; dès qu'il le modifie, sa valeur prime. Un versement qui ne couvre que des intérêts est permis.
+  let interestTouched = prefill?.interest != null;
+  const refreshHint = () => {
+    if (!hintEl) return;
+    const total = safeNumber(parseFloat(form.elements.amount.value));
+    const interest = safeNumber(parseFloat(form.elements.interestPart.value));
+    if (total > 0 && interest > total + 0.005) {
+      hintEl.textContent = tr('Les intérêts ({interest}) dépassent le montant versé ({total}) : augmentez le montant versé ou corrigez les intérêts.', { interest: formatCurrency(interest, d.currency), total: formatCurrency(total, d.currency) });
+      hintEl.classList.add('c-neg');
+      return;
+    }
+    hintEl.classList.remove('c-neg');
+    if (total > 0 && roundTo(total - interest, decimals) <= 0) hintEl.textContent = tr('Ce versement ne couvre que des intérêts : le capital restant dû ne baisse pas.');
+    else hintEl.textContent = total > 0
+      ? tr('Capital remboursé : {capital} · intérêts : {interest} (intérêts courus estimés : {accrued}, modifiable)', { capital: formatCurrency(Math.max(0, total - interest), d.currency), interest: formatCurrency(interest, d.currency), accrued: formatCurrency(suggestedInterest, d.currency) })
+      : tr('Intérêts courus estimés depuis le dernier remboursement : {accrued}. Vous pouvez les modifier.', { accrued: formatCurrency(suggestedInterest, d.currency) });
+  };
+  if (hintEl) {
+    form.elements.interestPart.addEventListener('input', () => { interestTouched = true; });
+    form.elements.amount.addEventListener('input', () => {
+      if (interestTouched || !(suggestedInterest > 0)) return;
+      const total = safeNumber(parseFloat(form.elements.amount.value));
+      form.elements.interestPart.value = total > 0 ? String(Math.min(suggestedInterest, total)) : String(suggestedInterest);
+    });
+    form.addEventListener('input', refreshHint);
+    refreshHint();
+  }
+
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const walletId = fd.get('walletId');
     if (!walletId) { showToast(tr("Créez d'abord un portefeuille en {currency}.", { currency: d.currency })); return; }
-    const payment = { id: uuid(), debtId: d.id, amount: safeNumber(parseFloat(fd.get('amount'))), date: fd.get('date') || todayISO(), note: (fd.get('note') || '').trim().slice(0, 140) };
-    if (!(payment.amount > 0)) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
+    const total = safeNumber(parseFloat(fd.get('amount')));
+    if (!(total > 0)) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
+    // Le capital remboursé (= total − intérêts) fait baisser le restant dû ; les intérêts sont une charge à part.
+    const interestPart = hasInterest ? roundTo(Math.max(0, safeNumber(parseFloat(fd.get('interestPart')))), decimals) : 0;
+    const principalPart = roundTo(total - interestPart, decimals);
+    if (hasInterest && interestPart > total + 0.005) { showToast(tr('Les intérêts ({interest}) dépassent le montant versé ({total}) : augmentez le montant versé ou corrigez les intérêts.', { interest: formatCurrency(interestPart, d.currency), total: formatCurrency(total, d.currency) })); return; }
+    // Un versement d'intérêts seuls est légitime (le capital ne bouge pas) ; sans intérêts, il faut du capital.
+    if (principalPart < 0 || (principalPart === 0 && !(interestPart > 0))) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
+    const payment ={ id: uuid(), debtId: d.id, amount: principalPart, interestPart: interestPart || 0, date: fd.get('date') || todayISO(), note: (fd.get('note') || '').trim().slice(0, 140) };
     // Rembourser plus que le restant dû fabriquerait une transaction de portefeuille sans contrepartie
     // (la dette passerait en négatif) : on refuse plutôt que de fausser le solde.
     const paidBefore = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === d.id);
@@ -415,6 +528,21 @@ export async function openPaymentModal(d) {
       debtPaymentId: payment.id,
       createdAt: new Date().toISOString(),
     };
+    const interestTx = interestPart > 0 ? {
+      id: uuid(),
+      type: paymentTxType,
+      walletId,
+      targetWalletId: null,
+      categoryId: await ensureLoanInterestCategoryId(paymentTxType),
+      amount: interestPart,
+      date: payment.date,
+      note: tr('Intérêts — {name}', { name: d.personName }),
+      tags: [],
+      reconciled: false,
+      debtInterestId: d.id, // rattaché à la dette (suppression en cascade, verrouillage à la modification) SANS debtId : compte dans les dépenses/revenus
+      debtPaymentId: payment.id,
+      createdAt: new Date().toISOString(),
+    } : null;
 
     const existingPayments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === d.id);
     const rem = remaining(d, [...existingPayments, payment]);
@@ -422,24 +550,59 @@ export async function openPaymentModal(d) {
     const debtBefore = willBePaid ? { ...d } : null;
     if (willBePaid) d.status = 'paid';
 
-    // Une seule transaction IndexedDB pour les trois écritures : soit toutes appliquées, soit
-    // aucune — sans ça, une interruption pile entre deux `await dbAdd` séparés pouvait laisser une
-    // ligne DEBT_PAYMENTS enregistrée sans sa transaction de portefeuille correspondante (la dette
-    // paraîtrait remboursée alors que l'argent n'aurait jamais bougé), voir dbWriteBatch (db.js).
+    // Une seule transaction IndexedDB pour toutes les écritures : soit toutes appliquées, soit aucune —
+    // sans ça, une interruption pile entre deux `await dbAdd` séparés pouvait laisser une ligne
+    // DEBT_PAYMENTS enregistrée sans sa transaction de portefeuille correspondante (la dette paraîtrait
+    // remboursée alors que l'argent n'aurait jamais bougé), voir dbWriteBatch (db.js).
     const operations = [
       { store: STORES.DEBT_PAYMENTS, type: 'add', value: payment },
-      { store: STORES.TRANSACTIONS, type: 'add', value: paymentTx },
     ];
+    if (payment.amount > 0) operations.push({ store: STORES.TRANSACTIONS, type: 'add', value: paymentTx });
+    if (interestTx) operations.push({ store: STORES.TRANSACTIONS, type: 'add', value: interestTx });
     if (willBePaid) operations.push({ store: STORES.DEBTS, type: 'put', value: d });
     await dbWriteBatch(operations);
 
     await logAudit({ entityType: 'debtPayment', entityId: payment.id, action: 'create', after: payment });
-    await logAudit({ entityType: 'transaction', entityId: paymentTx.id, action: 'create', after: paymentTx, note: tr('Remboursement de dette/créance') });
+    if (payment.amount > 0) await logAudit({ entityType: 'transaction', entityId: paymentTx.id, action: 'create', after: paymentTx, note: tr('Remboursement de dette/créance') });
+    if (interestTx) await logAudit({ entityType: 'transaction', entityId: interestTx.id, action: 'create', after: interestTx, note: tr("Intérêts d'un prêt") });
     if (willBePaid) await logAudit({ entityType: 'debt', entityId: d.id, action: 'update', before: debtBefore, after: d, note: tr('Soldée') });
 
     modal.close();
     showToast(tr('Remboursement enregistré.'));
-    notifyDataChanged('debts');
+    notifyDataChanged(interestTx ? 'all' : 'debts');
+  });
+}
+
+/** Échéancier d'un prêt à intérêts : chaque mensualité (capital + intérêts), son état au regard de ce qui a
+    déjà été versé, le total des intérêts prévus, et un bouton pour enregistrer la prochaine mensualité. */
+async function openScheduleModal(d) {
+  const payments = await dbGetAll(STORES.DEBT_PAYMENTS);
+  const snap = loanSnapshot(d, payments);
+  if (!snap.status) { showToast(tr("Indiquez la durée du prêt (Modifier) pour obtenir l'échéancier.")); return; }
+  const cur = d.currency;
+  const badge = (status) => status === 'paid'
+    ? `<span class="badge badge-pos">${tr('Payée')}</span>`
+    : status === 'due' ? `<span class="badge badge-neg">${tr('En retard')}</span>` : `<span class="badge">${tr('À venir')}</span>`;
+  const next = snap.status.next;
+  const modal = openModal(`
+    <div class="stat-row"><span class="stat-row-label">${tr('Mensualité')}</span><strong class="amount">${formatCurrency(snap.schedule.payment, cur)}</strong></div>
+    <div class="stat-row"><span class="stat-row-label">${tr('Total des intérêts prévus')}</span><span class="amount">${formatCurrency(snap.schedule.totalInterest, cur)}</span></div>
+    <div class="stat-row"><span class="stat-row-label">${tr('Coût total du prêt')}</span><span class="amount">${formatCurrency(snap.schedule.totalPaid, cur)}</span></div>
+    ${snap.status.shortfall > 0.005 ? `<p class="alert alert-warn mt-8">${tr('Retard : il manque {amount} pour être à jour des échéances passées.', { amount: formatCurrency(snap.status.shortfall, cur) })}</p>` : ''}
+    <div class="schedule-list mt-10">
+      ${snap.status.rows.map((row) => `
+        <div class="tx-row">
+          <div class="tx-main"><div class="tx-title">${row.index}. ${formatDate(row.date)}</div>
+            <div class="tx-sub">${tr('Capital {principal} · intérêts {interest} · restant {balance}', { principal: formatCurrency(row.principal, cur), interest: formatCurrency(row.interest, cur), balance: formatCurrency(row.balance, cur) })}</div></div>
+          <div class="tx-amount amount">${formatCurrency(row.payment, cur)}</div>
+          ${badge(row.status)}
+        </div>`).join('')}
+    </div>
+    ${next ? `<button type="button" class="btn btn-primary btn-block mt-12" id="schedule-pay-btn">${tr('Enregistrer la prochaine mensualité')}</button>` : ''}`,
+  { title: tr('Échéancier — {name}', { name: d.personName }) });
+  modal.el.querySelector('#schedule-pay-btn')?.addEventListener('click', () => {
+    modal.close();
+    openPaymentModal(d, { prefill: { total: next.payment, interest: next.interest } });
   });
 }
 
@@ -582,6 +745,7 @@ async function openPerson(personName) {
   const [debts, payments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
   await openPersonLedger(personName, debts, payments, {
     onPay: (debt) => openPaymentModal(debt),
+    onAcknowledge: async (debt) => openDebtAcknowledgementModal(debt, await dbGetAll(STORES.DEBT_PAYMENTS)),
     onNew: (name) => openDebtModal(null, { personName: name }),
   });
 }
@@ -606,6 +770,10 @@ export function initDebtsModule() {
       openPerson(d.personName);
     } else if (btn.dataset.action === 'pay') {
       openPaymentModal(d);
+    } else if (btn.dataset.action === 'schedule') {
+      openScheduleModal(d);
+    } else if (btn.dataset.action === 'acknowledge') {
+      openDebtAcknowledgementModal(d, await dbGetAll(STORES.DEBT_PAYMENTS));
     } else if (btn.dataset.action === 'export') {
       openProofExportModal(() => buildDebtProof(d));
     } else if (btn.dataset.action === 'edit') {

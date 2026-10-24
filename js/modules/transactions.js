@@ -44,7 +44,7 @@ const RECEIPT_ICON = svgIcon('receipt', 16);
    On les verrouille donc : seuls la note, les étiquettes, la catégorie et le justificatif restent libres. */
 function transactionLinkKind(t) {
   if (!t) return null;
-  if (t.debtId) return 'debt';
+  if (t.debtId || t.debtInterestId) return 'debt';
   if (t.investmentId) return 'investment';
   if (t.tontineId) return 'tontine';
   if (t.sharedExpenseId) return 'shared';
@@ -216,7 +216,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     // pas silencieusement la sélection.
     const keepIds = new Set([editTransaction?.walletId, editTransaction?.targetWalletId].filter(Boolean));
     allWallets = (await dbGetAll(STORES.WALLETS)).filter((w) => isDailyWallet(w) || keepIds.has(w.id));
-    const opts = allWallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
+    const opts = allWallets.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
     walletSelect.innerHTML = opts || `<option value="">${tr("Créez un portefeuille d'abord")}</option>`;
     refreshTargetWalletOptions();
   }
@@ -232,7 +232,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     const source = allWallets.find((w) => w.id === walletSelect.value);
     const prevTarget = targetWalletSelect.value;
     const eligible = source ? allWallets.filter((w) => w.id !== source.id && w.currency === source.currency) : allWallets;
-    targetWalletSelect.innerHTML = eligible.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
+    targetWalletSelect.innerHTML = eligible.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
       || `<option value="">${tr('Aucun autre portefeuille dans cette devise')}</option>`;
     if (eligible.some((w) => w.id === prevTarget)) targetWalletSelect.value = prevTarget;
   }
@@ -250,9 +250,9 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     const roots = all.filter((c) => c.type === currentType && !c.parentId);
     let html = '';
     for (const r of roots) {
-      html += `<option value="${r.id}">${escapeHtml(r.name)}</option>`;
+      html += `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`;
       for (const child of all.filter((c) => c.parentId === r.id)) {
-        html += `<option value="${child.id}">— ${escapeHtml(child.name)}</option>`;
+        html += `<option value="${escapeHtml(child.id)}">— ${escapeHtml(child.name)}</option>`;
       }
     }
     categorySelect.innerHTML = html ? `<option value="">${tr('Choisir une catégorie')}</option>${html}` : `<option value="">${tr('Aucune catégorie (créez-en dans Budgets)')}</option>`;
@@ -295,7 +295,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     if (categoryTouchedByUser || currentType === 'transfer') return;
     const note = form.elements.note.value;
     const categoryId = await guessCategoryId(note, currentType);
-    if (categoryId && categorySelect.querySelector(`option[value="${categoryId}"]`)) {
+    if (categoryId && categorySelect.querySelector(`option[value="${escapeHtml(categoryId)}"]`)) {
       categorySelect.value = categoryId;
     }
   }
@@ -316,8 +316,8 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       const wallet = allWallets.find((w) => w.id === x.walletId);
       const amount = x.amount > 0 ? ` · ${escapeHtml(formatCurrency(x.amount, wallet?.currency || 'EUR'))}` : '';
       return `<span class="qa-chip-wrap">
-        <button type="button" class="qa-chip ${x.suggestion ? 'is-suggestion' : ''}" data-chip-id="${x.id}" title="${x.suggestion ? escapeHtml(tr('Suggestion d\'après vos habitudes')) : ''}">${escapeHtml(x.label)}${amount}</button>
-        ${x.suggestion ? '' : `<button type="button" class="qa-chip-x" data-chip-remove="${x.id}" aria-label="${escapeHtml(tr('Retirer ce favori'))}">${svgIcon('close', 12)}</button>`}
+        <button type="button" class="qa-chip ${x.suggestion ? 'is-suggestion' : ''}" data-chip-id="${escapeHtml(x.id)}" title="${x.suggestion ? escapeHtml(tr('Suggestion d\'après vos habitudes')) : ''}">${escapeHtml(x.label)}${amount}</button>
+        ${x.suggestion ? '' : `<button type="button" class="qa-chip-x" data-chip-remove="${escapeHtml(x.id)}" aria-label="${escapeHtml(tr('Retirer ce favori'))}">${svgIcon('close', 12)}</button>`}
       </span>`;
     };
     chipsEl.innerHTML = [...templates, ...suggestions].map(chip).join('');
@@ -328,7 +328,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     if (splitMode) setSplitMode(false);
     await setType(tpl.type);
     if (allWallets.some((w) => w.id === tpl.walletId)) { walletSelect.value = tpl.walletId; refreshTargetWalletOptions(); }
-    if (tpl.categoryId && categorySelect.querySelector(`option[value="${tpl.categoryId}"]`)) {
+    if (tpl.categoryId && categorySelect.querySelector(`option[value="${escapeHtml(tpl.categoryId)}"]`)) {
       categorySelect.value = tpl.categoryId;
       categoryTouchedByUser = true;
     }
@@ -438,7 +438,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
         // à la liste au lieu de le masquer silencieusement, ce qui viderait la sélection.
         if (![...targetWalletSelect.options].some((o) => o.value === editTransaction.targetWalletId)) {
           const w = allWallets.find((x) => x.id === editTransaction.targetWalletId);
-          if (w) targetWalletSelect.insertAdjacentHTML('beforeend', `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`);
+          if (w) targetWalletSelect.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`);
         }
         targetWalletSelect.value = editTransaction.targetWalletId;
       }
@@ -594,13 +594,13 @@ function reconTxRowHtml(t, currency) {
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   return `
-    <div class="tx-row" data-tx-id="${t.id}">
+    <div class="tx-row" data-tx-id="${escapeHtml(t.id)}">
       <div class="tx-main">
         <div class="tx-title">${escapeHtml(title)}</div>
         <div class="tx-sub">${formatDate(t.date)}${t.note ? ' · ' + escapeHtml(t.note) : ''}</div>
       </div>
       <div class="tx-amount amount ${cls}">${sign}${formatCurrency(t.amount, currency)}</div>
-      <button type="button" class="btn btn-ghost" data-recon-tx="${t.id}" style="padding:4px 10px;font-size:13px;">${tr('Pointer')}</button>
+      <button type="button" class="btn btn-ghost" data-recon-tx="${escapeHtml(t.id)}" style="padding:4px 10px;font-size:13px;">${tr('Pointer')}</button>
     </div>`;
 }
 
@@ -672,7 +672,7 @@ function openReconciliationModal() {
 
   (async () => {
     const wallets = (await dbGetAll(STORES.WALLETS)).filter((w) => !w.archived);
-    walletSelect.innerHTML = wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
+    walletSelect.innerHTML = wallets.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('');
   })();
 
   modal.el.querySelector('#recon-calc').addEventListener('click', renderResult);
@@ -703,11 +703,11 @@ function txRowHtml(t) {
   const currency = t.wallet?.currency || 'EUR';
   const tagsHtml = t.tags?.length ? `<div class="tx-tags">${t.tags.map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`).join('')}</div>` : '';
   const checkboxHtml = bulkMode
-    ? `<input type="checkbox" class="tx-select" data-tx-select="${t.id}" ${selectedIds.has(t.id) ? 'checked' : ''} style="width:18px;height:18px;flex-shrink:0;">`
+    ? `<input type="checkbox" class="tx-select" data-tx-select="${escapeHtml(t.id)}" ${selectedIds.has(t.id) ? 'checked' : ''} style="width:18px;height:18px;flex-shrink:0;">`
     : '';
 
   return `
-    <div class="tx-row" data-tx-id="${t.id}">
+    <div class="tx-row" data-tx-id="${escapeHtml(t.id)}">
       ${checkboxHtml}
       ${txIconHtml(t)}
       <div class="tx-main">
@@ -768,8 +768,8 @@ async function openBulkCategorizeModal() {
   const categories = await dbGetAll(STORES.CATEGORIES);
   const roots = categories.filter((c) => !c.parentId);
   const optionsHtml = roots.map((r) => {
-    const children = categories.filter((c) => c.parentId === r.id).map((ch) => `<option value="${ch.id}">— ${escapeHtml(ch.name)}</option>`).join('');
-    return `<option value="${r.id}">${escapeHtml(r.name)}</option>${children}`;
+    const children = categories.filter((c) => c.parentId === r.id).map((ch) => `<option value="${escapeHtml(ch.id)}">— ${escapeHtml(ch.name)}</option>`).join('');
+    return `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>${children}`;
   }).join('');
   const modal = openModal(`
     <div class="form-row"><label>${tr('Nouvelle catégorie pour {count} transaction(s)', { count: selectedIds.size })}</label><select id="bulk-category-select">${optionsHtml}</select></div>
@@ -885,8 +885,8 @@ async function renderFiltersBar() {
       <strong style="min-width:130px;display:inline-block;" class="ta-center">${formatMonthLabel(filters.monthKey)}</strong>
       <button type="button" class="icon-btn" id="tx-next-month" aria-label="${tr('Mois suivant')}">›</button>
     </div>
-    <select id="tx-filter-wallet" aria-label="${tr('Portefeuille')}"><option value="">${tr('Tous les portefeuilles')}</option>${wallets.map((w) => `<option value="${w.id}" ${filters.walletId === w.id ? 'selected' : ''}>${escapeHtml(w.name)}</option>`).join('')}</select>
-    <select id="tx-filter-category" aria-label="${tr('Catégorie')}"><option value="">${tr('Toutes catégories')}</option>${categories.map((c) => `<option value="${c.id}" ${filters.categoryId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>
+    <select id="tx-filter-wallet" aria-label="${tr('Portefeuille')}"><option value="">${tr('Tous les portefeuilles')}</option>${wallets.map((w) => `<option value="${escapeHtml(w.id)}" ${filters.walletId === w.id ? 'selected' : ''}>${escapeHtml(w.name)}</option>`).join('')}</select>
+    <select id="tx-filter-category" aria-label="${tr('Catégorie')}"><option value="">${tr('Toutes catégories')}</option>${categories.map((c) => `<option value="${escapeHtml(c.id)}" ${filters.categoryId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}</select>
     <select id="tx-filter-type" aria-label="${tr('Type')}">
       <option value="">${tr('Tous types')}</option>
       <option value="income" ${filters.type === 'income' ? 'selected' : ''}>${tr('Recettes')}</option>

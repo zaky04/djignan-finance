@@ -26,6 +26,11 @@ const { parseSpokenEntry: say } = await import('../js/voice-input.js');
 const { buildPersonStatement, buildReminderMessage, whatsappUrl, smsUrl, normalizeName, summarizePeople } = await import('../js/modules/person-ledger.js');
 const { roundDate, currentRoundIndex, beneficiaryOf, potAmount, parseMembersText } = await import('../js/modules/tontines.js');
 const { computeNetWorth, computeMonthSummary, computeTagSummary, computeNetWorthComposition, isInvestmentMovementExcluded } = await import('../js/ledger.js');
+const { computeMobileMoneyFees, isMobileMoneyFee } = await import('../js/ledger.js');
+const { annuityPayment, buildSchedule, scheduleStatus, accruedInterest, addMonthsISO } = await import('../js/loan-schedule.js');
+const { numberToWordsFr, numberToWordsEn, amountInWords } = await import('../js/debt-acknowledgement.js');
+const { monthlyContribution, nextEventMonthKey, monthsInclusive, provisionStatus } = await import('../js/modules/provisions.js');
+const { buildAnnualRecap, annualHighlights } = await import('../js/annual-recap.js');
 
 const results = [];
 const eq = (desc, actual, expected) => results.push({ desc, ok: JSON.stringify(actual) === JSON.stringify(expected), actual, expected });
@@ -313,6 +318,145 @@ eq('période : 30 derniers jours', parsePeriod('sur les 30 derniers jours', '202
 eq('période : mois dernier', [parsePeriod('le mois dernier', '2026-10-18').start, parsePeriod('le mois dernier', '2026-10-18').end], ['2026-09-01', '2026-09-30']);
 eq('période : mois futur sans année → année précédente', parsePeriod('en décembre', '2026-10-18').start, '2025-12-01');
 eq('période : semaine en cours commence le lundi', parsePeriod('cette semaine', '2026-10-18').start, '2026-10-12');
+
+// ---------- Prêts avec intérêts : mensualité, échéancier, intérêts courus ----------
+eq('mensualité : 1 000 000 à 12 % sur 12 mois (XOF, sans décimales)', annuityPayment(1000000, 12, 12, 0), 88849);
+eq('mensualité : taux nul = capital / durée', annuityPayment(120000, 0, 12, 0), 10000);
+{
+  const sch = buildSchedule({ principal: 1000000, annualRatePct: 12, termMonths: 12, startDate: '2026-01-31', decimals: 0 });
+  eq('échéancier : 12 lignes', sch.rows.length, 12);
+  eq('échéancier : la dernière ligne solde exactement le capital', sch.rows[11].balance, 0);
+  eq('échéancier : la somme des parts de capital = le capital prêté', sch.rows.reduce((t, r) => t + r.principal, 0), 1000000);
+  eq('échéancier : coût total = capital + intérêts', sch.totalPaid, 1000000 + sch.totalInterest);
+  eq('échéancier : le 31 janvier + 1 mois = 28 février, puis 30 avril (jour clampé)', [sch.rows[0].date, sch.rows[2].date], ['2026-02-28', '2026-04-30']);
+  ok('échéancier : les intérêts diminuent à mesure que le capital baisse', sch.rows[0].interest > sch.rows[6].interest && sch.rows[6].interest > sch.rows[10].interest);
+  const st = scheduleStatus(sch, 88849 * 2, '2026-06-15');
+  eq('statut : 2 mensualités versées -> 2 « paid », la 3e est la prochaine', [st.rows[0].status, st.rows[1].status, st.next.index], ['paid', 'paid', 3]);
+  ok('statut : 2 versées alors que 4 sont dues au 15 juin -> retard = 2 mensualités', Math.abs(st.shortfall - 2 * 88849) <= 3, st.shortfall);
+  eq('statut : tout payé -> pas de prochaine échéance', scheduleStatus(sch, sch.totalPaid, '2027-02-01').next, null);
+  eq('sans durée -> pas d\'échéancier', buildSchedule({ principal: 1000, annualRatePct: 10, termMonths: 0, startDate: '2026-01-01' }).rows.length, 0);
+}
+near('intérêts courus : 100 000 à 12 % sur 30 jours', accruedInterest(100000, 12, '2026-01-01', '2026-01-31', 2), 986.30);
+eq('intérêts courus : taux nul -> 0', accruedInterest(100000, 0, '2026-01-01', '2026-01-31'), 0);
+eq('addMonthsISO : 30 novembre + 3 mois = 28 février', addMonthsISO('2026-11-30', 3), '2027-02-28');
+
+// ---------- Montants en toutes lettres (reconnaissance de dette) ----------
+for (const [n, words] of [[0, 'zéro'], [21, 'vingt et un'], [71, 'soixante et onze'], [80, 'quatre-vingts'], [81, 'quatre-vingt-un'], [99, 'quatre-vingt-dix-neuf'], [100, 'cent'], [200, 'deux cents'], [201, 'deux cent un'], [1000, 'mille'], [2000, 'deux mille'], [80000, 'quatre-vingt mille'], [200000, 'deux cent mille'], [1000000, 'un million'], [2500000, 'deux millions cinq cent mille'], [1234567, 'un million deux cent trente-quatre mille cinq cent soixante-sept']]) {
+  eq(`en lettres (FR) : ${n}`, numberToWordsFr(n), words);
+}
+eq('en lettres (EN) : 1 234', numberToWordsEn(1234), 'one thousand two hundred and thirty-four');
+eq('montant en lettres : 300 000 XOF', amountInWords(300000, 'XOF', 'fr'), 'trois cent mille francs CFA');
+eq('montant en lettres : un million de francs (de)', amountInWords(1000000, 'XOF', 'fr'), 'un million de francs CFA');
+eq("montant en lettres : un million d'euros (d')", amountInWords(1000000, 'EUR', 'fr'), "un million d'euros");
+eq('montant en lettres : centimes', amountInWords(12.5, 'EUR', 'fr'), 'douze euros et cinquante centimes');
+eq('montant en lettres : un seul franc au singulier', amountInWords(1, 'XOF', 'fr'), 'un franc CFA');
+eq('montant en lettres (EN)', amountInWords(300000, 'XOF', 'en'), 'three hundred thousand CFA francs');
+
+// ---------- Provisions pour événements ----------
+eq('provision : 600 000 sur 6 mois = 100 000 / mois', monthlyContribution(600000, 6, 0), 100000);
+eq('provision : arrondi AU-DESSUS (1 000 sur 3 mois = 334, jamais 333)', monthlyContribution(1000, 3, 0), 334);
+eq('provision : rien à réunir -> 0', monthlyContribution(0, 6, 0), 0);
+eq('événement : mai depuis octobre = mai de l\'année suivante', nextEventMonthKey(5, '2026-10'), '2027-05');
+eq('événement : décembre depuis octobre = cette année', nextEventMonthKey(12, '2026-10'), '2026-12');
+eq('événement : le mois courant compte (ce mois-ci)', nextEventMonthKey(10, '2026-10'), '2026-10');
+eq('mois entre octobre 2026 et mai 2027 (bornes incluses)', monthsInclusive('2026-10', '2027-05'), 8);
+{
+  const st = provisionStatus({ target: 600000, available: 150000, monthly: 100000, monthsElapsed: 3, monthsTotal: 6, eventMonthKey: '2027-03' }, '2026-12');
+  eq('provision : 150 000 sur 600 000 = 25 %, en retard de 150 000 (300 000 attendus)', [st.progress, st.behindBy, st.monthsLeft], [0.25, 150000, 3]);
+  eq('provision : à jour -> pas de retard', provisionStatus({ target: 600000, available: 300000, monthly: 100000, monthsElapsed: 3, monthsTotal: 6, eventMonthKey: '2027-03' }, '2026-12').behindBy, 0);
+}
+
+// ---------- Frais Mobile Money ----------
+ok('frais : champ mmFee (imports récents)', isMobileMoneyFee({ type: 'expense', mmFee: true }, new Set()));
+ok('frais : référence « …#frais » (imports plus anciens)', isMobileMoneyFee({ type: 'expense', externalRef: 'TX1#frais' }, new Set()));
+ok('frais : étiquette sms + catégorie de frais', isMobileMoneyFee({ type: 'expense', tags: ['sms'], categoryId: 'c-fee' }, new Set(['c-fee'])));
+ok('frais : une dépense ordinaire n\'en est pas un', !isMobileMoneyFee({ type: 'expense', tags: [], categoryId: 'c-food' }, new Set(['c-fee'])));
+ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmFee: true }, new Set()));
+{
+  await wipeAllData();
+  await setSetting('baseCurrency', 'XOF');
+  await dbAdd(STORES.WALLETS, { id: 'w-om', name: 'Orange Money', type: 'mobile_money', currency: 'XOF', initialBalance: 0, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.WALLETS, { id: 'w-wv', name: 'Wave', type: 'mobile_money', currency: 'XOF', initialBalance: 0, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.CATEGORIES, { id: 'c-fee', name: 'Frais', type: 'expense', parentId: null, createdAt: '2026-01-01T00:00:00.000Z' });
+  const tx = (id, walletId, date, amount, extra = {}) => dbAdd(STORES.TRANSACTIONS, { id, type: 'expense', walletId, targetWalletId: null, categoryId: null, amount, date, note: 'x', tags: [], reconciled: false, createdAt: '2026-10-01T00:00:00.000Z', ...extra });
+  await tx('f1', 'w-om', '2026-10-05', 100, { mmFee: true, provider: 'Orange Money', categoryId: 'c-fee' });
+  await tx('f2', 'w-om', '2026-10-09', 200, { mmFee: true, provider: 'Orange Money', categoryId: 'c-fee' });
+  await tx('f3', 'w-wv', '2026-10-10', 50, { note: 'Frais — Wave · Envoi à Awa', tags: ['sms'], categoryId: 'c-fee' });
+  await tx('f4', 'w-om', '2026-09-20', 300, { mmFee: true, provider: 'Orange Money', categoryId: 'c-fee' });
+  await tx('e1', 'w-om', '2026-10-11', 1650); // dépense ordinaire : 2 000 au total ce mois-ci
+  const fees = await computeMobileMoneyFees('2026-10', 3);
+  eq('frais du mois : total et nombre', [fees.month.total, fees.month.count], [350, 3]);
+  eq('frais du mois : par opérateur, du plus coûteux au moins coûteux', fees.month.operators.map((o) => [o.name, o.total]), [['Orange Money', 300], ['Wave', 50]]);
+  near('frais du mois : part des dépenses (350 sur 2 000 = 17,5 %)', fees.month.share, 17.5);
+  eq('frais : historique des 3 derniers mois', fees.history.map((h) => [h.monthKey, h.total]), [['2026-08', 0], ['2026-09', 300], ['2026-10', 350]]);
+  eq('frais : cumul de l\'année et projection', [fees.yearToDate, Math.round(fees.projectedYear)], [650, 780]);
+}
+
+// ---------- Bilan de l'année ----------
+{
+  const wallets = [{ id: 'w1', currency: 'XOF' }];
+  const categories = [{ id: 'c1', name: 'Alimentation' }, { id: 'c2', name: 'Transport' }];
+  const t = (id, type, date, amount, categoryId) => ({ id, type, walletId: 'w1', date, amount, categoryId, note: '' });
+  const transactions = [
+    t('a', 'income', '2026-01-10', 500000), t('b', 'expense', '2026-01-15', 100000, 'c1'),
+    t('c', 'income', '2026-02-10', 500000), t('d', 'expense', '2026-02-12', 300000, 'c1'),
+    t('e', 'income', '2026-03-10', 500000), t('f', 'expense', '2026-03-20', 50000, 'c2'),
+    t('g', 'expense', '2025-06-20', 200000, 'c1'),
+  ];
+  const r = buildAnnualRecap({ year: 2026, transactions, wallets, categories, baseCurrency: 'XOF', netWorthStart: 100000, netWorthEnd: 1050000 });
+  eq('bilan annuel : entrées, sorties, épargne', [r.income, r.expenses, r.net], [1500000, 450000, 1050000]);
+  eq('bilan annuel : meilleur mois = janvier ou mars (400 000 / 450 000 → mars)', r.bestMonth.monthIndex, 2);
+  eq('bilan annuel : mois le plus cher = février', r.priciestMonth.monthIndex, 1);
+  eq('bilan annuel : catégorie principale', r.top[0].name, 'Alimentation');
+  near('bilan annuel : dépenses +125 % par rapport à 2025 (200 000 → 450 000)', r.expensesDeltaPct, 125);
+  eq('bilan annuel : évolution du patrimoine', r.netWorthChange, 950000);
+  ok('bilan annuel : montants masqués -> aucun chiffre de montant dans les phrases', annualHighlights(r, { hideAmounts: true }).every((l) => !/\d{3}/.test(l.replace(/\d+ ?%/g, '').replace(/2026|2025/g, ''))), JSON.stringify(annualHighlights(r, { hideAmounts: true })));
+}
+
+// ---------- Prévision : mensualités d'un prêt à intérêts ----------
+{
+  const loanDebt = { id: 'dl', type: 'debt', personName: 'Banque Atlas', principal: 1200000, currency: 'XOF', interestRate: 12, termMonths: 12, startDate: '2026-10-01', status: 'active' };
+  const f = buildCashflowForecast({ today: '2026-10-18', baseCurrency: 'XOF', rates: [], wallets: [{ id: 'w1', name: 'Banque', currency: 'XOF', initialBalance: 1000000, createdAt: '2026-01-01T00:00:00.000Z' }], transactions: [], recurring: [], debts: [loanDebt], payments: [], tontines: [], days: 60 });
+  const inst = f.events.filter((e) => e.kind === 'debt');
+  eq('prévision : un prêt à échéancier pèse chaque mensualité à sa date (1ᵉʳ novembre puis 1ᵉʳ décembre)', inst.map((e) => e.date), ['2026-11-01', '2026-12-01']);
+  eq('prévision : montant de la mensualité', inst[0].amount, -106619);
+  const paid = buildCashflowForecast({ today: '2026-10-18', baseCurrency: 'XOF', rates: [], wallets: [{ id: 'w1', name: 'Banque', currency: 'XOF', initialBalance: 1000000, createdAt: '2026-01-01T00:00:00.000Z' }], transactions: [], recurring: [], debts: [loanDebt], payments: [{ debtId: 'dl', amount: 94619, interestPart: 12000, date: '2026-10-01' }], tontines: [], days: 60 });
+  eq("prévision : une mensualité déjà versée (capital + intérêts) n'est plus comptée", paid.events.filter((e) => e.kind === 'debt').map((e) => e.date), ['2026-12-01']);
+}
+
+// ---------- Rappels : mensualité d'un prêt à intérêts ----------
+{
+  const loan = { id: 'd4', type: 'debt', personName: 'Banque Atlas', principal: 1200000, currency: 'XOF', interestRate: 12, termMonths: 12, startDate: '2026-09-20', status: 'active' };
+  const withLoan = rem.buildReminderPlan({ ...planInput, debts: [...planInput.debts, loan] });
+  ok('rappels : la mensualité du 20 octobre est programmée (veille + jour J)', withLoan.filter((p) => p.key.startsWith('inst-d4-2026-10-20')).length === 2, JSON.stringify(withLoan.map((p) => p.key)));
+  const paidLoan = rem.buildReminderPlan({ ...planInput, debts: [...planInput.debts, loan], payments: [...planInput.payments, { id: 'pl', debtId: 'd4', amount: 94619, interestPart: 12000, date: '2026-10-01' }] });
+  ok('rappels : mensualité déjà versée -> pas de rappel pour elle (la suivante n\'est pas encore dans l\'horizon)', !paidLoan.some((p) => p.key.startsWith('inst-d4-2026-10-20')));
+}
+
+// ---------- Mode discret : masquage des montants écrits dans le texte ----------
+{
+  const { setAutoMasking } = await import('../js/privacy.js');
+  const app = document.createElement('div'); app.id = 'app';
+  app.innerHTML = '<p id="p1">Reste 55 500 F CFA ce mois-ci, soit 44 % de moins.</p><p id="p2">+794 500 F CFA (+369.5%) vs mois dernier</p><p id="p3">Total : €300.00 et XOF 1,235</p><p id="p4">La valeur 100 et madame 5 restent visibles, comme le 24 octobre 2026.</p><p id="p5"><span class="amount">12 000 F CFA</span></p><input id="in1" value="5 000 F CFA"><svg><text id="svgt">120 F CFA</text></svg>';
+  document.body.appendChild(app);
+  const masked = (id) => [...document.getElementById(id).querySelectorAll('.auto-mask')].map((n) => n.textContent);
+  setAutoMasking(true);
+  eq('discret : « 55 500 F CFA » masqué, le reste de la phrase intact', [masked('p1'), document.getElementById('p1').textContent], [['55 500 F CFA'], 'Reste 55 500 F CFA ce mois-ci, soit 44 % de moins.']);
+  eq('discret : montant signé « +794 500 F CFA » masqué en entier, pas le pourcentage', masked('p2'), ['+794 500 F CFA']);
+  eq('discret : devise devant (€300.00, XOF 1,235)', masked('p3'), ['€300.00', 'XOF 1,235']);
+  eq('discret : pas de faux positif (valeur 100, madame 5, une date)', masked('p4'), []);
+  eq('discret : un élément déjà .amount n\'est pas enveloppé deux fois', masked('p5'), []);
+  eq('discret : champ de saisie jamais touché', document.getElementById('in1').value, '5 000 F CFA');
+  eq('discret : texte SVG jamais touché', document.getElementById('svgt').textContent, '120 F CFA');
+  // contenu ajouté APRÈS l'activation (changement d'écran, fenêtre…)
+  const late = document.createElement('p'); late.id = 'late'; late.textContent = 'Solde 1 234 567 F CFA';
+  app.appendChild(late);
+  await new Promise((r) => setTimeout(r, 120));
+  eq('discret : un montant affiché plus tard est masqué aussi (MutationObserver)', masked('late'), ['1 234 567 F CFA']);
+  setAutoMasking(false);
+  eq('discret : retour au mode visible, texte rendu à l\'identique', [document.querySelectorAll('.auto-mask').length, document.getElementById('p1').textContent, document.getElementById('late').textContent], [0, 'Reste 55 500 F CFA ce mois-ci, soit 44 % de moins.', 'Solde 1 234 567 F CFA']);
+  app.remove();
+}
 
 // ---------- Rendu ----------
 const ul = document.getElementById('results');

@@ -164,6 +164,8 @@ body[data-privacy="hidden"] .amount::after {
   color: var(--text);
   letter-spacing: 1px;
 }
+/* Mode discret : les graphiques affichent des montants (axes, infobulles, valeurs) qu'on ne peut pas remplacer un à un. */
+body[data-privacy="hidden"] canvas { filter: blur(10px); pointer-events: none; }
 #privacy-toggle .icon-eye-open, #privacy-toggle .icon-eye-closed { display: block; }
 body[data-privacy="hidden"] #privacy-toggle .icon-eye-open { display: none; }
 body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
@@ -979,3 +981,29 @@ body { font-size: 16px; line-height: 1.45; }
 .confirm-secure { margin-bottom: 4px; }
 .confirm-phrase { margin: 0; padding: 8px 10px; border: 1px dashed var(--border); border-radius: var(--radius-sm, 6px); font-weight: 800; letter-spacing: .04em; user-select: all; }
 .confirm-error { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
+
+
+/* ---------- Frais Mobile Money : total, barres de part, 6 derniers mois ---------- */
+.fee-hero { padding: 4px 0 12px; }
+.fee-hero-value { font-family: var(--font-serif); font-size: 30px; font-weight: 600; line-height: 1.1; }
+.fee-hero-sub { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.share-bar { height: 6px; border-radius: 3px; background: var(--surface-alt); margin-top: 6px; overflow: hidden; }
+.share-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.mini-bars { display: flex; gap: 8px; align-items: flex-end; margin-top: 14px; padding-top: 8px; }
+.mini-bar { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.mini-bar-track { display: flex; align-items: flex-end; justify-content: center; width: 100%; height: 72px; }
+.mini-bar-fill { display: block; width: 100%; max-width: 38px; background: var(--accent); border-radius: 4px 4px 0 0; }
+.mini-bar-label { font-size: 11px; color: var(--text-muted); text-transform: capitalize; }
+.mini-bar-value { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+/* ---------- Pastilles « portefeuille lié » des cartes d'investissement ---------- */
+.inv-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.link-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; background: var(--surface-alt); border: 1px solid var(--border); font-size: 12px; color: var(--text-muted); max-width: 100%; }
+.link-chip svg { flex: 0 0 auto; }
+.link-chip.is-paused { opacity: .75; border-style: dashed; }
+
+/* ---------- Provisions pour événements ---------- */
+.cat-dot { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; }
+.preset-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset-chip { cursor: pointer; font: inherit; }
+.preset-chip:hover, .preset-chip:focus-visible { border-color: var(--accent); color: var(--text); }

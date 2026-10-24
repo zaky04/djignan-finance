@@ -10,13 +10,11 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbWriteBatch, logAudit } from '../db.js';
-import { isDailyWallet, guessCategoryId } from '../ledger.js';
+import { isDailyWallet, guessCategoryId, FEE_CATEGORY_VARIANTS } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, showToast, debounce } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { parseMobileMoneyMessages, currencyMatchesWallet } from '../mobile-money-parser.js';
 import { t } from '../i18n.js';
-
-const FEE_CATEGORY_VARIANTS = ['Frais', 'Fees', 'Frais bancaires', 'Frais de transaction', 'Bank fees'];
 
 /** Libellé de la transaction, construit à partir du message analysé (traduit à la création). */
 export function buildSmsNote(msg) {
@@ -46,9 +44,9 @@ function categoryOptionsHtml(categories, selectedId) {
   const roots = categories.filter((c) => !c.parentId);
   const html = [];
   for (const r of roots) {
-    html.push(`<option value="${r.id}" ${r.id === selectedId ? 'selected' : ''}>${escapeHtml(r.name)}</option>`);
+    html.push(`<option value="${escapeHtml(r.id)}" ${r.id === selectedId ? 'selected' : ''}>${escapeHtml(r.name)}</option>`);
     for (const child of categories.filter((c) => c.parentId === r.id)) {
-      html.push(`<option value="${child.id}" ${child.id === selectedId ? 'selected' : ''}>— ${escapeHtml(child.name)}</option>`);
+      html.push(`<option value="${escapeHtml(child.id)}" ${child.id === selectedId ? 'selected' : ''}>— ${escapeHtml(child.name)}</option>`);
     }
   }
   return `<option value="">${t('Sans catégorie')}</option>${html.join('')}`;
@@ -102,7 +100,7 @@ export async function openSmsImportModal({ text = '' } = {}) {
   let rows = []; // { msg, include, type, categoryId, targetWalletId, reverse, issue, duplicate }
 
   walletSelect.innerHTML = wallets.length
-    ? wallets.map((w) => `<option value="${w.id}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
+    ? wallets.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)} (${escapeHtml(w.currency)})</option>`).join('')
     : `<option value="">${t("Créez un portefeuille d'abord")}</option>`;
 
   const walletById = () => wallets.find((w) => w.id === walletSelect.value) || null;
@@ -145,7 +143,7 @@ export async function openSmsImportModal({ text = '' } = {}) {
     const wallet = walletById();
     return wallets
       .filter((w) => w.id !== wallet?.id && w.currency === wallet?.currency)
-      .map((w) => `<option value="${w.id}" ${w.id === row.targetWalletId ? 'selected' : ''}>${escapeHtml(w.name)}</option>`)
+      .map((w) => `<option value="${escapeHtml(w.id)}" ${w.id === row.targetWalletId ? 'selected' : ''}>${escapeHtml(w.name)}</option>`)
       .join('');
   }
 
@@ -284,6 +282,7 @@ export async function openSmsImportModal({ text = '' } = {}) {
         tags: ['sms'],
         reconciled: false,
         externalRef: msg.reference || null,
+        provider: msg.provider || null,
         createdAt: now,
       };
       operations.push({ store: STORES.TRANSACTIONS, type: 'add', value: record });
@@ -292,7 +291,7 @@ export async function openSmsImportModal({ text = '' } = {}) {
         const feeRecord = {
           id: uuid(), type: 'expense', walletId: wallet.id, targetWalletId: null, categoryId: feeCategoryId,
           amount: msg.fee, date, note: t('Frais — {note}', { note }).slice(0, 140), tags: ['sms'],
-          reconciled: false, externalRef: msg.reference ? `${msg.reference}#frais` : null, createdAt: now,
+          reconciled: false, externalRef: msg.reference ? `${msg.reference}#frais` : null, mmFee: true, provider: msg.provider || null, createdAt: now,
         };
         operations.push({ store: STORES.TRANSACTIONS, type: 'add', value: feeRecord });
         audits.push(feeRecord);
