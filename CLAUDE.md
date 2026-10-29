@@ -3722,6 +3722,44 @@ Non porté sur `geofinance-free` (ces fonctions s'appuient sur des modules propr
 **Revue bugs/sécurité de ces huit lots (24 octobre 2026)** : `safeColor()` (`icons.js`) n'accepte que `#hex`/`rgb()`/`hsl()` avant d'écrire une couleur dans un attribut `style` (une catégorie importée avec une couleur forgée aurait pu injecter du CSS/HTML) ; `importAllData` (`db.js`) refuse les identifiants contenant `< > " ' \` & \` ou espace (hors réglages), car beaucoup de `data-id="${id}"` sont insérés sans échappement ; `escapeHtml` ajouté sur `baseCurrency`/`prov.id` (provisions) et sur l'id de reconnaissance de dette (fiche personne) ; `Fees?` accepté dans `feeOperator` (libellés EN). `privacy.js` ignore désormais le texte SVG. 2e passe : le même contrôle d'import vaut aussi pour les champs de référence (`*Id`, `*Ids` : `categoryId`, `walletIds`…), et les 33 `data-…="${x.id}"` encore bruts ont été passés dans `escapeHtml` (`CACHE_VERSION` v152 ; ledger 72/72, features 199/199).
 **3e passe (24 octobre 2026, v153)** : (1) remboursement de prêt adouci (`openPaymentModal`, `debts.js`) — « dont intérêts » suit le montant versé tant qu'on n'y touche pas (jamais plus que le montant), modifiable à tout moment (taux variable, retard, intérêts renégociés) ; un versement d'**intérêts seuls** est permis (paiement `amount: 0` + `interestPart`, aucune transaction de capital, la dette ne baisse pas et les intérêts courus repartent de cette date) ; un excès d'intérêts est signalé en rouge dans l'aide avant l'envoi. (2) `state` aléatoire dans le flux OAuth natif (`firebase-sync.js`) : exigé au retour sur Android ; sur Windows le shell Tauri actuel ne renvoie pas `state` dans l'événement `oauth-callback`, il n'est donc refusé que s'il est présent et différent — pour le rendre obligatoire il faut que `start_oauth_loopback` (projet Tauri hors dépôt) l'extraie de la requête. (3) `value="${x.id}"` échappés (36) en plus des `data-…` (33). La CSP contient déjà `frame-src …firebaseapp.com` (note du 21 octobre obsolète). Script de balayage des `${…}` HTML non échappés : seuls des helpers déjà sûrs sortent. Tests : ledger 70/70, features 199/199 (mode discret, rappels de mensualité de prêt).
 
+### 29 octobre 2026 — Annuler une dette / créance / un investissement sans remboursement (Djignan uniquement, `CACHE_VERSION` `v154`)
+
+Demande de l'auteur : pouvoir **annuler** une dette (je dois) ou une créance (on me doit) sans qu'un
+remboursement ait eu lieu. L'emprunt/prêt d'origine **reste** dans le portefeuille et dans l'historique,
+rien n'est « re-inscrit » : seule la dette cesse d'exister. Même principe pour les investissements.
+
+- **Modèle** : `status: 'cancelled'` + `cancelledAt` (date saisie, aujourd'hui par défaut) + `cancelledAmount`
+  (restant dû effacé, dettes) / `cancelledValue` (valeur au moment de l'annulation, investissements) +
+  `cancelNote`. Aucune transaction n'est créée ni supprimée. Réversible : bouton « Rétablir »
+  (`restoreCancelledDebt` / `restoreCancelledInvestment`, qui retirent ces champs).
+- **`ledger.js`** : `debtRemainingAsOf` et `investmentValueAsOf` renvoient 0 **à partir de `cancelledAt`**
+  (pas avant) → le patrimoine net actuel baisse/monte comme il faut, et l'historique des mois passés reste
+  juste. Vérifié : dette de 1000 avec 200 remboursés = −800 ; annulée le 15/10 → 0 aujourd'hui, toujours −800
+  au 01/10.
+- **`debts.js`** : `cancelDebt()` / `restoreCancelledDebt()` exportées, bouton (icône `close`) sur les cartes
+  qui ont encore un restant dû, modale (date + motif, explique qu'aucun portefeuille n'est touché), section
+  « Annulées » sous « Soldées », fiche d'export avec ligne « Annulation ». Modifier une dette annulée la garde
+  annulée (le `cancelledAmount` suit le nouveau montant).
+- **`person-ledger.js`** : nouvel événement `kind: 'cancel'` dans le relevé (ouverture −1000, remboursement
+  +200, annulation +800 → solde 0) ; une dette annulée n'est plus relançable ni remboursable.
+- **Tous les lecteurs de `status === 'paid'`** ignorent aussi `cancelled` : prévision (`forecast.js`),
+  rappels natifs (`native-reminders.js`), notifications, échéancier (`unpaidInstallments`), questions en
+  langage naturel (`nl-query.js`). **Piège à retenir : tout futur filtre « dette ouverte » doit exclure
+  `paid` ET `cancelled`.**
+- **`investments.js`** : `cancelInvestment()` / `restoreCancelledInvestment()`, section « Annulés »
+  (historique et export restent accessibles). Les **apports automatiques (DCA) liés sont mis en pause**
+  (`active: false` + `pausedAt`) à l'annulation — sinon ils continueraient à débiter un portefeuille ;
+  `generateDueRecurring()` (`budgets.js`) re-pause aussi toute récurrence qui pointerait vers un
+  investissement annulé, et le sélecteur d'investissement du formulaire de récurrence les masque. Le
+  rétablissement ne réactive PAS les apports d'office (à refaire à la main). Un prêt annulé a un restant dû de
+  0 sur la carte de l'investissement qu'il finançait.
+- **Interprétation à confirmer avec l'auteur** : pour un investissement, « annuler » = sortir sa valeur du
+  patrimoine sans rembourser le portefeuille (l'achat reste débité), par symétrie avec les dettes.
+
+Testé dans le navigateur (fonctions réelles + clic sur le vrai bouton → vraie modale → soumission) : patrimoine
+avant/après, aucune transaction créée, relevé de la personne, rétablissement, récurrence mise en pause,
+aucune erreur console. Données de test supprimées ensuite. 35 clés EN ajoutées à `i18n.js`.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

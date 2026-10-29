@@ -25,6 +25,8 @@ const PAY_ICON = svgIcon('pay', 16);
 const REMIND_ICON = svgIcon('message', 16);
 const SCHEDULE_ICON = svgIcon('history', 16);
 const ACK_ICON = svgIcon('receipt', 16);
+const CANCEL_ICON = svgIcon('close', 16);
+const RESTORE_ICON = svgIcon('repay', 16);
 
 const decimalsOf = (currency) => (ZERO_DECIMAL_CURRENCIES.has(currency) ? 0 : 2);
 
@@ -48,6 +50,7 @@ function loanSnapshot(d, payments, today = todayISO()) {
 }
 
 function remaining(debt, payments) {
+  if (debt.status === 'cancelled') return 0;
   const paid = payments.filter((p) => p.debtId === debt.id).reduce((s, p) => s + p.amount, 0);
   return Math.max(0, (debt.principal || 0) - paid);
 }
@@ -70,6 +73,29 @@ export async function createLinkedDebt({ type, personName, principal, currency, 
   };
   await dbPut(STORES.DEBTS, record);
   await logAudit({ entityType: 'debt', entityId: record.id, action: 'create', after: record, note: auditNote || tr('Issue du partage de dépenses') });
+  return record;
+}
+
+/** Annule une dette/créance SANS rien rembourser : le restant dû est effacé (remise de dette), mais
+    l'ouverture et les remboursements déjà faits restent tels quels dans les portefeuilles et dans
+    l'historique — aucune transaction n'est créée ni supprimée, donc aucun solde de portefeuille ne bouge.
+    `cancelledAmount` garde ce qui a été effacé, pour l'afficher et le replacer dans le relevé. */
+export async function cancelDebt(debt, { date = todayISO(), note = '' } = {}) {
+  const payments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === debt.id);
+  const record = { ...debt, status: 'cancelled', cancelledAt: date, cancelledAmount: remaining(debt, payments), cancelNote: note };
+  await dbPut(STORES.DEBTS, record);
+  await logAudit({ entityType: 'debt', entityId: debt.id, action: 'update', before: debt, after: record, note: tr('Annulée sans remboursement (aucun mouvement de portefeuille)') });
+  return record;
+}
+
+/** Annule l'annulation : la dette redevient active (ou soldée si tout est déjà remboursé). */
+export async function restoreCancelledDebt(debt) {
+  const payments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === debt.id);
+  const { cancelledAt, cancelledAmount, cancelNote, ...rest } = debt;
+  const left = Math.max(0, (debt.principal || 0) - payments.reduce((sum, p) => sum + p.amount, 0));
+  const record = { ...rest, status: left <= 0.005 ? 'paid' : 'active' };
+  await dbPut(STORES.DEBTS, record);
+  await logAudit({ entityType: 'debt', entityId: debt.id, action: 'update', before: debt, after: record, note: tr('Annulation retirée') });
   return record;
 }
 
@@ -135,7 +161,7 @@ async function buildDebtProof(d) {
   const cur = d.currency;
   const money = (amount) => ({ amount, currency: cur });
   const paid = own.reduce((s, p) => s + p.amount, 0);
-  const rem = Math.max(0, (d.principal || 0) - paid);
+  const rem = d.status === 'cancelled' ? 0 : Math.max(0, (d.principal || 0) - paid);
   const declarant = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || tr('Utilisateur');
 
   const snap = loanSnapshot(d, allPayments);
@@ -145,6 +171,10 @@ async function buildDebtProof(d) {
     running = Math.max(0, running - p.amount);
     const interestNote = p.interestPart > 0 ? tr('dont intérêts : {amount}', { amount: formatCurrency(p.interestPart, cur) }) : '';
     rows.push([{ date: p.date }, tr('Remboursement'), [p.note, interestNote].filter(Boolean).join(' · '), money(p.amount), money(running)]);
+  }
+
+  if (d.status === 'cancelled') {
+    rows.push([{ date: d.cancelledAt || d.startDate }, tr('Annulation'), d.cancelNote || '', money(d.cancelledAmount ?? 0), money(0)]);
   }
 
   return {
@@ -165,7 +195,8 @@ async function buildDebtProof(d) {
           ...(d.interestRate ? [[tr("Taux d'intérêt annuel"), formatPercent(d.interestRate, 1)]] : []),
           [tr('Date de départ'), { date: d.startDate }],
           ...(d.dueDate ? [[tr('Échéance'), { date: d.dueDate }]] : []),
-          [tr('Statut'), d.status === 'paid' ? tr('Soldée') : tr('En cours')],
+          [tr('Statut'), d.status === 'paid' ? tr('Soldée') : d.status === 'cancelled' ? tr('Annulée') : tr('En cours')],
+          ...(d.status === 'cancelled' ? [[tr('Annulée le'), { date: d.cancelledAt || d.startDate }], [tr('Montant annulé'), money(d.cancelledAmount ?? 0)]] : []),
           ...(d.note ? [[tr('Note'), d.note]] : []),
         ],
       },
@@ -231,6 +262,7 @@ function debtCardHtml(d, payments, investmentName = null) {
           ${loan?.schedule.rows.length ? `<button type="button" class="icon-btn" data-action="schedule" aria-label="${tr('Échéancier')}" title="${tr('Échéancier')}">${SCHEDULE_ICON}</button>` : ''}
           <button type="button" class="icon-btn" data-action="pay" aria-label="${tr('Enregistrer un remboursement')}" title="${tr('Enregistrer un remboursement')}">${PAY_ICON}</button>
           <button type="button" class="icon-btn" data-action="edit" aria-label="${tr('Modifier')}" title="${tr('Modifier')}">${EDIT_ICON}</button>
+          ${rem > 0.005 ? `<button type="button" class="icon-btn" data-action="cancel" aria-label="${tr('Annuler la dette')}" title="${isDebt ? tr('Annuler cette dette sans remboursement') : tr('Annuler cette créance sans remboursement')}">${CANCEL_ICON}</button>` : ''}
           <button type="button" class="icon-btn" data-action="delete" aria-label="${tr('Supprimer')}" title="${tr('Supprimer')}">${DELETE_ICON}</button>
         </div>
       </div>
@@ -268,6 +300,22 @@ function paidDebtRowHtml(d, paidDate) {
       <div class="tx-amount amount ${isDebt ? 'neg' : 'pos'}">${formatCurrency(d.principal, d.currency)}</div>
       <div class="card-actions">
         <button type="button" class="icon-btn" data-action="export" aria-label="${tr('Exporter / imprimer')}" title="${tr('Exporter / imprimer')}">${PRINT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="${tr('Supprimer')}" title="${tr('Supprimer')}">${DELETE_ICON}</button>
+      </div>
+    </div>`;
+}
+
+function cancelledDebtRowHtml(d) {
+  const isDebt = d.type === 'debt';
+  return `
+    <div class="tx-row" data-debt-id="${escapeHtml(d.id)}">
+      <div class="tx-main">
+        <div class="tx-title">${escapeHtml(d.personName)} <span class="badge">${isDebt ? tr('Dette') : tr('Créance')}</span></div>
+        <div class="tx-sub">${tr('Annulée le {date}', { date: formatDate(d.cancelledAt || d.startDate) })} · ${tr('{amount} effacé sur {principal}', { amount: formatCurrency(d.cancelledAmount ?? 0, d.currency), principal: formatCurrency(d.principal, d.currency) })}${d.cancelNote ? ' · ' + escapeHtml(d.cancelNote) : ''}</div>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="icon-btn" data-action="export" aria-label="${tr('Exporter / imprimer')}" title="${tr('Exporter / imprimer')}">${PRINT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="restore" aria-label="${tr('Rétablir')}" title="${tr('Rétablir cette dette (retirer l\'annulation)')}">${RESTORE_ICON}</button>
         <button type="button" class="icon-btn" data-action="delete" aria-label="${tr('Supprimer')}" title="${tr('Supprimer')}">${DELETE_ICON}</button>
       </div>
     </div>`;
@@ -381,7 +429,13 @@ export async function openDebtModal(d = null, { personName = '' } = {}) {
         showToast(tr('Le type et la devise ne peuvent plus changer : des mouvements de portefeuille y sont liés. Supprimez cette dette et recréez-la.'));
         return;
       }
-      record.status = (record.principal - paid) <= 0.005 ? 'paid' : 'active';
+      if (d.status === 'cancelled') {
+        // Une dette annulée le reste après modification ; le montant effacé suit le nouveau principal.
+        record.status = 'cancelled';
+        record.cancelledAmount = Math.max(0, record.principal - paid);
+      } else {
+        record.status = (record.principal - paid) <= 0.005 ? 'paid' : 'active';
+      }
       if (d.openingTransactionId) {
         const openingTx = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === d.openingTransactionId);
         if (openingTx) {
@@ -573,6 +627,31 @@ export async function openPaymentModal(d, { prefill = null } = {}) {
   });
 }
 
+/** Annulation d'une dette/créance : explique ce que ça fait (et ne fait pas) avant de confirmer. */
+async function openCancelDebtModal(d) {
+  const payments = await dbGetAll(STORES.DEBT_PAYMENTS);
+  const left = remaining(d, payments.filter((p) => p.debtId === d.id));
+  const isDebt = d.type === 'debt';
+  const modal = openModal(`
+    <form id="cancel-debt-form">
+      <p class="fs-13" style="margin:0 0 10px;">${isDebt
+        ? tr('Vous n\'avez plus à rembourser les {amount} restants à {name}.', { amount: formatCurrency(left, d.currency), name: escapeHtml(d.personName) })
+        : tr('{name} n\'a plus à vous rembourser les {amount} restants.', { amount: formatCurrency(left, d.currency), name: escapeHtml(d.personName) })}</p>
+      <p class="fs-12 c-muted" style="margin:0 0 12px;">${tr('Aucun mouvement n\'est ajouté dans vos portefeuilles : le prêt / l\'emprunt d\'origine et les remboursements déjà faits restent dans l\'historique. Vous pourrez rétablir la dette depuis la liste « Annulées ».')}</p>
+      <div class="form-row"><label>${tr('Date d\'annulation')}</label><input type="date" name="date" value="${todayISO()}"></div>
+      <div class="form-row"><label>${tr('Motif (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
+      <button type="submit" class="btn btn-primary btn-block">${tr('Annuler la dette')}</button>
+    </form>`, { title: tr('Annulation — {name}', { name: d.personName }) });
+  modal.el.querySelector('#cancel-debt-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    await cancelDebt(d, { date: fd.get('date') || todayISO(), note: (fd.get('note') || '').trim().slice(0, 140) });
+    modal.close();
+    showToast(tr('Dette annulée.'));
+    notifyDataChanged('debts');
+  });
+}
+
 /** Échéancier d'un prêt à intérêts : chaque mensualité (capital + intérêts), son état au regard de ce qui a
     déjà été versé, le total des intérêts prévus, et un bouton pour enregistrer la prochaine mensualité. */
 async function openScheduleModal(d) {
@@ -690,8 +769,9 @@ export async function renderDebts() {
   const [debts, payments, investments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS), dbGetAll(STORES.INVESTMENTS)]);
   const investmentNames = new Map(investments.map((i) => [i.id, i.name]));
 
-  const activeDebts = debts.filter((d) => d.status !== 'paid');
+  const activeDebts = debts.filter((d) => d.status !== 'paid' && d.status !== 'cancelled');
   const paidDebts = debts.filter((d) => d.status === 'paid');
+  const cancelledDebts = debts.filter((d) => d.status === 'cancelled');
 
   const cardsHtml = activeDebts.length
     ? `<div class="grid-cards mb-20">${activeDebts.map((d) => debtCardHtml(d, payments, investmentNames.get(d.investmentId) || null)).join('')}</div>`
@@ -713,6 +793,17 @@ export async function renderDebts() {
       </div>`
     : '';
 
+  const cancelledHtml = cancelledDebts.length
+    ? `<div class="panel mt-20">
+        <div class="panel-header"><h3>${tr('Annulées')}</h3></div>
+        <p class="fs-12 c-muted" style="margin:0 0 8px;">${tr('Dettes et créances effacées sans remboursement : l\'historique reste, aucun mouvement de portefeuille n\'a été ajouté.')}</p>
+        ${cancelledDebts
+          .sort((a, b) => (b.cancelledAt || '').localeCompare(a.cancelledAt || ''))
+          .map(cancelledDebtRowHtml)
+          .join('')}
+      </div>`
+    : '';
+
   // « Par personne » : la page du cahier où l'on voit, d'un coup d'œil, qui doit quoi à qui.
   const people = summarizePeople(debts, payments);
   const peopleHtml = people.length
@@ -729,7 +820,7 @@ export async function renderDebts() {
       </div>`
     : '';
 
-  container.innerHTML = `${peopleHtml}${cardsHtml}${chartHtml}<div id="debts-simulator"></div>${paidHtml}`;
+  container.innerHTML = `${peopleHtml}${cardsHtml}${chartHtml}<div id="debts-simulator"></div>${paidHtml}${cancelledHtml}`;
 
   if (hasDebts) {
     const { baseCurrency } = await getExchangeRates();
@@ -778,6 +869,12 @@ export function initDebtsModule() {
       openProofExportModal(() => buildDebtProof(d));
     } else if (btn.dataset.action === 'edit') {
       openDebtModal(d);
+    } else if (btn.dataset.action === 'cancel') {
+      openCancelDebtModal(d);
+    } else if (btn.dataset.action === 'restore') {
+      await restoreCancelledDebt(d);
+      showToast(tr('Annulation retirée.'));
+      notifyDataChanged('debts');
     } else if (btn.dataset.action === 'delete') {
       const ok = await confirmDialog(tr('Supprimer "{name}" et tout son historique de remboursement (et les mouvements de portefeuille associés) ?', { name: d.personName }), { danger: true, requirePin: true, confirmText: tr('Supprimer') });
       if (ok) {

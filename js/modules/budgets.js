@@ -582,7 +582,7 @@ function openRecurringModal(r = null) {
 
     if (currentKind === 'investment') {
       const selectedWallet = wallets.find((w) => w.id === walletSelect.value) || wallets[0];
-      const investments = (await dbGetAll(STORES.INVESTMENTS)).filter((i) => !selectedWallet || i.currency === selectedWallet.currency);
+      const investments = (await dbGetAll(STORES.INVESTMENTS)).filter((i) => i.status !== 'cancelled' && (!selectedWallet || i.currency === selectedWallet.currency));
       // Option vide toujours en tête, même quand des investissements existent : sans elle, un
       // <select> non touché par l'utilisateur se retrouve automatiquement sur la PREMIÈRE option
       // (comportement natif du navigateur), donc investmentSelect.value n'est jamais vide et la
@@ -861,7 +861,7 @@ export async function generateDueRecurring() {
       }
     }
     if (r.investmentId) {
-      if (!investmentIds) investmentIds = new Set((await dbGetAll(STORES.INVESTMENTS)).map((i) => i.id));
+      if (!investmentIds) investmentIds = new Set((await dbGetAll(STORES.INVESTMENTS)).filter((i) => i.status !== 'cancelled').map((i) => i.id));
       if (!investmentIds.has(r.investmentId)) {
         r.active = false;
         r.pausedAt = new Date().toISOString();

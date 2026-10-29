@@ -72,7 +72,7 @@ export function buildReminderPlan({ recurring = [], debts = [], payments = [], t
       push(`inst-${d.id}-${nextInstallment.date}`, nextInstallment.date < todayISO() ? todayISO() : nextInstallment.date, 1, label, body);
       push(`inst-${d.id}-${nextInstallment.date}`, nextInstallment.date < todayISO() ? todayISO() : nextInstallment.date, 0, label, body);
     }
-    if (d.status === 'paid' || !d.dueDate) continue;
+    if (d.status === 'paid' || d.status === 'cancelled' || !d.dueDate) continue;
     const paid = payments.filter((p) => p.debtId === d.id).reduce((s, p) => s + p.amount, 0);
     const remaining = Math.max(0, (d.principal || 0) - paid);
     if (remaining <= 0.005) continue;

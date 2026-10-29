@@ -20,6 +20,7 @@ export function normalizeName(name) {
 }
 
 function remainingOf(debt, payments) {
+  if (debt.status === 'cancelled') return 0;
   const paid = payments.filter((p) => p.debtId === debt.id).reduce((s, p) => s + p.amount, 0);
   return Math.max(0, (debt.principal || 0) - paid);
 }
@@ -38,6 +39,13 @@ export function buildPersonStatement(personName, debts, payments) {
     for (const p of payments.filter((x) => x.debtId === d.id)) {
       events.push({ date: p.date || '', order: 1, kind: 'payment', debtId: d.id, type: d.type, currency: d.currency, amount: p.amount, signed: -sign * p.amount, note: p.note || '' });
     }
+    // Dette annulée : le restant dû à la date d'annulation sort du solde, sans que rien n'ait été remboursé.
+    if (d.status === 'cancelled') {
+      const cancelled = d.cancelledAmount != null
+        ? d.cancelledAmount
+        : Math.max(0, (d.principal || 0) - payments.filter((x) => x.debtId === d.id).reduce((sum, x) => sum + x.amount, 0));
+      if (cancelled > 0.005) events.push({ date: d.cancelledAt || d.startDate || '', order: 2, kind: 'cancel', debtId: d.id, type: d.type, currency: d.currency, amount: cancelled, signed: -sign * cancelled, note: d.cancelNote || '' });
+    }
   }
   events.sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.order - b.order);
   const running = {};
@@ -48,7 +56,7 @@ export function buildPersonStatement(personName, debts, payments) {
   const balances = {};
   for (const [cur, value] of Object.entries(running)) balances[cur] = Math.abs(value) < 0.005 ? 0 : value;
   const withRemaining = own.map((d) => ({ ...d, remaining: remainingOf(d, payments) }));
-  const dueDates = withRemaining.filter((d) => d.status !== 'paid' && d.remaining > 0.005 && d.dueDate).map((d) => d.dueDate).sort();
+  const dueDates = withRemaining.filter((d) => d.status !== 'paid' && d.status !== 'cancelled' && d.remaining > 0.005 && d.dueDate).map((d) => d.dueDate).sort();
   return { name: own[0]?.personName || personName, events, balances, debts: withRemaining, nextDueDate: dueDates[0] || null };
 }
 
@@ -84,7 +92,7 @@ export function statementAsText(statement, translate = t, format = formatCurrenc
   for (const ev of statement.events) {
     const label = ev.kind === 'open'
       ? (ev.type === 'receivable' ? translate('Prêt accordé') : translate('Prêt reçu'))
-      : translate('Remboursement');
+      : ev.kind === 'cancel' ? translate('Annulation') : translate('Remboursement');
     lines.push(`${formatDay(ev.date)} · ${label}${ev.note ? ` (${ev.note})` : ''} : ${format(ev.amount, ev.currency)}`);
   }
   for (const [currency, value] of Object.entries(statement.balances)) {
@@ -210,9 +218,9 @@ export async function openPersonLedger(personName, debts, payments, actions = {}
     settled ? `<div class="stat-row"><span class="stat-row-label">${t('Tout est réglé')}</span><strong>${svgIcon('check', 16)}</strong></div>` : '',
   ].join('');
 
-  const activeDebts = statement.debts.filter((d) => d.status !== 'paid' && d.remaining > 0.005);
+  const activeDebts = statement.debts.filter((d) => d.status !== 'paid' && d.status !== 'cancelled' && d.remaining > 0.005);
   const eventsHtml = statement.events.map((ev) => {
-    const label = ev.kind === 'open' ? (ev.type === 'receivable' ? t('Prêt accordé') : t('Prêt reçu')) : t('Remboursement');
+    const label = ev.kind === 'open' ? (ev.type === 'receivable' ? t('Prêt accordé') : t('Prêt reçu')) : ev.kind === 'cancel' ? t('Annulation') : t('Remboursement');
     const cls = ev.signed >= 0 ? 'pos' : 'neg';
     return `<div class="tx-row">
       <div class="tx-main"><div class="tx-title">${escapeHtml(label)}</div><div class="tx-sub">${formatDate(ev.date)}${ev.note ? ' · ' + escapeHtml(ev.note) : ''}</div></div>

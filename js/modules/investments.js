@@ -40,6 +40,8 @@ export const ENTRY_TYPE_LABELS = { contribution: 'Apport', withdrawal: 'Retrait'
 const EDIT_ICON = svgIcon('edit', 16);
 const DELETE_ICON = svgIcon('trash', 16);
 const HISTORY_ICON = svgIcon('history', 16);
+const CANCEL_ICON = svgIcon('close', 16);
+const RESTORE_ICON = svgIcon('repay', 16);
 
 function walletOptionsHtml(wallets, currency) {
   const matching = wallets.filter((w) => w.currency === currency);
@@ -148,6 +150,32 @@ export async function ensureInvestmentCategoryId(txType) {
   const category = { id: uuid(), name: t('Investissement'), type: txType, parentId: null, createdAt: new Date().toISOString() };
   await dbAdd(STORES.CATEGORIES, category);
   return category.id;
+}
+
+/** Annule un investissement SANS rien inscrire dans un portefeuille : l'achat et les apports déjà débités
+    restent tels quels (aucune transaction créée ni supprimée), l'historique est conservé, mais la valeur
+    sort du patrimoine à partir de la date d'annulation (voir investmentValueAsOf, ledger.js). Les apports
+    automatiques liés sont mis en pause, sinon ils continueraient à débiter un portefeuille.
+    `cancelledValue` garde la valeur qu'il avait au moment de l'annulation, pour l'affichage. */
+export async function cancelInvestment(inv, { date = todayISO(), note = '' } = {}) {
+  const entries = await dbGetAll(STORES.INVESTMENT_ENTRIES);
+  const record = { ...inv, status: 'cancelled', cancelledAt: date, cancelledValue: investmentValueAsOf(inv, entries, null), cancelNote: note };
+  const pausedRecurring = (await dbGetAll(STORES.RECURRING)).filter((r) => r.investmentId === inv.id && r.active);
+  await dbWriteBatch([
+    { store: STORES.INVESTMENTS, type: 'put', value: record },
+    ...pausedRecurring.map((r) => ({ store: STORES.RECURRING, type: 'put', value: { ...r, active: false, pausedAt: new Date().toISOString() } })),
+  ]);
+  await logAudit({ entityType: 'investment', entityId: inv.id, action: 'update', before: inv, after: record, note: t('Annulé sans mouvement de portefeuille') });
+  return { record, pausedCount: pausedRecurring.length };
+}
+
+/** Annule l'annulation. Les apports automatiques mis en pause ne sont PAS réactivés d'office. */
+export async function restoreCancelledInvestment(inv) {
+  const { cancelledAt, cancelledValue, cancelNote, ...rest } = inv;
+  const record = { ...rest, status: 'active' };
+  await dbPut(STORES.INVESTMENTS, record);
+  await logAudit({ entityType: 'investment', entityId: inv.id, action: 'update', before: inv, after: record, note: t('Annulation retirée') });
+  return record;
 }
 
 function computeMetrics(inv, entries, loanInterestPaid = 0) {
@@ -289,7 +317,7 @@ function loansFor(inv, debts, debtPayments) {
   const loans = own.map((debt) => {
     const own = debtPayments.filter((p) => p.debtId === debt.id);
     const paid = own.reduce((s, p) => s + (p.amount || 0), 0);
-    return { debt, paid, remaining: Math.max(0, (debt.principal || 0) - paid), interestPaid: own.reduce((s, p) => s + (Number(p.interestPart) || 0), 0) };
+    return { debt, paid, remaining: debt.status === 'cancelled' ? 0 : Math.max(0, (debt.principal || 0) - paid), interestPaid: own.reduce((s, p) => s + (Number(p.interestPart) || 0), 0) };
   });
   return {
     loans,
@@ -334,6 +362,7 @@ function investmentCardHtml(inv, metrics, loan = null, links = null) {
           <button type="button" class="icon-btn" data-action="export" aria-label="${t('Exporter / imprimer')}" title="${t('Exporter / imprimer')}">${PRINT_ICON}</button>
           <button type="button" class="icon-btn" data-action="history" aria-label="${t('Historique / Ajouter')}" title="${t('Historique / Ajouter')}">${HISTORY_ICON}</button>
           <button type="button" class="icon-btn" data-action="edit" aria-label="${t('Modifier')}" title="${t('Modifier')}">${EDIT_ICON}</button>
+          <button type="button" class="icon-btn" data-action="cancel" aria-label="${t('Annuler l\'investissement')}" title="${t('Annuler cet investissement sans remboursement')}">${CANCEL_ICON}</button>
           <button type="button" class="icon-btn" data-action="delete" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
         </div>
       </div>
@@ -347,6 +376,22 @@ function investmentCardHtml(inv, metrics, loan = null, links = null) {
       ${loan ? `
       <div class="stat-row"><span class="stat-row-label">${loan.loans.length === 1 ? t('Prêt — {name}', { name: escapeHtml(loan.loans[0].debt.personName) }) : t('Prêts ({count})', { count: loan.loans.length })}</span><span class="amount" data-value="${loan.remaining}">${loan.remaining > 0.005 ? t('{amount} restant', { amount: formatCurrency(loan.remaining, inv.currency) }) : t('Soldé')}</span></div>
       <div class="stat-row"><span class="stat-row-label">${t('Valeur nette (valeur − prêt restant)')}</span><span class="amount" data-value="${metrics.currentValue - loan.remaining}">${formatCurrency(metrics.currentValue - loan.remaining, inv.currency)}</span></div>` : ''}
+    </div>`;
+}
+
+function cancelledInvestmentRowHtml(inv) {
+  return `
+    <div class="tx-row" data-investment-id="${escapeHtml(inv.id)}">
+      <div class="tx-main">
+        <div class="tx-title">${escapeHtml(inv.name)} <span class="badge">${escapeHtml(t(ASSET_CLASSES[inv.assetClass] || inv.assetClass))}</span></div>
+        <div class="tx-sub">${t('Annulé le {date}', { date: formatDate(inv.cancelledAt || (inv.createdAt || '').slice(0, 10)) })} · ${t('Valeur annulée : {amount}', { amount: formatCurrency(inv.cancelledValue ?? 0, inv.currency) })}${inv.cancelNote ? ' · ' + escapeHtml(inv.cancelNote) : ''}</div>
+      </div>
+      <div class="card-actions">
+        <button type="button" class="icon-btn" data-action="export" aria-label="${t('Exporter / imprimer')}" title="${t('Exporter / imprimer')}">${PRINT_ICON}</button>
+        <button type="button" class="icon-btn" data-action="history" aria-label="${t('Historique')}" title="${t('Historique')}">${HISTORY_ICON}</button>
+        <button type="button" class="icon-btn" data-action="restore" aria-label="${t('Rétablir')}" title="${t('Rétablir cet investissement (retirer l\'annulation)')}">${RESTORE_ICON}</button>
+        <button type="button" class="icon-btn" data-action="delete" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
+      </div>
     </div>`;
 }
 
@@ -966,13 +1011,25 @@ export async function renderInvestments() {
     return;
   }
 
-  const allRows = investments.map((inv) => ({ inv, metrics: null, loan: loansFor(inv, debts, debtPayments), links: linksFor(inv) }));
+  const cancelledInvestments = investments.filter((inv) => inv.status === 'cancelled');
+  const allRows = investments.filter((inv) => inv.status !== 'cancelled').map((inv) => ({ inv, metrics: null, loan: loansFor(inv, debts, debtPayments), links: linksFor(inv) }));
   for (const r of allRows) r.metrics = computeMetrics(r.inv, entries, r.loan?.interestPaid || 0);
   const rows = allRows.filter((r) => {
     if (assetFilter === 'physical') return PHYSICAL_ASSET_CLASSES.includes(r.inv.assetClass);
     if (assetFilter === 'financial') return !PHYSICAL_ASSET_CLASSES.includes(r.inv.assetClass);
     return true;
   });
+
+  const cancelledHtml = cancelledInvestments.length
+    ? `<div class="panel mt-20">
+        <div class="panel-header"><h3>${t('Annulés')}</h3></div>
+        <p class="fs-12 c-muted" style="margin:0 0 8px;">${t('Investissements annulés sans remboursement : l\'historique reste, aucun mouvement de portefeuille n\'a été ajouté.')}</p>
+        ${cancelledInvestments
+          .sort((a, b) => (b.cancelledAt || '').localeCompare(a.cancelledAt || ''))
+          .map(cancelledInvestmentRowHtml)
+          .join('')}
+      </div>`
+    : '';
 
   container.innerHTML = `
     <div class="tabs-bar mb-16">
@@ -994,7 +1051,7 @@ export async function renderInvestments() {
         </label>
       </div>
       <div id="yield-table-wrap">${renderYieldTable(rows, baseCurrency, rates, threshold, assetFilter === 'all')}</div>
-    </div>`;
+    </div>${cancelledHtml}`;
 
   container.querySelectorAll('[data-asset-filter]').forEach((btn) => {
     btn.addEventListener('click', () => { assetFilter = btn.dataset.assetFilter; renderInvestments(); });
@@ -1009,6 +1066,29 @@ export async function renderInvestments() {
 
   const history = await computeInvestmentValueHistory(6);
   renderNetWorthTrendChart('chart-investments-trend', history, baseCurrency, t('Valeur du portefeuille'));
+}
+
+/** Annulation d'un investissement : explique ce que ça fait (et ne fait pas) avant de confirmer. */
+async function openCancelInvestmentModal(inv) {
+  const [entries, recurring] = await Promise.all([dbGetAll(STORES.INVESTMENT_ENTRIES), dbGetAll(STORES.RECURRING)]);
+  const value = investmentValueAsOf(inv, entries, null);
+  const activeRecurring = recurring.filter((r) => r.investmentId === inv.id && r.active).length;
+  const modal = openModal(`
+    <form id="cancel-investment-form">
+      <p class="fs-13" style="margin:0 0 10px;">${t('« {name} » ne sera plus compté dans votre patrimoine ({amount}).', { name: escapeHtml(inv.name), amount: formatCurrency(value, inv.currency) })}</p>
+      <p class="fs-12 c-muted" style="margin:0 0 12px;">${t('Aucun mouvement n\'est ajouté dans vos portefeuilles : l\'achat et les apports déjà débités restent dans l\'historique. Vous pourrez rétablir l\'investissement depuis la liste « Annulés ».')}${activeRecurring ? ' ' + t('Les apports automatiques liés ({count}) seront mis en pause.', { count: activeRecurring }) : ''}</p>
+      <div class="form-row"><label>${t('Date d\'annulation')}</label><input type="date" name="date" value="${todayISO()}"></div>
+      <div class="form-row"><label>${t('Motif (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
+      <button type="submit" class="btn btn-primary btn-block">${t('Annuler l\'investissement')}</button>
+    </form>`, { title: t('Annulation — {name}', { name: inv.name }) });
+  modal.el.querySelector('#cancel-investment-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    await cancelInvestment(inv, { date: fd.get('date') || todayISO(), note: (fd.get('note') || '').trim().slice(0, 140) });
+    modal.close();
+    showToast(t('Investissement annulé.'));
+    notifyDataChanged('investments');
+  });
 }
 
 export function initInvestmentsModule() {
@@ -1045,6 +1125,12 @@ export function initInvestmentsModule() {
       }
     } else if (btn.dataset.action === 'edit') {
       openInvestmentModal(inv);
+    } else if (btn.dataset.action === 'cancel') {
+      openCancelInvestmentModal(inv);
+    } else if (btn.dataset.action === 'restore') {
+      await restoreCancelledInvestment(inv);
+      showToast(t('Annulation retirée.'));
+      notifyDataChanged('investments');
     } else if (btn.dataset.action === 'delete') {
       const linkedRecurring = (await dbGetAll(STORES.RECURRING)).filter((r) => r.investmentId === inv.id);
       const confirmMsg = linkedRecurring.length

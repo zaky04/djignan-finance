@@ -92,7 +92,7 @@ export function accruedInterest(balance, annualRatePct, fromDate, toDate, decima
     comprises. Vide si la dette n'a pas de taux ni de durée. Partagée par la prévision de trésorerie, les rappels
     et les notifications : toutes lisent la même échéance. */
 export function unpaidInstallments(debt, payments, today, decimals = 2) {
-  if (!(debt.termMonths > 0) || !(debt.interestRate > 0) || debt.status === 'paid') return [];
+  if (!(debt.termMonths > 0) || !(debt.interestRate > 0) || debt.status === 'paid' || debt.status === 'cancelled') return [];
   const schedule = buildSchedule({ principal: debt.principal, annualRatePct: debt.interestRate, termMonths: debt.termMonths, startDate: debt.startDate, decimals });
   if (!schedule.rows.length) return [];
   const cashPaid = payments.filter((p) => p.debtId === debt.id).reduce((sum, p) => sum + p.amount + (Number(p.interestPart) || 0), 0);

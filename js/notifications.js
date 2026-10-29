@@ -127,6 +127,7 @@ export async function checkAndNotify() {
   const STALE_VALUATION_MS = 90 * 24 * 3600 * 1000; // 90 jours
   const [investments, investmentEntries] = await Promise.all([dbGetAll(STORES.INVESTMENTS), dbGetAll(STORES.INVESTMENT_ENTRIES)]);
   for (const inv of investments) {
+    if (inv.status === 'cancelled') continue;
     const valuations = investmentEntries.filter((e) => e.investmentId === inv.id && e.type === 'valuation').sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     const lastValuationDate = valuations[0]?.date || (inv.createdAt || '').slice(0, 10);
     if (!lastValuationDate) continue;
@@ -159,7 +160,7 @@ export async function checkAndNotify() {
         if (ok) { notifiedDebts[instKey] = true; debtsChanged = true; }
       }
     }
-    if (d.status === 'paid' || !d.dueDate) continue;
+    if (d.status === 'paid' || d.status === 'cancelled' || !d.dueDate) continue;
     if (d.dueDate < today || d.dueDate > horizonStr) continue;
     const key = `${d.id}:${d.dueDate}`;
     if (notifiedDebts[key]) continue;

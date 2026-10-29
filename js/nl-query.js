@@ -107,7 +107,7 @@ export function answerQuestion(question, data, { today = todayISO() } = {}) {
 
   // ---- Qui me doit / combien je dois ----
   const remainingOf = (d) => Math.max(0, (d.principal || 0) - payments.filter((p) => p.debtId === d.id).reduce((s, p) => s + p.amount, 0));
-  const open = debts.filter((d) => d.status !== 'paid' && remainingOf(d) > 0.005);
+  const open = debts.filter((d) => d.status !== 'paid' && d.status !== 'cancelled' && remainingOf(d) > 0.005);
   const named = open.filter((d) => q.includes(normalizeText(d.personName)));
   const owedToMeAsk = /\bqui me doit|me doit|owes me|owe me|who owes\b/.test(q);
   const iOweAsk = /combien je dois|je dois combien|a qui je dois|i owe|what do i owe/.test(q);
