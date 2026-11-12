@@ -60,7 +60,7 @@ function budgetCategoryCardHtml(cat, actual, limit, currency, carryover = null) 
       <div class="card-title-row">
         <div style="display:flex;align-items:center;gap:8px;" class="fw-700 fs-14">
           <span style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:${color}22;color:${color};flex-shrink:0;">${icon}</span>
-          ${cat.parentId ? '— ' : ''}${escapeHtml(cat.name)}${cat.envelopeMode ? ` <span class="badge badge-accent ml-4">${t('Enveloppe')}</span>` : ''}
+          ${cat.parentId ? '— ' : ''}${escapeHtml(cat.name)}${cat.envelopeMode ? ` <span class="badge badge-accent ml-4">${t('Enveloppe')}</span>` : ''}${cat.exceptional ? ` <span class="badge badge-accent ml-4">${t('Exceptionnelle')}</span>` : ''}
         </div>
         <input type="number" min="0" step="0.01" data-limit-input="${escapeHtml(cat.id)}" value="${limit || ''}" placeholder="${t('Budget')}"
           style="width:100px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface-alt);text-align:right;">
@@ -344,6 +344,13 @@ function categoryFormHtml(category, presetParentId, presetType) {
           ${t('Mode enveloppe : reporter le solde non dépensé (ou le dépassement) sur le mois suivant')}
         </label>
       </div>
+      <div data-field="exceptionalRow" ${type !== 'expense' ? 'hidden' : ''}>
+        <label style="display:flex;align-items:center;gap:10px;padding:0 0 4px;cursor:pointer;" class="fs-14">
+          <input type="checkbox" name="exceptional" ${category?.exceptional ? 'checked' : ''}>
+          ${t('Dépenses exceptionnelles (hors suivi mensuel)')}
+        </label>
+        <p class="fs-12 c-muted" style="margin:0 0 14px 28px;">${t("Voyage, pèlerinage, scolarité, formation… : ces dépenses ne comptent ni dans le budget ni dans vos dépenses du mois. Incompatible avec le mode enveloppe.")}</p>
+      </div>
       ${!presetParentId ? `
       <div class="form-row">
         <label>${t('Type')}</label>
@@ -372,12 +379,24 @@ function openCategoryModal(category = null, presetParentId = null, presetType = 
   const typeSelect = modal.el.querySelector('#category-type-select');
   const parentSelect = modal.el.querySelector('#category-parent-select');
   const envelopeRow = modal.el.querySelector('[data-field="envelopeRow"]');
+  const exceptionalRow = modal.el.querySelector('[data-field="exceptionalRow"]');
+
+  // Une catégorie « exceptionnelle » sort du budget, une catégorie en enveloppe y reste (et accumule son report) :
+  // les deux réglages se contredisent, on n'en autorise qu'un à la fois.
+  const syncEnvelopeExceptional = () => {
+    form.elements.envelopeMode.disabled = form.elements.exceptional.checked;
+    form.elements.exceptional.disabled = form.elements.envelopeMode.checked;
+  };
+  form.elements.envelopeMode.addEventListener('change', syncEnvelopeExceptional);
+  form.elements.exceptional.addEventListener('change', syncEnvelopeExceptional);
+  syncEnvelopeExceptional();
 
   if (typeSelect && parentSelect) {
     populateParentSelect(parentSelect, typeSelect.value, category?.id);
     typeSelect.addEventListener('change', () => {
       populateParentSelect(parentSelect, typeSelect.value, category?.id);
       if (envelopeRow) envelopeRow.hidden = typeSelect.value !== 'expense';
+      if (exceptionalRow) exceptionalRow.hidden = typeSelect.value !== 'expense';
     });
     if (category?.parentId) parentSelect.value = category.parentId;
   }
@@ -416,6 +435,8 @@ function openCategoryModal(category = null, presetParentId = null, presetType = 
       icon: fd.get('icon') || DEFAULT_CATEGORY_ICON,
       color: fd.get('color') || DEFAULT_CATEGORY_COLOR,
       envelopeMode: fd.get('type') === 'expense' && fd.get('envelopeMode') === 'on',
+      // Les champs désactivés ne sont pas dans FormData : on lit la case directement.
+      exceptional: fd.get('type') === 'expense' && form.elements.exceptional.checked && !form.elements.envelopeMode.checked,
       createdAt: category?.createdAt || new Date().toISOString(),
     };
     await dbPut(STORES.CATEGORIES, record);

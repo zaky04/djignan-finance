@@ -455,6 +455,12 @@ export async function renderDashboard() {
 
   renderMonthTrend('summary-trend-income', summary.income, prevSummary.income, currency);
   renderMonthTrend('summary-trend-expenses', summary.expenses, prevSummary.expenses, currency, true);
+  // Dépenses exceptionnelles du mois : sorties réelles mais hors discipline, montrées à part pour ne rien cacher.
+  const exceptionalEl = document.getElementById('summary-exceptional');
+  if (exceptionalEl) {
+    exceptionalEl.hidden = !(summary.exceptionalExpenses > 0);
+    if (summary.exceptionalExpenses > 0) exceptionalEl.textContent = tr('+ {amount} de dépenses exceptionnelles (hors suivi mensuel)', { amount: formatCurrency(summary.exceptionalExpenses, currency) });
+  }
   renderMonthTrend('summary-trend-netSavings', summary.netSavings, prevSummary.netSavings, currency);
   renderMonthTrend('summary-trend-cashFlow', summary.cashFlow, prevSummary.cashFlow, currency);
 

@@ -38,6 +38,7 @@ const {
   suggestBudgetFromHistory, computeBudgetSuggestions,
   computeNetWorthComposition, computeEndOfMonthForecast, computeLiquidBalance, computeSavingsAllocations,
   isDailyWallet, walletUsage, withdrawalLockedUntil, computeSafeToSpend,
+  markExceptionalTransactions, computeAnnualExceptionalExpenses,
 } = await import('../js/ledger.js');
 
 const results = [];
@@ -313,6 +314,165 @@ async function runTests() {
   await importAllData({ stores: { [STORES.WALLETS]: [{ id: 'wallet-sustained-s', name: 'Test', currency: 'XOF', initialBalance: 0 }] } }, { merge: true });
   assertTrue('import : un identifiant ordinaire (lettres, tirets) est accepté', (await dbGetAll(STORES.WALLETS)).some((w) => w.id === 'wallet-sustained-s'));
   await dbDelete(STORES.WALLETS, 'wallet-sustained-s');
+
+  // --- Dépenses exceptionnelles : hors discipline mensuelle, mais bien dans les soldes ---
+  // Catégorie « Voyage » marquée exceptionnelle (+ une sous-catégorie qui en hérite). Mars 2027 : mois à part.
+  const exBalanceBefore = walletBalancesAsOf(await dbGetAll(STORES.WALLETS), await dbGetAll(STORES.TRANSACTIONS)).get('w1');
+  await dbAdd(STORES.CATEGORIES, { id: 'cx-trip', name: 'Voyage', type: 'expense', exceptional: true });
+  await dbAdd(STORES.CATEGORIES, { id: 'cx-ticket', name: 'Billets', type: 'expense', parentId: 'cx-trip' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'x1', type: 'income', walletId: 'w1', categoryId: 'c2', amount: 3000, date: '2027-03-01', note: 'Salaire mars' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'x2', type: 'expense', walletId: 'w1', categoryId: 'c1', amount: 200, date: '2027-03-02', note: 'Courses' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'x3', type: 'expense', walletId: 'w1', categoryId: 'cx-trip', amount: 1000, date: '2027-03-03', note: 'Pèlerinage' });          // suit sa catégorie → exceptionnelle
+  await dbAdd(STORES.TRANSACTIONS, { id: 'x4', type: 'expense', walletId: 'w1', categoryId: 'c1', amount: 500, date: '2027-03-04', note: 'Engin pour un parent', exceptional: true }); // case cochée → exceptionnelle
+  await dbAdd(STORES.TRANSACTIONS, { id: 'x5', type: 'expense', walletId: 'w1', categoryId: 'cx-trip', amount: 400, date: '2027-03-05', note: 'Week-end', exceptional: false });          // case décochée → courante
+  await dbAdd(STORES.TRANSACTIONS, { id: 'x6', type: 'expense', walletId: 'w1', categoryId: 'cx-ticket', amount: 100, date: '2027-03-06', note: 'Billet de train' });         // sous-catégorie → hérite
+  await dbAdd(STORES.BUDGETS, { id: 'b3', categoryId: 'c1', month: '2027-03', limit: 1000 });
+
+  const exSummary = await computeMonthSummary('2027-03');
+  assertEqual('exceptionnelles : dépenses courantes = 200 (courses) + 400 (case décochée)', exSummary.expenses, 600);
+  assertEqual('exceptionnelles : total exceptionnel = catégorie (1000) + case cochée (500) + sous-catégorie (100)', exSummary.exceptionalExpenses, 1600);
+  assertEqual('exceptionnelles : épargne nette (discipline) = revenus - courantes', exSummary.netSavings, 3000 - 600);
+  assertEqual('exceptionnelles : cash-flow réel = revenus - TOUTES les sorties', exSummary.cashFlow, 3000 - 600 - 1600);
+  const exBudget = (await computeBudgetVsActual('2027-03')).find((r) => r.categoryId === 'c1');
+  assertEqual('exceptionnelles : budget vs réel ignore la dépense cochée exceptionnelle (200, pas 700)', exBudget?.actual, 200);
+  const exByCat = await computeExpensesByCategory('2027-03');
+  assertEqual('exceptionnelles : le camembert du mois ne compte que les courantes', exByCat.reduce((s, r) => s + r.value, 0), 600);
+  const exWallets = await dbGetAll(STORES.WALLETS);
+  const exBalances = walletBalancesAsOf(exWallets, await dbGetAll(STORES.TRANSACTIONS));
+  assertEqual("exceptionnelles : le solde du portefeuille, lui, déduit TOUT (l'argent est bien sorti)", exBalances.get('w1') - exBalanceBefore, 3000 - 200 - 1000 - 500 - 400 - 100);
+
+  // Reclassement rétroactif : marquer la catégorie Alimentation « exceptionnelle » fait suivre ses transactions
+  // sans choix explicite (x2), mais pas celles qui ont leur propre case.
+  const markedPure = markExceptionalTransactions(
+    [{ id: 'a', type: 'expense', categoryId: 'k1' }, { id: 'b', type: 'expense', categoryId: 'k1', exceptional: false }, { id: 'c', type: 'income', categoryId: 'k1' }],
+    [{ id: 'k1', exceptional: true }],
+  );
+  assertEqual('markExceptionalTransactions : sans choix explicite, suit la catégorie', markedPure[0].isExceptional, true);
+  assertEqual('markExceptionalTransactions : le choix explicite de la transaction l\'emporte', markedPure[1].isExceptional, false);
+  assertEqual('markExceptionalTransactions : une recette n\'est jamais « exceptionnelle »', markedPure[2].isExceptional, false);
+
+  // --- Remboursement hors portefeuille (revenu direct / tiers) ---
+  const nwBeforeDirect = (await computeNetWorth()).total;
+  const w1BeforeDirect = walletBalancesAsOf(await dbGetAll(STORES.WALLETS), await dbGetAll(STORES.TRANSACTIONS)).get('w1');
+  await dbAdd(STORES.DEBT_PAYMENTS, { id: 'p-direct', debtId: 'd1', amount: 50, interestPart: 0, date: '2026-06-20', source: 'direct', sourceName: 'activité' });
+  const nwAfterDirect = (await computeNetWorth()).total;
+  const w1AfterDirect = walletBalancesAsOf(await dbGetAll(STORES.WALLETS), await dbGetAll(STORES.TRANSACTIONS)).get('w1');
+  assertEqual('remboursement direct : la dette baisse, le patrimoine net monte du montant (aucun actif ne diminue)', nwAfterDirect - nwBeforeDirect, 50);
+  assertEqual('remboursement direct : aucun portefeuille ne bouge', w1AfterDirect - w1BeforeDirect, 0);
+
+  // --- Prêt partagé à mon nom : parts des participants ---
+  const { parseParticipants, participantStatuses, participantReceivablesAsOf } = await import('../js/shared-loan.js');
+  const parsedEq = parseParticipants('Awa\nMoussa\nIbrahim', 1200, 0);
+  assertEqual('parseParticipants : sans montant, parts égales avec moi (1200 / 4)', parsedEq.participants.map((p) => p.share).join(','), '300,300,300');
+  assertEqual('parseParticipants : ma part = ce qui reste', parsedEq.myShare, 300);
+  const parsedMixed = parseParticipants('Awa : 50 000\nMoussa', 300000, 0);
+  assertEqual('parseParticipants : montant fixé gardé, le reste partagé avec moi', parsedMixed.participants.map((p) => p.share).join(','), '50000,125000');
+  assertEqual('parseParticipants : ma part dans le cas mixte', parsedMixed.myShare, 125000);
+  assertEqual('parseParticipants : parts fixées > prêt = erreur', parseParticipants('Awa : 500', 300, 0).error, 'too-much');
+  assertEqual('parseParticipants : « Nom : abc » = erreur (faute de frappe)', parseParticipants('Awa : abc', 300, 0).error, 'amount');
+  assertEqual('parseParticipants : un nom inchangé garde son identifiant', parseParticipants('awa', 300, 0, [{ id: 'keep-me', name: 'Awa', share: 100 }]).participants[0].id, 'keep-me');
+
+  const nwBeforeShared = (await computeNetWorth()).total;
+  await dbAdd(STORES.DEBTS, {
+    id: 'ds1', type: 'debt', personName: 'Banque (voyage classe)', currency: 'EUR', principal: 900, startDate: '2027-03-10', status: 'active',
+    participants: [{ id: 'pa', name: 'Awa', share: 300 }, { id: 'pb', name: 'Moussa', share: 300 }],
+  });
+  const nwShared = (await computeNetWorth()).total;
+  assertEqual('prêt partagé : seule MA part (900 - 600 = 300) pèse sur le patrimoine net', nwShared - nwBeforeShared, -300);
+  const compo = await computeNetWorthComposition();
+  assertTrue('prêt partagé : les parts des autres figurent dans les créances', compo.receivables >= 600, `receivables=${compo.receivables}`);
+
+  // Awa règle 100 directement au prêteur : la dette baisse de 100 ET sa créance aussi → patrimoine inchangé.
+  await dbAdd(STORES.DEBT_PAYMENTS, { id: 'pay-awa', debtId: 'ds1', amount: 100, interestPart: 0, date: '2027-03-12', source: 'participant', sourceName: 'Awa', participantId: 'pa' });
+  assertEqual('prêt partagé : un participant qui paie le prêteur ne change pas mon patrimoine net', (await computeNetWorth()).total - nwShared, 0);
+
+  // Moussa me remet 300 (entre dans w1, mouvement lié à la dette) → sa créance tombe, mon portefeuille monte : net inchangé.
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-handed', type: 'income', walletId: 'w1', categoryId: 'c2', amount: 300, date: '2027-03-15', note: 'Participation de Moussa', debtId: 'ds1', debtContributionId: 'h1' });
+  const dsNow = (await dbGetAll(STORES.DEBTS)).find((x) => x.id === 'ds1');
+  await (await import('../js/db.js')).dbPut(STORES.DEBTS, { ...dsNow, handedIn: [{ id: 'h1', participantId: 'pb', amount: 300, date: '2027-03-15', transactionId: 'tx-handed' }] });
+  assertEqual('prêt partagé : une participation remise à moi laisse aussi le patrimoine net inchangé', (await computeNetWorth()).total - nwShared, 0);
+  const marchSummary = await computeMonthSummary('2027-03');
+  assertEqual('prêt partagé : la participation remise n\'est PAS un revenu du mois', marchSummary.income, 3000);
+
+  const dsFinal = (await dbGetAll(STORES.DEBTS)).find((x) => x.id === 'ds1');
+  const dsPayments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === 'ds1');
+  const statuses = participantStatuses(dsFinal, dsPayments);
+  assertEqual('participantStatuses : Awa a versé 100 sur 300, reste 200', statuses.find((s) => s.id === 'pa').owed, 200);
+  assertEqual('participantStatuses : Moussa a tout remis, reste 0', statuses.find((s) => s.id === 'pb').owed, 0);
+  assertEqual('participantReceivablesAsOf : total dû par les participants = 200', participantReceivablesAsOf(dsFinal, dsPayments), 200);
+  assertEqual('participantReceivablesAsOf : 0 avant la date de départ du prêt', participantReceivablesAsOf(dsFinal, dsPayments, '2027-03-01'), 0);
+  assertEqual('participantReceivablesAsOf : 0 si la dette est annulée (remise de dette)', participantReceivablesAsOf({ ...dsFinal, status: 'cancelled', cancelledAt: '2027-03-20' }, dsPayments), 0);
+
+  // --- Score de santé : un prêt marqué « exceptionnel » sort du ratio d'endettement ---
+  const dbm = await import('../js/db.js');
+  // Les fixtures précédentes laissent des liquidités négatives (ratio plafonné à 1) : un portefeuille bien garni rend le
+  // ratio d'endettement mesurable.
+  await dbAdd(STORES.WALLETS, { id: 'w-rich', name: 'Portefeuille garni (test)', currency: 'EUR', initialBalance: 20000, createdAt: '2026-01-01T00:00:00.000Z' });
+  const compoBefore = await computeNetWorthComposition();
+  const ratioBefore = (await computeFinancialHealthScore('2027-03')).debtRatio;
+  await dbm.dbPut(STORES.DEBTS, { ...dsFinal, exceptional: true });
+  const compoAfter = await computeNetWorthComposition();
+  const ratioAfter = (await computeFinancialHealthScore('2027-03')).debtRatio;
+  assertEqual('score : le restant dû du prêt exceptionnel (900 - 100 versés) est isolé', compoAfter.exceptionalDebts, 800);
+  assertEqual("score : les parts encore dues par les participants de ce prêt sont isolées aussi (Awa : 200)", compoAfter.exceptionalReceivables, 200);
+  assertEqual('score : le patrimoine (dettes, créances) reste inchangé, seul le ratio évolue', compoAfter.debts + compoAfter.receivables, compoBefore.debts + compoBefore.receivables);
+  assertTrue("score : le ratio d'endettement baisse quand le prêt est marqué exceptionnel", ratioAfter < ratioBefore, `avant=${ratioBefore} après=${ratioAfter}`);
+
+  // --- Prévision de fin de mois : mensualités et échéances de dettes ---
+  const now = new Date();
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const eom = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const eomStr = `${eom.getFullYear()}-${pad2(eom.getMonth() + 1)}-${pad2(eom.getDate())}`;
+  const fcBase = await computeEndOfMonthForecast();
+  await dbAdd(STORES.DEBTS, { id: 'dm1', type: 'debt', personName: 'Fournisseur échéance', currency: 'EUR', principal: 250, startDate: '2026-01-01', dueDate: eomStr, status: 'active' });
+  const fcDue = await computeEndOfMonthForecast();
+  assertEqual("prévision : une dette qui arrive à échéance ce mois-ci réduit le solde prévisionnel", fcDue.projected - fcBase.projected, -250);
+  assertTrue('prévision : elle apparaît dans les échéances à venir', fcDue.upcoming.some((u) => u.name === 'Fournisseur échéance' && u.isDebt && Math.abs(u.amountBase - 250) < 0.01));
+  await dbm.dbDelete(STORES.DEBTS, 'dm1');
+
+  const { unpaidInstallments } = await import('../js/loan-schedule.js');
+  const loan = { id: 'dm2', type: 'debt', personName: 'Prêt mensualisé', currency: 'EUR', principal: 1200, interestRate: 12, termMonths: 12, startDate: '2025-12-15', status: 'active' };
+  const nowStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const dueRows = unpaidInstallments(loan, [], nowStr, 2).filter((r) => r.date <= eomStr);
+  assertTrue('prévision : le prêt de test a bien des mensualités à régler (hypothèse du test)', dueRows.length > 0, `rows=${dueRows.length}`);
+  await dbAdd(STORES.DEBTS, loan);
+  const fcLoan = await computeEndOfMonthForecast();
+  assertEqual('prévision : toutes les mensualités restantes jusqu\'à fin de mois sont retirées (en retard comprises)', fcLoan.projected - fcBase.projected, -dueRows.reduce((s, r) => s + r.payment, 0), 0.05);
+  // Une récurrence de dépense du même montant est supposée déjà couvrir la mensualité : pas de double comptage.
+  await dbAdd(STORES.RECURRING, { id: 'rec-loan', name: 'Mensualité prêt', type: 'expense', active: true, walletId: 'w1', amount: dueRows[0].payment, frequency: 'monthly', nextDate: '2099-01-01' });
+  const fcCovered = await computeEndOfMonthForecast();
+  assertEqual('prévision : une récurrence du même montant évite de compter deux fois la mensualité', fcCovered.projected - fcBase.projected, 0, 0.05);
+  await dbm.dbDelete(STORES.RECURRING, 'rec-loan');
+  await dbm.dbDelete(STORES.DEBTS, 'dm2');
+
+  // --- Bilan annuel : total des exceptionnelles de l'année ---
+  const exYear = await computeAnnualExceptionalExpenses(2027);
+  assertEqual("bilan annuel : total exceptionnel de l'année (1000 + 500 + 100)", exYear.total, 1600);
+  assertEqual('bilan annuel : la plus grosse catégorie exceptionnelle vient en premier (Voyage 1000)', exYear.rows[0]?.label, 'Voyage');
+
+  // --- Projet collectif (voyage d'un parent) : qui a payé combien, reste à couvrir ---
+  const { projectTotals, knownContributors } = await import('../js/group-project.js');
+  const trip = {
+    id: 'pr1', name: 'Voyage de papa', target: 2000000, currency: 'XOF',
+    contributions: [
+      { id: 'a', who: 'Awa', isMe: false, kind: 'other', amount: 300000 },
+      { id: 'b', who: 'Moussa', isMe: false, kind: 'other', amount: 500000 },
+      { id: 'c', who: 'awa ', isMe: false, kind: 'other', amount: 200000 },
+      { id: 'd', who: 'Karidja', isMe: true, kind: 'wallet', amount: 400000 },
+      { id: 'e', who: 'Karidja', isMe: true, kind: 'loan', amount: 300000 },
+    ],
+  };
+  const tripTotals = projectTotals(trip);
+  assertEqual('projet : total collecté', tripTotals.collected, 1700000);
+  assertEqual('projet : reste à couvrir = objectif - collecté', tripTotals.remaining, 300000);
+  assertEqual('projet : pourcentage atteint', tripTotals.percent, 85);
+  assertEqual('projet : ma participation (portefeuille + prêt)', `${tripTotals.mine.wallet}+${tripTotals.mine.loan}=${tripTotals.mine.total}`, '400000+300000=700000');
+  assertEqual('projet : le même nom (casse/espaces) est regroupé', tripTotals.byPerson.length, 3);
+  assertEqual('projet : le plus gros contributeur vient en premier (moi, 700000)', `${tripTotals.byPerson[0].isMe}:${tripTotals.byPerson[0].total}`, 'true:700000');
+  assertEqual('projet : Awa a payé 300000 + 200000 = 500000', tripTotals.byPerson.find((p) => p.name === 'Awa')?.total, 500000);
+  assertEqual('projet : objectif dépassé = reste négatif', projectTotals({ ...trip, target: 1000000 }).remaining, -700000);
+  assertEqual('projet : noms connus (sans moi, sans doublon)', knownContributors([trip]).join(','), 'Awa,Moussa');
+  assertEqual('projet : sans participation, rien collecté', projectTotals({ target: 500, contributions: [] }).collected, 0);
 
   render();
 }

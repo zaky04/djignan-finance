@@ -12,6 +12,7 @@ import { renderNetWorthTrendChart } from '../charts.js';
 import { openProofExportModal, PRINT_ICON } from '../proof-export.js';
 import { openDebtAcknowledgementModal } from '../debt-acknowledgement.js';
 import { openPersonLedger, summarizePeople, openPersonReminder } from './person-ledger.js';
+import { parseParticipants, participantsToText, participantStatuses } from '../shared-loan.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // initDebtsModule() (handler de suppression) — voir le même piège documenté dans dashboard.js/
 // transactions.js.
@@ -29,6 +30,13 @@ const CANCEL_ICON = svgIcon('close', 16);
 const RESTORE_ICON = svgIcon('repay', 16);
 
 const decimalsOf = (currency) => (ZERO_DECIMAL_CURRENCIES.has(currency) ? 0 : 2);
+
+/** D'où est venu l'argent d'un remboursement (absent = un portefeuille, comme tous les anciens) : texte court, ou ''. */
+function paymentSourceLabel(p) {
+  if (p.source === 'direct') return p.sourceName ? tr('Revenu direct ({name})', { name: p.sourceName }) : tr('Revenu direct');
+  if (p.source === 'third') return tr('Payé par {name}', { name: p.sourceName || '—' });
+  return '';
+}
 
 /** Intérêts déjà payés sur une dette (somme des parts d'intérêts de ses remboursements). */
 function interestPaidOf(debt, payments) {
@@ -109,16 +117,33 @@ export async function deleteDebtCascade(debtId) {
   if (!debt) return null;
   const payments = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === debtId);
   const linkedTx = (await dbGetAll(STORES.TRANSACTIONS)).filter((t) => t.debtId === debtId || t.debtInterestId === debtId);
+  // Prêt reçu d'un compte gardé : les mouvements du compte (sortie à l'ouverture, entrées aux remboursements) partent avec la dette.
+  const keptEntries = (await dbGetAll(STORES.KEPT_ACCOUNT_ENTRIES)).filter((e) => e.debtId === debtId);
   // Une seule transaction IndexedDB pour toutes ces suppressions (voir dbWriteBatch, db.js) : sans
   // ça, une interruption en cours de route pouvait laisser des remboursements/transactions orphelins
   // (la dette supprimée mais ses mouvements de portefeuille toujours là, ou l'inverse).
   await dbWriteBatch([
     ...payments.map((p) => ({ store: STORES.DEBT_PAYMENTS, type: 'delete', value: p.id })),
     ...linkedTx.map((t) => ({ store: STORES.TRANSACTIONS, type: 'delete', value: t.id })),
+    ...keptEntries.map((e) => ({ store: STORES.KEPT_ACCOUNT_ENTRIES, type: 'delete', value: e.id })),
     { store: STORES.DEBTS, type: 'delete', value: debtId },
   ]);
   await logAudit({ entityType: 'debt', entityId: debtId, action: 'delete', before: debt });
-  return { debt, payments, linkedTx };
+  return { debt, payments, linkedTx, keptEntries };
+}
+
+/** Prêt reçu d'un COMPTE GARDÉ (`debt.keptAccountId`, voir group-projects.js) : l'argent a quitté le compte à l'ouverture ;
+    chaque remboursement (capital + intérêts, quelle qu'en soit la source) l'y remet. Renvoie l'opération d'écriture à
+    joindre au lot du remboursement, ou [] si la dette n'est pas concernée ou si le compte n'existe plus. */
+async function keptReturnOps(d, payment, amount) {
+  if (!d.keptAccountId || !(amount > 0)) return [];
+  const account = (await dbGetAll(STORES.KEPT_ACCOUNTS)).find((a) => a.id === d.keptAccountId);
+  if (!account) return [];
+  return [{ store: STORES.KEPT_ACCOUNT_ENTRIES, type: 'add', value: {
+    id: uuid(), accountId: account.id, type: 'in', amount, date: payment.date,
+    note: tr('Remboursement du prêt par {name}', { name: d.borrowerName || tr('moi') }),
+    debtId: d.id, debtPaymentId: payment.id, createdAt: new Date().toISOString(),
+  } }];
 }
 
 export const DEBT_CATEGORY_NAMES = { debt: 'Prêt', receivable: 'Créance' };
@@ -170,7 +195,7 @@ async function buildDebtProof(d) {
   for (const p of own) {
     running = Math.max(0, running - p.amount);
     const interestNote = p.interestPart > 0 ? tr('dont intérêts : {amount}', { amount: formatCurrency(p.interestPart, cur) }) : '';
-    rows.push([{ date: p.date }, tr('Remboursement'), [p.note, interestNote].filter(Boolean).join(' · '), money(p.amount), money(running)]);
+    rows.push([{ date: p.date }, tr('Remboursement'), [paymentSourceLabel(p), p.note, interestNote].filter(Boolean).join(' · '), money(p.amount), money(running)]);
   }
 
   if (d.status === 'cancelled') {
@@ -273,6 +298,14 @@ function debtCardHtml(d, payments, investmentName = null) {
       </div>
       <div class="stat-row"><span class="stat-row-label">${tr('Montant initial')}</span><span>${formatCurrency(d.principal, d.currency)}</span></div>
       <div class="stat-row"><span class="stat-row-label">${tr('Restant dû')}</span><span class="amount" data-value="${rem}">${formatCurrency(rem, d.currency)}</span></div>
+      ${sharedLoanSectionHtml(d, payments)}
+      ${(() => {
+        const offWallet = payments.filter((p) => p.debtId === d.id && (p.source === 'direct' || p.source === 'third'));
+        const offWalletTotal = offWallet.reduce((s, p) => s + p.amount, 0);
+        if (!(offWalletTotal > 0)) return '';
+        const names = [...new Set(offWallet.map(paymentSourceLabel).filter(Boolean))].join(', ');
+        return `<div class="stat-row"><span class="stat-row-label">${tr('Réglé hors portefeuille')}</span><span title="${escapeHtml(names)}">${formatCurrency(offWalletTotal, d.currency)}</span></div>`;
+      })()}
       ${d.interestRate ? `<div class="stat-row"><span class="stat-row-label">${tr("Taux d'intérêt annuel")}</span><span>${formatPercent(d.interestRate, 1)}</span></div>` : ''}
       ${d.dueDate ? `<div class="stat-row"><span class="stat-row-label">${tr('Échéance')}</span><span>${formatDate(d.dueDate)}</span></div>` : ''}
       ${loan && rem > 0.005 ? `<div class="stat-row"><span class="stat-row-label">${tr('Intérêts courus (estimation)')}</span><span class="amount">${formatCurrency(loan.accrued, d.currency)}</span></div>` : ''}
@@ -280,6 +313,26 @@ function debtCardHtml(d, payments, investmentName = null) {
       ${loan?.status?.next && rem > 0.005 ? `<div class="stat-row"><span class="stat-row-label">${loan.status.next.status === 'due' ? tr('Échéance en retard') : tr('Prochaine mensualité')}</span><span class="${loan.status.next.status === 'due' ? 'c-neg' : ''}">${formatCurrency(loan.status.next.payment, d.currency)} · ${formatDate(loan.status.next.date)}</span></div>` : ''}
     </div>`;
 }
+/** Prêt partagé (à mon nom) : ma part, puis pour chaque participant ce qu'il a versé et ce qu'il me doit encore. */
+function sharedLoanSectionHtml(d, payments) {
+  if (d.type !== 'debt' || !d.participants?.length) return '';
+  const statuses = participantStatuses(d, payments);
+  const owedTotal = statuses.reduce((s, x) => s + x.owed, 0);
+  const myShare = Math.max(0, (d.principal || 0) - statuses.reduce((s, x) => s + x.share, 0));
+  const rows = statuses.map((x) => `
+    <div class="stat-row">
+      <span class="stat-row-label">${escapeHtml(x.name)}</span>
+      <span class="${x.owed > 0.005 ? 'c-neg' : 'c-pos'}">${tr('{paid} sur {share}', { paid: formatCurrency(x.paid, d.currency), share: formatCurrency(x.share, d.currency) })}</span>
+    </div>`).join('');
+  return `
+    <div class="mt-8" style="border-top:1px solid var(--border);padding-top:8px;">
+      <div class="stat-row"><span class="stat-row-label fw-700">${tr('Prêt partagé — ma part')}</span><span class="amount" data-value="${myShare}">${formatCurrency(myShare, d.currency)}</span></div>
+      ${rows}
+      ${owedTotal > 0.005 ? `<div class="stat-row"><span class="stat-row-label">${tr('Reste à recevoir des participants')}</span><span class="amount">${formatCurrency(owedTotal, d.currency)}</span></div>
+      <button type="button" class="btn btn-ghost fs-13 mt-6" data-action="contribution">${tr('Participation reçue')}</button>` : ''}
+    </div>`;
+}
+
 function debt_paid_of(d, payments) {
   return payments.filter((p) => p.debtId === d.id).reduce((s, p) => s + p.amount, 0);
 }
@@ -355,6 +408,19 @@ function debtFormHtml(d, defaultCurrency) {
       <div class="form-row"><label>${tr('Date de départ')}</label><input type="date" name="startDate" value="${d?.startDate || todayISO()}"></div>
       <div class="form-row"><label>${tr('Échéance (optionnel)')}</label><input type="date" name="dueDate" value="${d?.dueDate || ''}"></div>
       <div class="form-row"><label>${tr('Note (optionnel)')}</label><input type="text" name="note" maxlength="140" value="${escapeHtml(d?.note || '')}"></div>
+      <div data-field="sharedLoanRows" ${d && d.type !== 'debt' ? 'hidden' : ''}>
+        <div class="form-row">
+          <label>${tr('Prêt partagé : les autres participants (optionnel)')}</label>
+          <textarea name="participants" rows="4" placeholder="${escapeHtml(tr('Un par ligne : « Awa » ou « Moussa : 50000 »'))}">${escapeHtml(participantsToText(d?.participants))}</textarea>
+          <p class="fs-12 c-muted mt-6" id="shared-loan-hint">${tr("Le prêt reste à votre nom : vous devez tout au prêteur, et chaque participant vous doit sa part. Sans montant, les parts sont égales (la vôtre comprise).")}</p>
+        </div>
+        <div class="form-row">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" name="exceptional" ${d?.exceptional ? 'checked' : ''}> ${tr('Ce prêt finance une dépense exceptionnelle')}
+          </label>
+          <p style="margin:2px 0 0;" class="fs-12 c-muted">${tr("Ses intérêts ne comptent pas dans vos dépenses du mois (le capital remboursé n'y compte déjà jamais).")}</p>
+        </div>
+      </div>
       <button type="submit" class="btn btn-primary btn-block">${d ? tr('Enregistrer') : tr('Créer')}</button>
     </form>`;
 }
@@ -369,9 +435,26 @@ export async function openDebtModal(d = null, { personName = '' } = {}) {
     currentType = b.dataset.value;
     modal.el.querySelector('[name="type"]').value = currentType;
     modal.el.querySelectorAll('.segmented-btn').forEach((x) => x.classList.toggle('is-active', x === b));
+    // Le partage et la dépense exceptionnelle ne concernent que mes dettes (pas ce que les autres me doivent).
+    modal.el.querySelector('[data-field="sharedLoanRows"]').hidden = currentType !== 'debt';
   }));
 
   const form = modal.el.querySelector('#debt-form');
+  // Aperçu en direct de ma part et de celle des autres, pour que la répartition ne réserve pas de surprise.
+  const participantsHint = modal.el.querySelector('#shared-loan-hint');
+  const defaultHintText = participantsHint.textContent;
+  const refreshParticipantsHint = () => {
+    const principal = safeNumber(parseFloat(form.elements.principal.value));
+    const parsed = parseParticipants(form.elements.participants.value, principal, decimalsOf(readCurrencyValue(form)), d?.participants || []);
+    if (parsed.error || !parsed.participants.length || !(principal > 0)) { participantsHint.textContent = defaultHintText; return; }
+    const cur = readCurrencyValue(form);
+    participantsHint.textContent = tr('Votre part : {mine} · les {count} autre(s) : {others}', {
+      mine: formatCurrency(parsed.myShare, cur), count: parsed.participants.length,
+      others: formatCurrency(parsed.participants.reduce((s, p) => s + p.share, 0), cur),
+    });
+  };
+  form.elements.participants.addEventListener('input', refreshParticipantsHint);
+  form.elements.principal.addEventListener('input', refreshParticipantsHint);
   const movesCheckbox = form.elements.movesMoneyNow;
   const walletRow = modal.el.querySelector('[data-field="movesMoneyWallet"]');
   const walletSelect = form.elements.walletId;
@@ -417,6 +500,27 @@ export async function openDebtModal(d = null, { personName = '' } = {}) {
     };
 
     if (!(record.principal > 0)) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
+
+    // Prêt partagé et dépense exceptionnelle : réservés aux dettes (voir shared-loan.js pour le modèle).
+    if (currentType === 'debt') {
+      const parsed = parseParticipants(fd.get('participants'), record.principal, decimalsOf(currency), d?.participants || []);
+      if (parsed.error === 'too-much') { showToast(tr('Les parts saisies ({amount}) dépassent le montant du prêt.', { amount: formatCurrency(parsed.fixedTotal, currency) })); return; }
+      if (parsed.error) { showToast(tr('Ligne illisible dans la liste des participants : écrivez un nom, ou « Nom : montant ».')); return; }
+      // Un participant qui a déjà versé quelque chose ne peut pas disparaître de la liste (ni changer de nom : il
+      // serait perçu comme un autre) — sinon ses versements ne se rattacheraient plus à personne.
+      if (d?.participants?.length) {
+        const keptIds = new Set(parsed.participants.map((p) => p.id));
+        const existingPayments = await dbGetAll(STORES.DEBT_PAYMENTS);
+        const stuck = d.participants.find((old) => !keptIds.has(old.id)
+          && (existingPayments.some((p) => p.debtId === d.id && p.participantId === old.id) || (d.handedIn || []).some((h) => h.participantId === old.id)));
+        if (stuck) { showToast(tr('« {name} » a déjà versé une participation : gardez-le dans la liste, avec le même nom.', { name: stuck.name })); return; }
+      }
+      if (parsed.participants.length) record.participants = parsed.participants; else delete record.participants;
+      if (form.elements.exceptional.checked) record.exceptional = true; else delete record.exceptional;
+    } else {
+      delete record.participants;
+      delete record.exceptional;
+    }
 
     // Modification d'une dette existante : le montant, la date, la devise et le type doivent rester
     // cohérents avec ce qui a déjà bougé dans les portefeuilles (transaction d'ouverture, remboursements),
@@ -508,7 +612,16 @@ export async function openPaymentModal(d, { prefill = null } = {}) {
       ${hasInterest ? `
       <div class="form-row"><label>${tr('dont intérêts')}</label><input type="number" step="0.01" min="0" name="interestPart" value="${initialInterest}">
         <p class="fs-12 c-muted mt-6" id="payment-split-hint"></p></div>` : ''}
-      <div class="form-row"><label>${tr('Portefeuille')}</label><select name="walletId" required>${walletOptionsHtml(wallets, d.currency)}</select></div>
+      ${d.type === 'debt' ? `
+      <div class="form-row"><label>${tr('Source du remboursement')}</label>
+        <select name="source">
+          <option value="wallet">${tr('Un de mes portefeuilles')}</option>
+          <option value="direct">${tr('Revenu direct (ne passe par aucun portefeuille)')}</option>
+          <option value="third">${tr("Payé par quelqu'un d'autre")}</option>
+        </select>
+        <p class="fs-12 c-muted mt-6" id="payment-source-hint"></p></div>
+      <div class="form-row" data-field="sourceNameRow" hidden><label id="payment-source-name-label"></label><input type="text" name="sourceName" maxlength="60"></div>` : ''}
+      <div class="form-row" data-field="walletRow"><label>${tr('Portefeuille')}</label><select name="walletId" required>${walletOptionsHtml(wallets, d.currency)}</select></div>
       <div class="form-row"><label>${tr('Date')}</label><input type="date" name="date" value="${todayISO()}"></div>
       <div class="form-row"><label>${tr('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
       <button type="submit" class="btn btn-primary btn-block">${tr('Enregistrer')}</button>
@@ -535,6 +648,29 @@ export async function openPaymentModal(d, { prefill = null } = {}) {
       ? tr('Capital remboursé : {capital} · intérêts : {interest} (intérêts courus estimés : {accrued}, modifiable)', { capital: formatCurrency(Math.max(0, total - interest), d.currency), interest: formatCurrency(interest, d.currency), accrued: formatCurrency(suggestedInterest, d.currency) })
       : tr('Intérêts courus estimés depuis le dernier remboursement : {accrued}. Vous pouvez les modifier.', { accrued: formatCurrency(suggestedInterest, d.currency) });
   };
+  // Source du remboursement (dettes uniquement) : tant que l'argent vient d'un portefeuille, on débite ce portefeuille
+  // (comportement historique). Avec un revenu direct (activité, vente encaissée et reversée aussitôt) ou une personne qui
+  // paie à ma place, AUCUN portefeuille ne bouge : seul le restant dû baisse — d'où un patrimoine net qui monte du
+  // montant remboursé, ce qui est juste (de l'argent gagné ou donné a soldé la dette sans que mes actifs diminuent).
+  const sourceSelect = form.elements.source;
+  const walletRow = form.querySelector('[data-field="walletRow"]');
+  const sourceNameRow = form.querySelector('[data-field="sourceNameRow"]');
+  const sourceHint = form.querySelector('#payment-source-hint');
+  const refreshSource = () => {
+    const src = sourceSelect ? sourceSelect.value : 'wallet';
+    walletRow.hidden = src !== 'wallet';
+    form.elements.walletId.required = src === 'wallet';
+    if (!sourceNameRow) return;
+    sourceNameRow.hidden = src === 'wallet';
+    form.elements.sourceName.required = src === 'third';
+    form.querySelector('#payment-source-name-label').textContent = src === 'third' ? tr('Nom de la personne') : tr("D'où vient l'argent (optionnel)");
+    form.elements.sourceName.placeholder = src === 'third' ? '' : tr('Ex : activité, vente…');
+    sourceHint.textContent = src === 'wallet' ? ''
+      : src === 'direct' ? tr("Aucun portefeuille n'est débité. Ce montant n'est pas compté dans vos revenus du mois.")
+        : tr("Aucun portefeuille n'est débité : cette personne règle une partie de votre dette (sa participation).");
+  };
+  if (sourceSelect) { sourceSelect.addEventListener('change', refreshSource); refreshSource(); }
+
   if (hintEl) {
     form.elements.interestPart.addEventListener('input', () => { interestTouched = true; });
     form.elements.amount.addEventListener('input', () => {
@@ -549,8 +685,12 @@ export async function openPaymentModal(d, { prefill = null } = {}) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const walletId = fd.get('walletId');
-    if (!walletId) { showToast(tr("Créez d'abord un portefeuille en {currency}.", { currency: d.currency })); return; }
+    // Seule une dette peut être réglée hors portefeuille ; une créance encaissée entre toujours dans un portefeuille.
+    const source = d.type === 'debt' ? (fd.get('source') || 'wallet') : 'wallet';
+    const sourceName = String(fd.get('sourceName') || '').trim().slice(0, 60);
+    const walletId = source === 'wallet' ? fd.get('walletId') : null;
+    if (source === 'wallet' && !walletId) { showToast(tr("Créez d'abord un portefeuille en {currency}.", { currency: d.currency })); return; }
+    if (source === 'third' && !sourceName) { showToast(tr('Indiquez qui a payé.')); return; }
     const total = safeNumber(parseFloat(fd.get('amount')));
     if (!(total > 0)) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
     // Le capital remboursé (= total − intérêts) fait baisser le restant dû ; les intérêts sont une charge à part.
@@ -559,7 +699,9 @@ export async function openPaymentModal(d, { prefill = null } = {}) {
     if (hasInterest && interestPart > total + 0.005) { showToast(tr('Les intérêts ({interest}) dépassent le montant versé ({total}) : augmentez le montant versé ou corrigez les intérêts.', { interest: formatCurrency(interestPart, d.currency), total: formatCurrency(total, d.currency) })); return; }
     // Un versement d'intérêts seuls est légitime (le capital ne bouge pas) ; sans intérêts, il faut du capital.
     if (principalPart < 0 || (principalPart === 0 && !(interestPart > 0))) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
-    const payment ={ id: uuid(), debtId: d.id, amount: principalPart, interestPart: interestPart || 0, date: fd.get('date') || todayISO(), note: (fd.get('note') || '').trim().slice(0, 140) };
+    const payment = { id: uuid(), debtId: d.id, amount: principalPart, interestPart: interestPart || 0, date: fd.get('date') || todayISO(), note: (fd.get('note') || '').trim().slice(0, 140) };
+    // Remboursement hors portefeuille : on garde d'où vient l'argent (absent = portefeuille, comme tous les anciens).
+    if (source !== 'wallet') { payment.source = source; payment.sourceName = sourceName; }
     // Rembourser plus que le restant dû fabriquerait une transaction de portefeuille sans contrepartie
     // (la dette passerait en négatif) : on refuse plutôt que de fausser le solde.
     const paidBefore = (await dbGetAll(STORES.DEBT_PAYMENTS)).filter((p) => p.debtId === d.id);
@@ -582,7 +724,7 @@ export async function openPaymentModal(d, { prefill = null } = {}) {
       debtPaymentId: payment.id,
       createdAt: new Date().toISOString(),
     };
-    const interestTx = interestPart > 0 ? {
+    const interestTx = interestPart > 0 && source === 'wallet' ? {
       id: uuid(),
       type: paymentTxType,
       walletId,
@@ -595,6 +737,8 @@ export async function openPaymentModal(d, { prefill = null } = {}) {
       reconciled: false,
       debtInterestId: d.id, // rattaché à la dette (suppression en cascade, verrouillage à la modification) SANS debtId : compte dans les dépenses/revenus
       debtPaymentId: payment.id,
+      // Prêt qui finance une dépense exceptionnelle : ses intérêts le sont aussi (hors discipline mensuelle).
+      ...(d.exceptional ? { exceptional: true } : {}),
       createdAt: new Date().toISOString(),
     } : null;
 
@@ -611,19 +755,109 @@ export async function openPaymentModal(d, { prefill = null } = {}) {
     const operations = [
       { store: STORES.DEBT_PAYMENTS, type: 'add', value: payment },
     ];
-    if (payment.amount > 0) operations.push({ store: STORES.TRANSACTIONS, type: 'add', value: paymentTx });
+    if (payment.amount > 0 && source === 'wallet') operations.push({ store: STORES.TRANSACTIONS, type: 'add', value: paymentTx });
     if (interestTx) operations.push({ store: STORES.TRANSACTIONS, type: 'add', value: interestTx });
+    operations.push(...await keptReturnOps(d, payment, payment.amount + interestPart));
     if (willBePaid) operations.push({ store: STORES.DEBTS, type: 'put', value: d });
     await dbWriteBatch(operations);
 
     await logAudit({ entityType: 'debtPayment', entityId: payment.id, action: 'create', after: payment });
-    if (payment.amount > 0) await logAudit({ entityType: 'transaction', entityId: paymentTx.id, action: 'create', after: paymentTx, note: tr('Remboursement de dette/créance') });
+    if (payment.amount > 0 && source === 'wallet') await logAudit({ entityType: 'transaction', entityId: paymentTx.id, action: 'create', after: paymentTx, note: tr('Remboursement de dette/créance') });
     if (interestTx) await logAudit({ entityType: 'transaction', entityId: interestTx.id, action: 'create', after: interestTx, note: tr("Intérêts d'un prêt") });
     if (willBePaid) await logAudit({ entityType: 'debt', entityId: d.id, action: 'update', before: debtBefore, after: d, note: tr('Soldée') });
 
     modal.close();
     showToast(tr('Remboursement enregistré.'));
-    notifyDataChanged(interestTx ? 'all' : 'debts');
+    // Hors portefeuille : aucune transaction créée, mais le patrimoine net change → on prévient toutes les vues.
+    notifyDataChanged(interestTx || source !== 'wallet' ? 'all' : 'debts');
+  });
+}
+
+/** Participation reçue d'un participant à un prêt partagé (voir shared-loan.js). Deux cas :
+    - « versée directement au prêteur » : un remboursement de source « participant », aucun portefeuille ne bouge ;
+    - « remise à moi » : l'argent entre dans l'un de mes portefeuilles (mouvement lié à la dette, donc hors revenus du
+      mois) et la dette ne baisse pas encore — je rembourserai ensuite moi-même, par le bouton habituel. */
+async function openContributionModal(d) {
+  const [wallets, allPayments] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.DEBT_PAYMENTS)]);
+  const statuses = participantStatuses(d, allPayments).filter((x) => x.owed > 0.005);
+  if (!statuses.length) { showToast(tr('Tous les participants ont réglé leur part.')); return; }
+  const modal = openModal(`
+    <form id="contribution-form">
+      <div class="form-row"><label>${tr('Participant')}</label>
+        <select name="participantId">${statuses.map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name)} — ${tr('reste {amount}', { amount: formatCurrency(x.owed, d.currency) })}</option>`).join('')}</select></div>
+      <div class="form-row"><label>${tr('Montant reçu')}</label><input type="number" step="0.01" min="0" name="amount" required value="${statuses[0].owed}"></div>
+      <div class="form-row"><label>${tr('Comment a-t-il payé ?')}</label>
+        <select name="mode">
+          <option value="direct">${tr('Directement au prêteur (aucun portefeuille ne bouge)')}</option>
+          <option value="handed">${tr("Il m'a remis l'argent (entre dans un de mes portefeuilles)")}</option>
+        </select></div>
+      <div class="form-row" data-field="walletRow" hidden><label>${tr('Portefeuille')}</label><select name="walletId">${walletOptionsHtml(wallets.filter(isDailyWallet), d.currency)}</select></div>
+      <div class="form-row"><label>${tr('Date')}</label><input type="date" name="date" value="${todayISO()}"></div>
+      <div class="form-row"><label>${tr('Note (optionnel)')}</label><input type="text" name="note" maxlength="140"></div>
+      <button type="submit" class="btn btn-primary btn-block">${tr('Enregistrer')}</button>
+    </form>`, { title: tr('Participation reçue — {name}', { name: d.personName }) });
+
+  const form = modal.el.querySelector('#contribution-form');
+  const walletRow = form.querySelector('[data-field="walletRow"]');
+  const syncMode = () => { walletRow.hidden = form.elements.mode.value !== 'handed'; };
+  form.elements.mode.addEventListener('change', syncMode);
+  // Le montant proposé suit le reste dû du participant choisi.
+  form.elements.participantId.addEventListener('change', () => {
+    const st = statuses.find((x) => x.id === form.elements.participantId.value);
+    if (st) form.elements.amount.value = st.owed;
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const st = statuses.find((x) => x.id === fd.get('participantId'));
+    const amount = roundTo(safeNumber(parseFloat(fd.get('amount'))), decimalsOf(d.currency));
+    const mode = fd.get('mode');
+    const date = fd.get('date') || todayISO();
+    const note = String(fd.get('note') || '').trim().slice(0, 140);
+    if (!st || !(amount > 0)) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
+    if (amount > st.owed + 0.005) { showToast(tr('Ce montant ({amount}) dépasse ce que {name} doit encore ({owed}).', { amount: formatCurrency(amount, d.currency), name: st.name, owed: formatCurrency(st.owed, d.currency) })); return; }
+
+    if (mode === 'direct') {
+      // Réglé directement au prêteur : une ligne de remboursement, sans transaction de portefeuille.
+      const owedToLender = remaining(d, allPayments.filter((p) => p.debtId === d.id));
+      if (amount > owedToLender + 0.005) { showToast(tr('Le remboursement ({amount}) dépasse le restant dû ({owed}).', { amount: formatCurrency(amount, d.currency), owed: formatCurrency(owedToLender, d.currency) })); return; }
+      const payment = { id: uuid(), debtId: d.id, amount, interestPart: 0, date, note, source: 'participant', sourceName: st.name, participantId: st.id };
+      const willBePaid = owedToLender - amount <= 0.005 && d.status !== 'paid';
+      const record = willBePaid ? { ...d, status: 'paid' } : null;
+      await dbWriteBatch([
+        { store: STORES.DEBT_PAYMENTS, type: 'add', value: payment },
+        ...(await keptReturnOps(d, payment, amount)),
+        ...(record ? [{ store: STORES.DEBTS, type: 'put', value: record }] : []),
+      ]);
+      await logAudit({ entityType: 'debtPayment', entityId: payment.id, action: 'create', after: payment, note: tr('Participation versée directement au prêteur') });
+      if (record) await logAudit({ entityType: 'debt', entityId: d.id, action: 'update', before: d, after: record, note: tr('Soldée') });
+    } else {
+      const walletId = fd.get('walletId');
+      if (!walletId) { showToast(tr("Créez d'abord un portefeuille en {currency}.", { currency: d.currency })); return; }
+      const contribution = { id: uuid(), participantId: st.id, amount, date };
+      const tx = {
+        id: uuid(), type: 'income', walletId, targetWalletId: null,
+        categoryId: await ensureDebtCategoryId('debt', 'income'),
+        amount, date,
+        note: tr('Participation de {name} — {debt}', { name: st.name, debt: d.personName }),
+        tags: [], reconciled: false,
+        debtId: d.id, // lié à la dette : exclu des revenus du mois, comme tout mouvement de dette
+        debtContributionId: contribution.id,
+        createdAt: new Date().toISOString(),
+      };
+      contribution.transactionId = tx.id;
+      const record = { ...d, handedIn: [...(d.handedIn || []), contribution] };
+      await dbWriteBatch([
+        { store: STORES.TRANSACTIONS, type: 'add', value: tx },
+        { store: STORES.DEBTS, type: 'put', value: record },
+      ]);
+      await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: tr('Participation remise (prêt partagé)') });
+      await logAudit({ entityType: 'debt', entityId: d.id, action: 'update', before: d, after: record, note: tr('Participation remise (prêt partagé)') });
+    }
+    modal.close();
+    showToast(tr('Participation enregistrée.'));
+    notifyDataChanged('all');
   });
 }
 
@@ -861,6 +1095,8 @@ export function initDebtsModule() {
       openPerson(d.personName);
     } else if (btn.dataset.action === 'pay') {
       openPaymentModal(d);
+    } else if (btn.dataset.action === 'contribution') {
+      openContributionModal(d);
     } else if (btn.dataset.action === 'schedule') {
       openScheduleModal(d);
     } else if (btn.dataset.action === 'acknowledge') {
@@ -887,6 +1123,7 @@ export function initDebtsModule() {
             await dbAdd(STORES.DEBTS, removed.debt);
             for (const p of removed.payments) await dbAdd(STORES.DEBT_PAYMENTS, p);
             for (const t of removed.linkedTx) await dbAdd(STORES.TRANSACTIONS, t);
+            for (const e of removed.keptEntries || []) await dbAdd(STORES.KEPT_ACCOUNT_ENTRIES, e);
             await logAudit({ entityType: 'debt', entityId: d.id, action: 'create', after: d, note: tr('Restaurée (annulation)') });
             showToast(tr('Restauré.'));
             notifyDataChanged('debts');

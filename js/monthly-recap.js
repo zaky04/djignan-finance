@@ -9,7 +9,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, getSetting } from './db.js';
-import { isInvestmentMovementExcluded } from './ledger.js';
+import { isInvestmentMovementExcluded, isExceptionalExpense, markExceptionalTransactions } from './ledger.js';
 import { convertAmount, formatCurrency, formatMonthLabel, formatDate, monthKeyOffset } from './utils.js';
 import { t as tr } from './i18n.js';
 
@@ -22,8 +22,10 @@ export function periodTotals(prefix, { transactions, wallets, categories, rates,
   const catName = Object.fromEntries(categories.map((c) => [c.id, c.name]));
   const byCategory = new Map();
   let income = 0; let expenses = 0; let biggest = null; const days = new Set();
+  // Dépenses courantes seulement : un voyage ou une scolarité ne doit pas fausser le taux d'épargne du mois.
+  markExceptionalTransactions(transactions, categories);
   for (const tx of transactions) {
-    if (!tx.date || !tx.date.startsWith(prefix) || tx.debtId || isInvestmentMovementExcluded(tx)) continue;
+    if (!tx.date || !tx.date.startsWith(prefix) || tx.debtId || isInvestmentMovementExcluded(tx) || isExceptionalExpense(tx)) continue;
     if (tx.type !== 'income' && tx.type !== 'expense') continue;
     const amount = convertAmount(Number(tx.amount) || 0, walletCurrency[tx.walletId] || baseCurrency, baseCurrency, rates, baseCurrency);
     if (tx.type === 'income') { income += amount; continue; }

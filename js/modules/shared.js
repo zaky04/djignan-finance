@@ -25,6 +25,7 @@ import { notifyDataChanged } from '../state.js';
 import { isDailyWallet } from '../ledger.js';
 import { t } from '../i18n.js';
 import { createLinkedDebt, deleteDebtCascade } from './debts.js';
+import { renderGroupProjects } from './group-projects.js';
 import { icon as svgIcon } from '../icons.js';
 
 const EDIT_ICON = svgIcon('edit', 16);
@@ -343,6 +344,7 @@ export async function renderShared() {
   const debtsByExpense = (expenseId) => debts.filter((d) => d.sharedExpenseId === expenseId);
 
   container.innerHTML = `
+    <div id="shared-projects"></div>
     <div id="shared-participants"></div>
     ${balancesPanelHtml(byCurrency, participants, meParticipant)}
     <div class="panel">
@@ -355,6 +357,7 @@ export async function renderShared() {
         : `<div class="empty-state">${t('Aucune dépense partagée. Ajoutez des participants puis créez votre première dépense.')}</div>`}
     </div>`;
 
+  await renderGroupProjects(document.getElementById('shared-projects'));
   await renderParticipantsPanel(document.getElementById('shared-participants'));
 
   container.querySelector('#shared-expense-add-btn').addEventListener('click', async () => {
@@ -393,6 +396,7 @@ export async function renderShared() {
             await dbAdd(STORES.DEBTS, removed.debt);
             for (const p of removed.payments) await dbAdd(STORES.DEBT_PAYMENTS, p);
             for (const t2 of removed.linkedTx) await dbAdd(STORES.TRANSACTIONS, t2);
+            for (const e of removed.keptEntries || []) await dbAdd(STORES.KEPT_ACCOUNT_ENTRIES, e);
           }
           await logAudit({ entityType: 'sharedExpense', entityId: id, action: 'create', after: exp, note: t('Restaurée (annulation)') });
           showToast(t('Restauré.'));

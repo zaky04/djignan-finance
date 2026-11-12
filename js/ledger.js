@@ -14,7 +14,9 @@
 
 import { STORES, dbGetAll, getSetting } from './db.js';
 import { advanceDate } from './recurrence.js';
-import { convertAmount, currentMonthKey, monthKeyOffset, localISODate, intlLocale } from './utils.js';
+import { participantReceivablesAsOf } from './shared-loan.js';
+import { convertAmount, currentMonthKey, monthKeyOffset, localISODate, intlLocale, ZERO_DECIMAL_CURRENCIES } from './utils.js';
+import { unpaidInstallments } from './loan-schedule.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // plusieurs fonctions — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js/
 // reports-extras.js/search.js/backup.js.
@@ -34,7 +36,39 @@ async function ctx() {
     dbGetAll(STORES.EXCHANGE_RATE_HISTORY),
     getSetting('baseCurrency', 'EUR'),
   ]);
+  markExceptionalTransactions(transactions, categories);
   return { wallets, transactions, categories, budgets, investments, investmentEntries, debts, debtPayments, rates, rateHistory, baseCurrency };
+}
+
+/** Dépense « exceptionnelle » (voyage, pèlerinage, scolarité, formation, engin pour un parent…) : l'argent est
+    bien sorti (soldes, patrimoine net et reste à vivre la comptent), mais ce n'est PAS la consommation courante
+    sur laquelle l'utilisateur mesure sa discipline. Elle est donc écartée des agrégats « discipline » (dépenses du
+    mois, budget vs réel, taux d'épargne, score de santé, suggestions de budget…) et totalisée à part.
+    Règle : la case de la transaction (`exceptional`, true/false) l'emporte si elle existe ; sinon la transaction
+    suit sa catégorie (`category.exceptional`, héritée par les sous-catégories) — marquer une catégorie après coup
+    reclasse donc tout son historique. Le résultat est posé sur `t.isExceptional` (propriété calculée, jamais
+    enregistrée) pour que chaque agrégat n'ait qu'un test à faire. Les transactions viennent de dbGetAll (copies) :
+    les muter ici est sans effet sur la base. */
+export function markExceptionalTransactions(transactions, categories) {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const categoryIsExceptional = (id) => {
+    let c = byId.get(id);
+    for (let depth = 0; c && depth < 4; depth++) {
+      if (c.exceptional === true) return true;
+      c = c.parentId ? byId.get(c.parentId) : null;
+    }
+    return false;
+  };
+  for (const t of transactions) {
+    t.isExceptional = t.type === 'expense' && (typeof t.exceptional === 'boolean' ? t.exceptional : categoryIsExceptional(t.categoryId));
+  }
+  return transactions;
+}
+
+/** Vrai pour une dépense à sortir des agrégats de discipline (voir markExceptionalTransactions). Les mouvements
+    de dette (debtId) et d'investissement sont déjà exclus ailleurs ; ceci ne concerne que les vraies dépenses. */
+export function isExceptionalExpense(t) {
+  return t.type === 'expense' && t.isExceptional === true;
 }
 
 function toBase(amount, currency, rates, baseCurrency) {
@@ -197,6 +231,8 @@ function netWorthAt(cutoffDate, { wallets, transactions, investments, investment
   for (const d of debts) {
     const remaining = debtRemainingAsOf(d, debtPayments, cutoffDate);
     total += (d.type === 'receivable' ? 1 : -1) * toBase(remaining, d.currency, ratesForDate, baseCurrency);
+    // Prêt partagé à mon nom : ce que les autres participants me doivent encore est une créance sur eux.
+    total += toBase(participantReceivablesAsOf(d, debtPayments, cutoffDate), d.currency, ratesForDate, baseCurrency);
   }
   total += tontinePositionAsOf(transactions, wallets, cutoffDate, ratesForDate, baseCurrency);
   return { total, currency: baseCurrency };
@@ -216,6 +252,9 @@ export async function computeNetWorthComposition(cutoffDate = null) {
   const ratesForDate = ratesAsOf(cutoffDate, rates, rateHistory);
 
   let liquid = 0, savings = 0, blocked = 0, invested = 0, receivables = 0, debtTotal = 0;
+  // Part « exceptionnelle » des dettes/créances (prêt marqué « finance une dépense exceptionnelle ») : déjà dans les
+  // totaux ci-dessous, mais renvoyée à part pour que le score de santé puisse ne pas la compter (computeFinancialHealthScore).
+  let exceptionalDebts = 0, exceptionalReceivables = 0;
   for (const w of wallets) {
     if (cutoffDate && w.createdAt && w.createdAt.slice(0, 10) > cutoffDate) continue;
     const amount = toBase(balances.get(w.id) || 0, w.currency, ratesForDate, baseCurrency);
@@ -231,10 +270,14 @@ export async function computeNetWorthComposition(cutoffDate = null) {
     const remaining = toBase(debtRemainingAsOf(d, debtPayments, cutoffDate), d.currency, ratesForDate, baseCurrency);
     if (d.type === 'receivable') receivables += remaining;
     else debtTotal += remaining;
+    // Parts non réglées des participants d'un prêt partagé (voir shared-loan.js) : créances sur eux.
+    const participantsOwe = toBase(participantReceivablesAsOf(d, debtPayments, cutoffDate), d.currency, ratesForDate, baseCurrency);
+    receivables += participantsOwe;
+    if (d.type === 'debt' && d.exceptional) { exceptionalDebts += remaining; exceptionalReceivables += participantsOwe; }
   }
   // La tontine est de l'épargne collective : sa position nette s'ajoute à l'épargne.
   savings += tontinePositionAsOf(transactions, wallets, cutoffDate, ratesForDate, baseCurrency);
-  return { liquid, savings, blocked, invested, receivables, debts: debtTotal, currency: baseCurrency };
+  return { liquid, savings, blocked, invested, receivables, debts: debtTotal, exceptionalDebts, exceptionalReceivables, currency: baseCurrency };
 }
 
 /** Historique du patrimoine net sur N mois (fin de chaque mois), pour le graphique de tendance.
@@ -328,11 +371,15 @@ export async function computeDebtHistory(months = 6) {
   return points;
 }
 
-/** Résumé du mois : entrées, sorties, épargne nette, cash-flow (converti en devise de base). */
+/** Résumé du mois : entrées, sorties, épargne nette, cash-flow (converti en devise de base).
+    - `expenses` = dépenses COURANTES (hors exceptionnelles) : c'est la base de la discipline ; `netSavings` en découle.
+    - `exceptionalExpenses` = dépenses exceptionnelles du mois, totalisées à part (voir markExceptionalTransactions).
+    - `cashFlow` = ce qui a réellement bougé : entrées − toutes les sorties (courantes + exceptionnelles). Sans dépense
+      exceptionnelle, cashFlow === netSavings, comme avant. */
 export async function computeMonthSummary(monthKey = currentMonthKey()) {
   const { wallets, transactions, rates, baseCurrency } = await ctx();
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
-  let income = 0, expenses = 0;
+  let income = 0, expenses = 0, exceptionalExpenses = 0;
   for (const t of transactions) {
     if (!t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue; // mouvement de dette/créance : pas une dépense/recette discrétionnaire
@@ -342,10 +389,13 @@ export async function computeMonthSummary(monthKey = currentMonthKey()) {
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     if (t.type === 'income') income += amt;
-    else if (t.type === 'expense') expenses += amt;
+    else if (t.type === 'expense') {
+      if (isExceptionalExpense(t)) exceptionalExpenses += amt;
+      else expenses += amt;
+    }
   }
   const netSavings = income - expenses;
-  return { income, expenses, netSavings, cashFlow: netSavings, currency: baseCurrency };
+  return { income, expenses, exceptionalExpenses, netSavings, cashFlow: income - expenses - exceptionalExpenses, currency: baseCurrency };
 }
 
 /** Étiquettes techniques posées par l'appli elle-même (import SMS) : sans intérêt pour un bilan. */
@@ -385,6 +435,7 @@ export async function computeSpendingBetween(startDate, endDate) {
     if (!t.date || t.date < startDate || t.date > endDate) continue;
     if (t.debtId) continue;
     if (isInvestmentMovementExcluded(t)) continue;
+    if (isExceptionalExpense(t)) continue; // hors consommation courante (voir markExceptionalTransactions)
     const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     if (t.type === 'income') income += amt;
     else if (t.type === 'expense') expenses += amt;
@@ -404,6 +455,7 @@ export async function computeExpensesByCategory(monthKey = currentMonthKey()) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
     if (isInvestmentMovementExcluded(t)) continue;
+    if (isExceptionalExpense(t)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     const cat = catById[t.categoryId];
@@ -432,6 +484,7 @@ export async function computeMonthlyTypeHistory(year, type = 'expense', category
     if (t.type !== type || !t.date || !t.date.startsWith(String(year))) continue;
     if (t.debtId) continue;
     if (isInvestmentMovementExcluded(t)) continue;
+    if (isExceptionalExpense(t)) continue;
     if (categoryId && t.categoryId !== categoryId) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
@@ -488,6 +541,7 @@ export async function computeMonthlyBudgetVsActualHistory(year, categoryId = nul
       if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
       if (t.debtId) continue;
       if (isInvestmentMovementExcluded(t)) continue;
+      if (isExceptionalExpense(t)) continue;
       if (categoryId) { if (t.categoryId !== categoryId) continue; }
       else if (!budgetedCategoryIds.has(t.categoryId)) continue;
       const cur = walletCurrency[t.walletId] || baseCurrency;
@@ -515,6 +569,7 @@ export async function computeBudgetVsActual(monthKey = currentMonthKey()) {
     if (t.type !== 'expense' || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
     if (isInvestmentMovementExcluded(t)) continue;
+    if (isExceptionalExpense(t)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     actualByCategory.set(t.categoryId, (actualByCategory.get(t.categoryId) || 0) + amt);
@@ -663,7 +718,7 @@ export async function computeBudgetSuggestions(monthKey = currentMonthKey()) {
   for (const t of transactions) {
     const m = t.date?.slice(0, 7);
     if (!m || !monthSet.has(m)) continue;
-    if (t.debtId || isInvestmentMovementExcluded(t)) continue;
+    if (t.debtId || isInvestmentMovementExcluded(t) || isExceptionalExpense(t)) continue;
     const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     if (t.type === 'expense') {
       const key = `${m}|${t.categoryId}`;
@@ -806,11 +861,33 @@ export async function computeCategoryActuals(monthKey = currentMonthKey(), type 
     if (t.type !== type || !t.date || !t.date.startsWith(monthKey)) continue;
     if (t.debtId) continue;
     if (isInvestmentMovementExcluded(t)) continue;
+    if (isExceptionalExpense(t)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);
   }
   return cats.map((c) => ({ categoryId: c.id, label: c.name, parentId: c.parentId, actual: totals.get(c.id) || 0 }));
+}
+
+/** Dépenses EXCEPTIONNELLES de l'année, par catégorie (les autres agrégats annuels les écartent) : le bilan annuel les
+    montre à part pour que le total réellement sorti sur l'année reste lisible. Même exclusions que les autres agrégats
+    (mouvements de dette et d'investissement ne sont pas des dépenses). */
+export async function computeAnnualExceptionalExpenses(year) {
+  const { wallets, transactions, categories, rates, baseCurrency } = await ctx();
+  const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
+  const catName = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+  const byCategory = new Map();
+  let total = 0;
+  for (const t of transactions) {
+    if (!isExceptionalExpense(t) || !t.date || !t.date.startsWith(String(year))) continue;
+    if (t.debtId || isInvestmentMovementExcluded(t)) continue;
+    const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
+    const label = catName[t.categoryId] || tr('Sans catégorie');
+    byCategory.set(label, (byCategory.get(label) || 0) + amt);
+    total += amt;
+  }
+  const rows = [...byCategory.entries()].map(([label, amount]) => ({ label, amount })).sort((a, b) => b.amount - a.amount);
+  return { rows, total, currency: baseCurrency };
 }
 
 /** Dépenses/recettes réelles de l'ANNÉE pour CHAQUE catégorie d'un type donné (y compris à 0). */
@@ -823,6 +900,7 @@ export async function computeAnnualCategoryActuals(year, type = 'expense') {
     if (t.type !== type || !t.date || !t.date.startsWith(String(year))) continue;
     if (t.debtId) continue;
     if (isInvestmentMovementExcluded(t)) continue;
+    if (isExceptionalExpense(t)) continue;
     const cur = walletCurrency[t.walletId] || baseCurrency;
     const amt = toBase(Number(t.amount) || 0, cur, rates, baseCurrency);
     totals.set(t.categoryId, (totals.get(t.categoryId) || 0) + amt);
@@ -830,9 +908,10 @@ export async function computeAnnualCategoryActuals(year, type = 'expense') {
   return cats.map((c) => ({ categoryId: c.id, label: c.name, parentId: c.parentId, actual: totals.get(c.id) || 0 }));
 }
 
-/** Solde prévisionnel de fin de mois = liquidités actuelles + récurrences actives restant à échoir ce mois-ci. */
+/** Solde prévisionnel de fin de mois = liquidités actuelles + récurrences actives restant à échoir ce mois-ci
+    − mensualités de prêt (et dettes arrivant à échéance) à régler d'ici la fin du mois. */
 export async function computeEndOfMonthForecast() {
-  const { wallets, transactions, rates, baseCurrency } = await ctx();
+  const { wallets, transactions, rates, baseCurrency, debts, debtPayments } = await ctx();
   const recurring = await dbGetAll(STORES.RECURRING);
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
   const balances = walletBalancesAsOf(wallets, transactions);
@@ -868,6 +947,31 @@ export async function computeEndOfMonthForecast() {
       const next = advanceDate(date, r.frequency, anchorDay);
       if (next <= date) break;
       date = next;
+    }
+  }
+  // Dettes à régler d'ici la fin du mois : l'argent sortira vraiment d'un portefeuille (même pour un prêt « exceptionnel »,
+  // dont la discipline ne tient pas compte mais dont le reste à vivre, lui, doit tenir compte). Même lecture que la
+  // prévision de trésorerie (forecast.js) : mensualités de l'échéancier restant à payer, en retard comprises, sinon le
+  // restant dû à la date d'échéance. Les créances (ce qu'on me doit) ne sont pas comptées : rien n'est certain.
+  // Une récurrence de dépense du même montant (±1 %) est supposée déjà couvrir la mensualité : on ne la compte pas deux fois.
+  const recurringExpenseAmounts = recurring
+    .filter((r) => r.active && r.type === 'expense')
+    .map((r) => toBase(Number(r.amount) || 0, walletCurrency[r.walletId] || baseCurrency, rates, baseCurrency));
+  const coveredByRecurring = (amount) => recurringExpenseAmounts.some((a) => Math.abs(a - amount) <= Math.max(0.5, amount * 0.01));
+  for (const d of debts) {
+    if (d.type !== 'debt' || d.status === 'paid' || d.status === 'cancelled') continue;
+    const installments = unpaidInstallments(d, debtPayments, todayStr, ZERO_DECIMAL_CURRENCIES.has(d.currency) ? 0 : 2);
+    let dues;
+    if (installments.length) {
+      dues = installments.filter((row) => row.date <= endOfMonthStr).map((row) => ({ date: row.date, amount: toBase(row.payment, d.currency, rates, baseCurrency), scheduled: true }));
+    } else if (d.dueDate && d.dueDate <= endOfMonthStr) {
+      const left = debtRemainingAsOf(d, debtPayments, null);
+      dues = left > 0.005 ? [{ date: d.dueDate, amount: toBase(left, d.currency, rates, baseCurrency), scheduled: false }] : [];
+    } else dues = [];
+    for (const due of dues) {
+      if (due.scheduled && coveredByRecurring(due.amount)) continue;
+      projected -= due.amount;
+      upcoming.push({ name: d.personName, type: 'expense', nextDate: due.date, amountBase: due.amount, isDebt: true });
     }
   }
   upcoming.sort((a, b) => a.nextDate.localeCompare(b.nextDate));
@@ -937,7 +1041,7 @@ export async function computeEnvelopeCarryover(categoryId, monthKey) {
     // "Prêt"/"Créance" n'est pas une dépense discrétionnaire. Cet oubli faisait diverger le report
     // d'enveloppe (qui l'incluait) de l'"actual" réellement affiché à l'écran (qui l'exclut déjà).
     const actual = transactions
-      .filter((t) => t.type === 'expense' && t.categoryId === categoryId && !t.debtId && !isInvestmentMovementExcluded(t) && (t.date || '').startsWith(b.month))
+      .filter((t) => t.type === 'expense' && t.categoryId === categoryId && !t.debtId && !isInvestmentMovementExcluded(t) && !isExceptionalExpense(t) && (t.date || '').startsWith(b.month))
       .reduce((sum, t) => sum + toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency), 0);
     carry += (b.limit || 0) - actual;
   }
@@ -963,6 +1067,7 @@ export async function detectRecurringCandidates() {
   const groups = new Map();
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.note || !t.note.trim()) continue;
+    if (isExceptionalExpense(t)) continue; // un voyage ou une scolarité n'est pas un abonnement
     const noteKey = t.note.trim().toLowerCase();
     // Les transactions générées automatiquement par une récurrence active portent la note
     // "Récurrence : {nom}" (budgets.js), pas juste "{nom}" — comparer noteKey tel quel à
@@ -1005,6 +1110,7 @@ export async function computeDailySpending(monthKey) {
     // (computeMonthSummary) et tous les autres agrégats l'excluent déjà — la somme des jours du
     // calendrier ne correspondait plus au total "Dépenses" affiché ailleurs pour le même mois.
     if (isInvestmentMovementExcluded(t)) continue;
+    if (isExceptionalExpense(t)) continue; // même base que « Dépenses » du résumé du mois
     const amt = toBase(Number(t.amount) || 0, walletCurrency[t.walletId] || baseCurrency, rates, baseCurrency);
     totals.set(t.date, (totals.get(t.date) || 0) + amt);
   }
@@ -1023,8 +1129,12 @@ export async function computeFinancialHealthScore(monthKey = currentMonthKey()) 
   const savingsRate = summary.income > 0 ? summary.netSavings / summary.income : 0;
   const savingsScore = Math.max(0, Math.min(100, (savingsRate / 0.2) * 100));
 
-  const grossAssets = composition.liquid + composition.savings + composition.blocked + composition.invested + composition.receivables;
-  const debtRatio = grossAssets > 0 ? composition.debts / grossAssets : (composition.debts > 0 ? 1 : 0);
+  // Le prêt qui finance une dépense exceptionnelle (case sur la dette) sort du ratio, comme la dépense elle-même sort
+  // des dépenses du mois : la discipline ne se mesure pas sur l'exceptionnel. Sa dette ET les parts que les participants
+  // doivent encore (créances adossées à ce prêt) sont retirées ensemble, sinon le ratio serait faussé dans un sens.
+  const scoredDebts = Math.max(0, composition.debts - (composition.exceptionalDebts || 0));
+  const grossAssets = composition.liquid + composition.savings + composition.blocked + composition.invested + composition.receivables - (composition.exceptionalReceivables || 0);
+  const debtRatio = grossAssets > 0 ? scoredDebts / grossAssets : (scoredDebts > 0 ? 1 : 0);
   const debtScore = Math.max(0, Math.min(100, 100 - debtRatio * 100));
 
   const budgeted = budgetRows.filter((r) => r.budget > 0);
@@ -1090,11 +1200,13 @@ const UNUSUAL_EXPENSE_RATIO = 2.5;
     seulement pour un rendu de vue. */
 export async function checkUnusualExpense(categoryId, amount, walletId, excludeId = null) {
   if (!categoryId || !amount) return null;
-  const [wallets, transactions, rates, baseCurrency] = await Promise.all([
-    dbGetAll(STORES.WALLETS), dbGetAll(STORES.TRANSACTIONS), dbGetAll(STORES.EXCHANGE_RATES), getSetting('baseCurrency', 'EUR'),
+  const [wallets, transactions, categories, rates, baseCurrency] = await Promise.all([
+    dbGetAll(STORES.WALLETS), dbGetAll(STORES.TRANSACTIONS), dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.EXCHANGE_RATES), getSetting('baseCurrency', 'EUR'),
   ]);
+  markExceptionalTransactions(transactions, categories);
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
-  const past = transactions.filter((t) => t.type === 'expense' && t.categoryId === categoryId && t.id !== excludeId);
+  // Les dépenses exceptionnelles (un voyage, une scolarité) ne forment pas « l'habitude » d'une catégorie.
+  const past = transactions.filter((t) => t.type === 'expense' && t.categoryId === categoryId && t.id !== excludeId && !t.isExceptional);
   if (past.length < UNUSUAL_EXPENSE_MIN_SAMPLES) return null;
 
   const currenciesInvolved = new Set([walletCurrency[walletId], ...past.map((t) => walletCurrency[t.walletId])]);

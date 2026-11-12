@@ -213,6 +213,8 @@ async function renderAccountDetail(container, account) {
     btn.addEventListener('click', async () => {
       const entryId = btn.closest('[data-entry-id]').dataset.entryId;
       const target = entries.find((e) => e.id === entryId);
+      // Mouvement créé par un prêt (sortie à l'ouverture, entrée à un remboursement) : le supprimer ici fausserait la dette.
+      if (target?.debtId) { showToast(t('Ce mouvement vient d\'un prêt : modifiez le prêt ou son remboursement depuis Dettes & créances.')); return; }
       const ok = await confirmDialog(t('Supprimer ce mouvement ?'), { danger: true, requirePin: true, confirmText: t('Supprimer') });
       if (!ok) return;
       await dbDelete(STORES.KEPT_ACCOUNT_ENTRIES, entryId);

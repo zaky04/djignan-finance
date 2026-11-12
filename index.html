@@ -298,6 +298,7 @@
               <span id="dash-expenses-value" class="ledger-value amount neg" data-value="0">0&nbsp;€</span>
             </div>
             <div class="ledger-sub" id="summary-trend-expenses">—</div>
+            <div class="ledger-sub" id="summary-exceptional" hidden></div>
             <div class="dash-advanced">
               <div class="ledger-row">
                 <span class="ledger-label" data-i18n="Épargne nette">Épargne nette</span><span class="ledger-dots"></span>
@@ -588,6 +589,13 @@
         <div class="form-row" data-field="categoryRow">
           <label data-i18n="Catégorie">Catégorie</label>
           <select name="categoryId" required></select>
+        </div>
+        <div class="form-row" data-field="exceptionalRow" hidden>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;" class="fs-14">
+            <input type="checkbox" name="exceptional">
+            <span data-i18n="Dépense exceptionnelle (hors suivi mensuel)">Dépense exceptionnelle (hors suivi mensuel)</span>
+          </label>
+          <p class="fs-12 c-muted mt-6" data-i18n="Voyage, pèlerinage, scolarité, formation… : l'argent sort bien du portefeuille, mais cette dépense ne fausse pas vos dépenses du mois ni votre discipline.">Voyage, pèlerinage, scolarité, formation… : l'argent sort bien du portefeuille, mais cette dépense ne fausse pas vos dépenses du mois ni votre discipline.</p>
         </div>
         <div class="form-row" data-field="splitToggleRow">
           <button type="button" id="qa-split-toggle" class="link-btn fs-13" data-i18n="Diviser en plusieurs catégories">Diviser en plusieurs catégories</button>

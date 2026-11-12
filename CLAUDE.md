@@ -3760,6 +3760,102 @@ Testé dans le navigateur (fonctions réelles + clic sur le vrai bouton → vrai
 avant/après, aucune transaction créée, relevé de la personne, rétablissement, récurrence mise en pause,
 aucune erreur console. Données de test supprimées ensuite. 35 clés EN ajoutées à `i18n.js`.
 
+### 12 novembre 2026 — Dépenses exceptionnelles, remboursement hors portefeuille, prêt partagé (Djignan uniquement, `CACHE_VERSION` `v156`)
+
+Demande de l'auteur : une dépense extraordinaire (voyage, pèlerinage, scolarité, formation, engin pour un parent)
+ne doit pas fausser ses **dépenses courantes**, base de sa discipline financière. S'il emprunte pour la payer, le
+remboursement doit pouvoir venir d'un portefeuille OU d'ailleurs (revenu direct d'une activité, personne qui paie
+avec lui), et le prêt peut être **partagé** (frère, ami, toute une classe). Choix validés : prêt **à son nom seul**.
+
+1. **Dépenses exceptionnelles** (`ledger.js`) — deux couches : l'argent sort bien (soldes, patrimoine net, reste à
+   vivre inchangés) mais la dépense sort des agrégats de **discipline**. `category.exceptional` (hérité par les
+   sous-catégories) et `transaction.exceptional` (true/false, l'emporte ; **absent = suit la catégorie** → marquer une
+   catégorie reclasse tout son historique ; le formulaire ne stocke le champ que si le choix diffère de la catégorie).
+   `ctx()` pose `t.isExceptional` (propriété calculée, jamais enregistrée) via `markExceptionalTransactions()` ;
+   `isExceptionalExpense(t)` est le seul test des agrégats. **Piège : tout NOUVEL agrégat de dépenses doit l'appeler**
+   (comme `t.debtId` / `isInvestmentMovementExcluded`). Exclues de : `computeMonthSummary` (qui renvoie désormais
+   `expenses` = courantes, `exceptionalExpenses` à part, `cashFlow` = revenus − TOUT, `netSavings` = discipline),
+   `computeSpendingBetween`, camembert, budget vs réel (mois + historique), suggestions de budget, actuals par
+   catégorie, report d'enveloppe, abonnements non déclarés, calendrier, favoris, récap mensuel, alerte « dépense
+   inhabituelle ». **Volontairement incluses** : soldes, patrimoine net, prévision/reste à vivre, `computeTagSummary`,
+   questions en langage naturel (`nl-query.js`, on répond à la lettre). Catégorie exceptionnelle **incompatible avec le
+   mode enveloppe** (les deux cases se désactivent mutuellement) : les provisions (`provisions.js`) passent par une
+   enveloppe et doivent rester dans le budget. UI : case dans Saisie express (préremplie depuis la catégorie), case dans
+   le formulaire de catégorie, badge « Exceptionnelle », ligne « + X de dépenses exceptionnelles » sous « Sorties
+   (mois) » du tableau de bord, ligne dans le PDF mensuel. Pas de case sur les récurrences : une récurrence suit sa catégorie.
+2. **Source du remboursement** (`debts.js`, `openPaymentModal`, dettes seulement) : portefeuille (comme avant) /
+   revenu direct / payé par quelqu'un d'autre. Hors portefeuille : `payment.source` + `sourceName`, **aucune
+   transaction** (ni capital ni intérêts) ; la dette baisse et le patrimoine net monte du montant (aucun actif ne
+   baisse). Le revenu direct n'est **pas** compté dans les revenus du mois (choix par défaut, à confirmer — une case
+   « compter aussi comme revenu » n'a pas été construite). Une créance encaissée entre toujours dans un portefeuille.
+3. **Prêt partagé à mon nom** (`js/shared-loan.js`, pur + testé) : `debt.participants: [{id, name, share}]` (les autres,
+   sans moi ; ma part = montant − Σ parts) saisis en texte (« Awa » ou « Moussa : 50000 », parts égales avec moi sinon).
+   Je dois tout au prêteur ; chaque participant me doit sa part = **créance automatique** (comptée dans
+   `receivables` et le patrimoine net via `participantReceivablesAsOf`, 0 si dette annulée ou pas commencée).
+   Deux façons de régler (bouton « Participation reçue ») : versé directement au prêteur (remboursement
+   `source: 'participant'`, sans portefeuille) ou remis à moi (`debt.handedIn` + transaction de revenu liée par `debtId`
+   → hors revenus du mois, la dette ne baisse pas, je rembourse ensuite). Dans les deux cas le patrimoine net est
+   inchangé. Case « ce prêt finance une dépense exceptionnelle » (`debt.exceptional`) : ses intérêts le sont aussi.
+   Un participant qui a déjà versé ne peut pas être retiré/renommé. **Non fait** : version « chacun répond de sa part »
+   (le prêt n'affiche alors que ma part) — écartée par l'auteur ; remboursement mixte en une seule saisie (= deux
+   saisies) ; pas porté dans GeoFinance-free.
+
+Tests : `test/ledger.test.html` 101/101 (19 nouveaux : exceptionnelles, remboursement direct, parts, créances,
+participation remise). Parcours réels vérifiés dans le navigateur (case → enregistrement → agrégats ; prêt partagé →
+remboursement direct → participation directe et remise), données de démo effacées ensuite. ⚠️ Le service worker
+sert une ancienne page de test : le désinscrire et vider les caches avant de rejouer `test/ledger.test.html`.
+
+**Suite le même jour (`CACHE_VERSION` `v157`) — trois trous comblés après relecture critique :**
+- **Score de santé** : un prêt marqué « finance une dépense exceptionnelle » sort du ratio d'endettement
+  (`computeNetWorthComposition` renvoie `exceptionalDebts` / `exceptionalReceivables`, retirés des deux côtés du ratio
+  dans `computeFinancialHealthScore`). Le patrimoine net, lui, ne change pas.
+- **Reste à vivre / solde de fin de mois** (`computeEndOfMonthForecast`) : retire désormais les mensualités de prêt à
+  payer d'ici la fin du mois (échéancier, en retard comprises, via `unpaidInstallments`) et le restant dû des dettes
+  sans échéancier arrivant à échéance. Avant, seules les récurrences y figuraient (la prévision de trésorerie à 60
+  jours, `forecast.js`, les comptait déjà). **Heuristique anti-double comptage** : une récurrence de dépense active de
+  même montant (±1 %) est supposée couvrir la mensualité. Les créances ne sont pas comptées (rien de certain).
+- **Bilan annuel PDF** : lignes « Dépenses exceptionnelles » et « Total réellement dépensé » dans le résumé, colonne
+  « Exceptionnelles » dans le détail mensuel (seulement s'il y en a), section « Dépenses exceptionnelles (cumul
+  annuel) » (`computeAnnualExceptionalExpenses`). Vérifié en capturant les `doc.text()` d'un vrai PDF généré.
+- Tests : ledger 112/112, features 199/199. Piège de test : si les fixtures laissent des liquidités négatives, le
+  ratio d'endettement est plafonné à 1 des deux côtés (d'où le portefeuille « garni » ajouté dans le test).
+- **Toujours non traité** : les intérêts d'un remboursement hors portefeuille ne créent aucune dépense ; le prêt
+  reçu directement par le fournisseur reste à saisir en deux écritures (revenu puis dépense) — sauf dans un
+  projet collectif (ci-dessous), qui les fait d'un coup.
+
+### 12 novembre 2026 (suite) — Projets collectifs + prêt depuis un compte gardé (Djignan uniquement, `CACHE_VERSION` `v158`)
+
+Cas de l'auteur : le père veut un voyage à 2 000 000 ; chaque enfant paie ce qu'il peut, **sans part fixée d'avance** ;
+la part de l'auteur sort d'un portefeuille (ou d'un prêt, éventuellement pris dans un compte gardé) ; pour les
+autres on note seulement « X a payé Y » (suivi). « Partage de dépenses » (parts égales + créances) ne convenait pas.
+
+- **`js/group-project.js`** (pur, testé) : `projectTotals` (collecté, reste à couvrir — négatif = dépassé —, par personne,
+  ma part portefeuille/prêt), `knownContributors`. **`js/modules/group-projects.js`** : UI + écritures, affichée en tête
+  de l'écran « Partage de dépenses » (`renderShared`). Les projets vivent dans le réglage `groupProjects` (comme les
+  provisions : pas de nouveau store, suivent les sauvegardes) ; chaque écriture passe par un seul `dbWriteBatch` avec
+  la ligne de réglage (atomique avec les transactions/dettes créées).
+- **Participation d'un autre** (`kind: 'other'`) : suivi seulement — aucune transaction, rien dans le patrimoine.
+  **Ma participation** : `wallet` = dépense exceptionnelle (`exceptional: true` + `projectId`) ; `loan` = prêt
+  (`debt.exceptional`, `projectId`) + revenu d'ouverture lié à la dette (exclu des revenus) + dépense exceptionnelle
+  depuis le même « portefeuille de passage » : les deux écritures sont faites d'un coup. La création du projet crée
+  (ou retrouve) une catégorie de dépense **exceptionnelle** au nom du projet.
+- **Prêt depuis un compte gardé** : `debt.keptAccountId`. À l'ouverture, sortie dans le compte gardé (`debtId` posé) ;
+  à CHAQUE remboursement (`keptReturnOps`, `debts.js` : capital + intérêts, toute source, y compris participation
+  directe d'un participant), entrée dans le compte. Refusé si le solde du compte ne couvre pas le prêt. Le compte
+  reste hors patrimoine, la dette y est. `deleteDebtCascade` supprime/renvoie aussi les mouvements du compte
+  (`keptEntries`, restaurés par « Annuler » dans `debts.js` et `shared.js`) ; un mouvement de compte gardé lié à une
+  dette ne se supprime pas depuis l'écran du compte (garde dans `kept-accounts.js`).
+- **Suppressions** : retirer une participation `wallet` supprime sa dépense ; une `loan` supprime son prêt + dépense, sauf
+  si le prêt a déjà des remboursements (refusé, à faire depuis Dettes & créances). Supprimer un PROJET ne supprime
+  PAS les dépenses/prêts déjà créés (vrais mouvements d'argent) : il n'efface que le suivi.
+- **Limites assumées** : si l'on supprime la dépense depuis Transactions, la ligne reste dans le projet (pas de verrou
+  `projectId` dans `transactionLinkKind`) ; un projet est mono-devise ; pas de prêt existant réutilisable (un nouveau
+  prêt est créé à chaque participation par prêt) ; pas porté dans GeoFinance-free.
+- Tests : ledger 122/122 (10 nouveaux sur `projectTotals`/`knownContributors`), features 199/199. Parcours réel vérifié :
+  suivi des frères sans transaction, dépense exceptionnelle depuis portefeuille (dépenses courantes inchangées), prêt
+  compte gardé (patrimoine −300 000, solde du compte 1 500 000 → 1 200 000 → 1 300 000 après un remboursement de
+  100 000), suppression d'une participation de suivi, intégration dans l'écran réel. Données de test effacées.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

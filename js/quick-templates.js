@@ -12,7 +12,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbAdd, dbDelete, getSetting, setSetting, logAudit } from './db.js';
-import { isDailyWallet, isInvestmentMovementExcluded } from './ledger.js';
+import { isDailyWallet, isInvestmentMovementExcluded, isExceptionalExpense, markExceptionalTransactions } from './ledger.js';
 import { uuid, todayISO, safeNumber, localISODate } from './utils.js';
 
 const KEY = 'quickTemplates';
@@ -68,13 +68,14 @@ export async function computeFrequentSuggestions({ limit = 4, today = new Date()
   const [transactions, wallets, categories, templates] = await Promise.all([
     dbGetAll(STORES.TRANSACTIONS), dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES), getTemplates(),
   ]);
+  markExceptionalTransactions(transactions, categories);
   const usable = new Set(wallets.filter(isDailyWallet).map((w) => w.id));
   const categoryName = new Map(categories.map((c) => [c.id, c.name]));
   const since = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 120);
   const sinceIso = localISODate(since);
   const groups = new Map();
   for (const tx of transactions) {
-    if ((tx.type !== 'expense' && tx.type !== 'income') || tx.debtId || isInvestmentMovementExcluded(tx)) continue;
+    if ((tx.type !== 'expense' && tx.type !== 'income') || tx.debtId || isInvestmentMovementExcluded(tx) || isExceptionalExpense(tx)) continue;
     if (!tx.note || !tx.note.trim() || !usable.has(tx.walletId) || !(tx.amount > 0) || (tx.date || '') < sinceIso) continue;
     const key = [tx.type, tx.walletId, tx.categoryId || '', tx.note.trim().toLowerCase()].join('|');
     const g = groups.get(key) || { type: tx.type, walletId: tx.walletId, categoryId: tx.categoryId || null, note: tx.note.trim(), amounts: [] };

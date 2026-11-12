@@ -79,6 +79,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
   const segButtons = backdrop.querySelectorAll('.segmented-btn');
   const targetWalletRow = backdrop.querySelector('[data-field="targetWalletRow"]');
   const categoryRow = backdrop.querySelector('[data-field="categoryRow"]');
+  const exceptionalRow = backdrop.querySelector('[data-field="exceptionalRow"]');
   const amountRow = backdrop.querySelector('[data-field="amountRow"]');
   const splitToggleRow = backdrop.querySelector('[data-field="splitToggleRow"]');
   const splitToggleBtn = backdrop.querySelector('#qa-split-toggle');
@@ -196,6 +197,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     amountRow.hidden = splitMode;
     categoryRow.hidden = splitMode || currentType === 'transfer';
     splitRowsWrap.hidden = !splitMode;
+    refreshExceptionalRow();
     splitToggleBtn.textContent = splitMode ? tr('Revenir à une seule catégorie') : tr('Diviser en plusieurs catégories');
     form.elements.amount.required = !splitMode;
     categorySelect.required = !splitMode && currentType !== 'transfer' && categoryRequired();
@@ -245,8 +247,29 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
   }
   walletSelect.addEventListener('change', () => { refreshTargetWalletOptions(); refreshAmountHint(); });
 
+  /* Dépense exceptionnelle : la case suit la catégorie choisie (marquée « exceptionnelle » dans Budgets > Catégories)
+     tant que l'utilisateur n'y a pas touché ; elle reste modifiable transaction par transaction (les soins courants
+     ne sont pas exceptionnels, l'opération d'un parent l'est). On n'enregistre `exceptional` que si le choix diffère
+     du défaut de la catégorie : sinon la transaction continue de suivre sa catégorie (reclassement rétroactif). */
+  let allCategories = [];
+  let exceptionalTouchedByUser = false;
+  const exceptionalBox = form.elements.exceptional;
+  const categoryIsExceptional = (id) => {
+    let c = allCategories.find((x) => x.id === id);
+    for (let depth = 0; c && depth < 4; depth++) {
+      if (c.exceptional === true) return true;
+      c = c.parentId ? allCategories.find((x) => x.id === c.parentId) : null;
+    }
+    return false;
+  };
+  function refreshExceptionalRow() {
+    exceptionalRow.hidden = currentType !== 'expense' || splitMode;
+  }
+  exceptionalBox.addEventListener('change', () => { exceptionalTouchedByUser = true; });
+
   async function populateCategories() {
     const all = await dbGetAll(STORES.CATEGORIES);
+    allCategories = all;
     const roots = all.filter((c) => c.type === currentType && !c.parentId);
     let html = '';
     for (const r of roots) {
@@ -270,6 +293,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     splitToggleRow.hidden = type === 'transfer';
     targetWalletSelect.required = type === 'transfer';
     categorySelect.required = type !== 'transfer' && !splitMode && categoryRequired();
+    refreshExceptionalRow();
     titleEl.textContent = editTransaction ? tr('Modifier la transaction') : (type === 'transfer' ? tr('Transfert entre portefeuilles') : tr('Saisie express'));
     // Renvoie la promesse : l'ouverture en modification doit ATTENDRE les options avant de poser la
     // catégorie d'origine, sinon la valeur est posée sur un <select> encore vide puis les options
@@ -289,7 +313,10 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
   /* Auto-catégorisation : si la note ressemble à une transaction déjà catégorisée,
      pré-sélectionne sa catégorie (tant que l'utilisateur n'a pas choisi la sienne). */
   let categoryTouchedByUser = !!editTransaction;
-  categorySelect.addEventListener('change', () => { categoryTouchedByUser = true; });
+  categorySelect.addEventListener('change', () => {
+    categoryTouchedByUser = true;
+    if (!exceptionalTouchedByUser) exceptionalBox.checked = categoryIsExceptional(categorySelect.value);
+  });
 
   async function suggestCategoryFromNote() {
     if (categoryTouchedByUser || currentType === 'transfer') return;
@@ -443,6 +470,10 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
         targetWalletSelect.value = editTransaction.targetWalletId;
       }
       else categorySelect.value = editTransaction.categoryId || '';
+      // Choix explicite déjà enregistré → on le montre tel quel ; sinon la transaction suit sa catégorie.
+      const explicitExceptional = typeof editTransaction.exceptional === 'boolean';
+      exceptionalBox.checked = explicitExceptional ? editTransaction.exceptional : categoryIsExceptional(editTransaction.categoryId);
+      exceptionalTouchedByUser = explicitExceptional;
       splitToggleRow.hidden = true;
     }
     if (lockedLink) {
@@ -540,6 +571,10 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       reconciled: editTransaction?.reconciled || false,
       createdAt: editTransaction?.createdAt || new Date().toISOString(),
     };
+    // Dépense exceptionnelle : n'est mémorisée que si le choix diffère du défaut de la catégorie (voir plus haut).
+    // delete (pas `= undefined`) : le record remplace l'ancien et reprend ses champs, y compris un ancien choix.
+    if (type === 'expense' && !lockedLink && exceptionalBox.checked !== categoryIsExceptional(record.categoryId)) record.exceptional = exceptionalBox.checked;
+    else if (!lockedLink) delete record.exceptional;
     // min="0" sur le champ laisse passer 0 : une transaction à 0 ne veut rien dire et pollue la liste.
     if (!(record.amount > 0)) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
     const before = editTransaction ? { ...editTransaction } : null;
@@ -549,7 +584,8 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     showToast(editTransaction ? tr('Transaction modifiée.') : tr('Transaction enregistrée.'));
     notifyDataChanged('transactions');
 
-    if (record.type === 'expense' && record.categoryId) {
+    // Pas d'alerte « plus élevée que d'habitude » pour une dépense exceptionnelle : c'est justement l'exception.
+    if (record.type === 'expense' && record.categoryId && !(record.exceptional ?? categoryIsExceptional(record.categoryId))) {
       const warning = await checkUnusualExpense(record.categoryId, record.amount, record.walletId, record.id);
       if (warning) {
         const catName = (categorySelect.selectedOptions[0]?.textContent || '').replace(/^—\s*/, '').trim();
@@ -701,7 +737,12 @@ function txRowHtml(t) {
   const sign = t.type === 'income' ? '+' : t.type === 'expense' ? '−' : '';
   const cls = t.type === 'income' ? 'pos' : t.type === 'expense' ? 'neg' : '';
   const currency = t.wallet?.currency || 'EUR';
-  const tagsHtml = t.tags?.length ? `<div class="tx-tags">${t.tags.map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`).join('')}</div>` : '';
+  // Badge « Exceptionnelle » : dépense hors suivi mensuel (voir ledger.js, markExceptionalTransactions).
+  const badges = [
+    ...(t.isExceptional ? [`<span class="badge badge-accent">${escapeHtml(tr('Exceptionnelle'))}</span>`] : []),
+    ...(t.tags || []).map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`),
+  ];
+  const tagsHtml = badges.length ? `<div class="tx-tags">${badges.join('')}</div>` : '';
   const checkboxHtml = bulkMode
     ? `<input type="checkbox" class="tx-select" data-tx-select="${escapeHtml(t.id)}" ${selectedIds.has(t.id) ? 'checked' : ''} style="width:18px;height:18px;flex-shrink:0;">`
     : '';

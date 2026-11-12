@@ -7,7 +7,7 @@
 import {
   computeNetWorth, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeCategoryActuals,
   computeMonthlyTypeHistory, getCategoriesByType, computeMonthlyNetSavingsHistory, computeMonthlyBudgetVsActualHistory, computeNetWorthHistoryForYear,
-  computeNetWorthComposition, computeInvestmentEntryTotals, computeTagSummary, computeMobileMoneyFees,
+  computeNetWorthComposition, computeInvestmentEntryTotals, computeTagSummary, computeMobileMoneyFees, computeAnnualExceptionalExpenses,
 } from '../ledger.js';
 import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, localISODate, showToast, escapeHtml, intlLocale } from '../utils.js';
 import { exportTransactionsCsv, exportInvestmentEntriesCsv } from '../backup.js';
@@ -244,6 +244,8 @@ async function generatePdfReport() {
     t('Patrimoine net global : {amount}', { amount: pdfAmount(total, currency) }),
     t('Entrées du mois : {amount}', { amount: pdfAmount(summary.income, summary.currency) }),
     t('Sorties du mois : {amount}', { amount: pdfAmount(summary.expenses, summary.currency) }),
+    // Ligne ajoutée seulement s'il y en a : ces dépenses sont réelles mais hors suivi mensuel (ledger.js).
+    ...(summary.exceptionalExpenses > 0 ? [t('Dépenses exceptionnelles (hors suivi mensuel) : {amount}', { amount: pdfAmount(summary.exceptionalExpenses, summary.currency) })] : []),
     t('Épargne nette : {amount}', { amount: pdfAmount(summary.netSavings, summary.currency) }),
   ].forEach((line) => { doc.text(line, 14, y); y += 6; });
   y += 6;
@@ -328,12 +330,20 @@ async function generateAnnualPdfReport() {
   const totalIncome = monthlySummaries.reduce((s, m) => s + m.income, 0);
   const totalExpenses = monthlySummaries.reduce((s, m) => s + m.expenses, 0);
   const totalNetSavings = monthlySummaries.reduce((s, m) => s + m.netSavings, 0);
+  // Dépenses exceptionnelles (hors suivi mensuel) : écartées des totaux ci-dessus, montrées à part pour que le total réel
+  // sorti sur l'année reste lisible (voir ledger.js, markExceptionalTransactions).
+  const exceptionalYear = await computeAnnualExceptionalExpenses(reportYear);
+  const hasExceptional = exceptionalYear.total > 0.005;
 
   doc.setFontSize(13); doc.text(t('Résumé annuel'), 14, y); y += 7;
   doc.setFontSize(10);
   [
     t('Revenus totaux : {amount}', { amount: pdfAmount(totalIncome, currency) }),
     t('Dépenses totales : {amount}', { amount: pdfAmount(totalExpenses, currency) }),
+    ...(hasExceptional ? [
+      t('Dépenses exceptionnelles (hors suivi mensuel) : {amount}', { amount: pdfAmount(exceptionalYear.total, currency) }),
+      t('Total réellement dépensé : {amount}', { amount: pdfAmount(totalExpenses + exceptionalYear.total, currency) }),
+    ] : []),
     t('Épargne nette totale : {amount}', { amount: pdfAmount(totalNetSavings, currency) }),
     t('Patrimoine net au 1er janvier : {amount}', { amount: pdfAmount(netWorthStart, currency) }),
     t('Patrimoine net au 31 décembre : {amount}', { amount: pdfAmount(netWorthEnd, currency) }),
@@ -344,19 +354,23 @@ async function generateAnnualPdfReport() {
   pageBreakIfNeeded();
   doc.setFontSize(13); doc.text(t('Détail mensuel'), 14, y); y += 7;
   doc.setFontSize(10);
+  // Une colonne « Exceptionnelles » n'apparaît que s'il y en a : sinon la mise en page reste celle d'avant.
+  const colX = hasExceptional ? { income: 82, expenses: 118, exceptional: 156, net: 196 } : { income: 100, expenses: 148, net: 196 };
   doc.text(t('Mois'), 14, y);
-  doc.text(t('Entrées'), 100, y, { align: 'right' });
-  doc.text(t('Sorties'), 148, y, { align: 'right' });
-  doc.text(t('Épargne nette'), 196, y, { align: 'right' });
+  doc.text(t('Entrées'), colX.income, y, { align: 'right' });
+  doc.text(t('Sorties'), colX.expenses, y, { align: 'right' });
+  if (hasExceptional) doc.text(t('Exceptionnelles'), colX.exceptional, y, { align: 'right' });
+  doc.text(t('Épargne nette'), colX.net, y, { align: 'right' });
   y += 5;
   doc.setDrawColor(200); doc.line(14, y, 196, y); y += 5;
   monthKeys.forEach((mk, i) => {
     pageBreakIfNeeded();
     const m = monthlySummaries[i];
     doc.text(formatMonthLabel(mk), 14, y);
-    doc.text(pdfAmount(m.income, m.currency), 100, y, { align: 'right' });
-    doc.text(pdfAmount(m.expenses, m.currency), 148, y, { align: 'right' });
-    doc.text(pdfAmount(m.netSavings, m.currency), 196, y, { align: 'right' });
+    doc.text(pdfAmount(m.income, m.currency), colX.income, y, { align: 'right' });
+    doc.text(pdfAmount(m.expenses, m.currency), colX.expenses, y, { align: 'right' });
+    if (hasExceptional) doc.text(pdfAmount(m.exceptionalExpenses, m.currency), colX.exceptional, y, { align: 'right' });
+    doc.text(pdfAmount(m.netSavings, m.currency), colX.net, y, { align: 'right' });
     y += 6;
   });
   y += 6;
@@ -384,6 +398,19 @@ async function generateAnnualPdfReport() {
     doc.text(t('Aucune dépense cette année.'), 14, y); y += 6;
   }
   y += 6;
+
+  if (hasExceptional) {
+    pageBreakIfNeeded();
+    doc.setFontSize(13); doc.text(t('Dépenses exceptionnelles (cumul annuel)'), 14, y); y += 7;
+    doc.setFontSize(10);
+    for (const row of exceptionalYear.rows) {
+      pageBreakIfNeeded();
+      doc.text(row.label, 14, y);
+      doc.text(pdfAmount(row.amount, currency), 196, y, { align: 'right' });
+      y += 6;
+    }
+    y += 6;
+  }
 
   pageBreakIfNeeded();
   doc.setFontSize(13); doc.text(t('Investissements'), 14, y); y += 7;
