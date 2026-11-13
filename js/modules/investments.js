@@ -178,7 +178,7 @@ export async function restoreCancelledInvestment(inv) {
   return record;
 }
 
-function computeMetrics(inv, entries, loanInterestPaid = 0) {
+export function computeMetrics(inv, entries, loanInterestPaid = 0) {
   const own = entries.filter((e) => e.investmentId === inv.id);
   const contributions = own.filter((e) => e.type === 'contribution').reduce((s, e) => s + e.amount, 0);
   const withdrawals = own.filter((e) => e.type === 'withdrawal').reduce((s, e) => s + e.amount, 0);
@@ -187,7 +187,12 @@ function computeMetrics(inv, entries, loanInterestPaid = 0) {
   const currentValue = investmentValueAsOf(inv, entries, null);
   // Les intérêts payés sur le(s) prêt(s) qui financent cet investissement sont un coût : ils viennent en déduction du gain.
   const gain = currentValue - netInvested + dividends - loanInterestPaid;
-  const roiPct = netInvested ? (gain / netInvested) * 100 : 0;
+  // Base du rendement : le capital net. Après une vente qui a rapporté plus que le capital (retraits > mises), ce capital net
+  // devient négatif et diviser par lui inversait le signe (un gain s'affichait en −100 %) : on se rabat alors sur tout ce qui a
+  // été mis (capital initial + apports), qui reste la bonne base d'un rendement.
+  const everPutIn = (inv.capitalInvested || 0) + contributions;
+  const roiBase = netInvested > 0 ? netInvested : everPutIn;
+  const roiPct = roiBase > 0 ? (gain / roiBase) * 100 : 0;
   const yearsHeld = Math.max((Date.now() - new Date(inv.createdAt).getTime()) / (365.25 * 24 * 3600 * 1000), 1 / 12);
   const annualizedYieldPct = roiPct / yearsHeld;
   return { netInvested, currentValue, dividends, gain, roiPct, annualizedYieldPct, loanInterestPaid };

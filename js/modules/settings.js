@@ -4,7 +4,7 @@
    (JSON, JSON chiffré, CSV), remise à zéro complète.
    ========================================================================== */
 
-import { STORES, dbGetAll, dbBulkPut, getSetting, setSetting, wipeAllData } from '../db.js';
+import { STORES, dbGetAll, dbWriteBatch, getSetting, setSetting, wipeAllData } from '../db.js';
 import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric } from '../auth.js';
 import {
   exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup,
@@ -273,13 +273,32 @@ async function renderCurrencySection(container) {
     const newCurrency = e.target.value;
     const ok = await confirmDialog(t('Passer la devise de base à {currency} ? Vos taux de change existants seront réinitialisés à 1 et devront être ressaisis.', { currency: newCurrency }), { confirmText: t('Confirmer') });
     if (!ok) { e.target.value = baseCurrency; return; }
-    await setSetting('baseCurrency', newCurrency);
-    const rates = await dbGetAll(STORES.EXCHANGE_RATES);
-    const reset = rates.map((r) => ({ ...r, rateToBase: 1 }));
-    await dbBulkPut(STORES.EXCHANGE_RATES, reset);
+    if (newCurrency === baseCurrency) return;
+    await changeBaseCurrency(newCurrency);
     showToast(t('Devise de base mise à jour.'));
     notifyDataChanged('all');
   });
+}
+
+/** Passe à une nouvelle devise de base. Les taux et leur historique sont exprimés dans l'ANCIENNE devise de base : on les repart
+    de zéro. Chaque devise réellement utilisée (l'ancienne devise de base comprise, qui n'avait pas de ligne de taux) reçoit un
+    taux 1:1 marqué « non confirmé », pour que l'alerte du tableau de bord et le panneau des taux invitent à le ressaisir au
+    lieu de fausser le patrimoine en silence. Suppression des anciens taux et création des nouveaux dans une seule écriture. */
+export async function changeBaseCurrency(newCurrency) {
+  const oldCurrency = await getSetting('baseCurrency', 'EUR');
+  const [rates, history, wallets, investments, debts, tontines, goals] = await Promise.all([
+    dbGetAll(STORES.EXCHANGE_RATES), dbGetAll(STORES.EXCHANGE_RATE_HISTORY), dbGetAll(STORES.WALLETS),
+    dbGetAll(STORES.INVESTMENTS), dbGetAll(STORES.DEBTS), dbGetAll(STORES.TONTINES), dbGetAll(STORES.SAVINGS_GOALS),
+  ]);
+  const used = new Set([...wallets, ...investments, ...debts, ...tontines, ...goals].map((x) => x.currency).filter(Boolean));
+  used.delete(newCurrency);
+  await setSetting('baseCurrency', newCurrency);
+  await dbWriteBatch([
+    ...rates.map((r) => ({ store: STORES.EXCHANGE_RATES, type: 'delete', value: r.code })),
+    ...history.map((h) => ({ store: STORES.EXCHANGE_RATE_HISTORY, type: 'delete', value: h.id })),
+    ...[...used].map((code) => ({ store: STORES.EXCHANGE_RATES, type: 'put', value: { code, rateToBase: 1, confirmed: false } })),
+  ]);
+  return { oldCurrency, newCurrency, unconfirmed: [...used] };
 }
 
 async function renderBackupSection(container) {

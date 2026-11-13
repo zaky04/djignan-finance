@@ -575,6 +575,59 @@ async function runTests() {
   await guarded({ preventDefault() {} });
   assertEqual('once : une soumission ultérieure repasse normalement', runs, 2);
 
+  // --- Correctifs de l'audit de novembre 2026 ---
+  // guessCategoryId : une ancienne note de 1-2 caractères ne doit pas « correspondre » à toute nouvelle note.
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-short1', type: 'expense', walletId: 'w4', categoryId: 'c3', amount: 1, date: '2026-04-05', note: 'a' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-short2', type: 'expense', walletId: 'w4', categoryId: 'c3', amount: 1, date: '2026-04-06', note: 'ok' });
+  assertEqual('guessCategoryId : une note passée de 1-2 caractères ne pollue pas les suggestions', await guessCategoryId('banane plantain', 'expense'), null);
+  assertEqual('guessCategoryId : la correspondance normale reste intacte', await guessCategoryId('café michel', 'expense'), 'c1');
+  await dbDelete(STORES.TRANSACTIONS, 'tx-short1'); await dbDelete(STORES.TRANSACTIONS, 'tx-short2');
+
+  // ROI d'un investissement vendu plus cher que son capital : le gain doit rester positif.
+  try {
+    const { computeMetrics } = await import('../js/modules/investments.js');
+    const sold = { id: 'inv-sold', capitalInvested: 1000, currency: 'EUR', createdAt: '2025-01-01T00:00:00.000Z' };
+    const soldEntries = [
+      { id: 'es1', investmentId: 'inv-sold', type: 'valuation', amount: 1500, date: '2026-01-10' },
+      { id: 'es2', investmentId: 'inv-sold', type: 'withdrawal', amount: 1500, date: '2026-01-11' },
+    ];
+    const m = computeMetrics(sold, soldEntries);
+    assertEqual('ROI : vente totale avec gain → gain +500', m.gain, 500);
+    assertEqual('ROI : vente totale avec gain → rendement +50 % (et non −100 %)', m.roiPct, 50);
+    const normal = computeMetrics({ id: 'inv-n', capitalInvested: 1000, currency: 'EUR', createdAt: '2025-01-01T00:00:00.000Z' }, [{ id: 'en1', investmentId: 'inv-n', type: 'valuation', amount: 1200, date: '2026-01-10' }]);
+    assertEqual('ROI : cas normal inchangé (+20 %)', normal.roiPct, 20);
+  } catch (err) { assertTrue('ROI : computeMetrics chargeable', false, err.message); }
+
+  // Portefeuille qui n'a reçu que des virements : il n'est pas « vide ».
+  try {
+    const { walletTransactionCount } = await import('../js/modules/wallets.js');
+    await dbAdd(STORES.WALLETS, { id: 'w-recv', name: 'Reçoit seulement', currency: 'EUR', initialBalance: 0, createdAt: '2026-01-01T00:00:00.000Z' });
+    assertEqual('portefeuille : sans aucun mouvement → 0', await walletTransactionCount('w-recv'), 0);
+    await dbAdd(STORES.TRANSACTIONS, { id: 'tx-recv', type: 'transfer', walletId: 'w1', targetWalletId: 'w-recv', amount: 10, date: '2026-04-07', note: 'Virement entrant' });
+    assertEqual('portefeuille : un virement reçu compte (suppression refusée)', await walletTransactionCount('w-recv'), 1);
+    await dbDelete(STORES.TRANSACTIONS, 'tx-recv'); await dbDelete(STORES.WALLETS, 'w-recv');
+  } catch (err) { assertTrue('portefeuille : walletTransactionCount chargeable', false, err.message); }
+
+  // Changement de devise de base : taux repartis de zéro, non confirmés, historique purgé.
+  try {
+    const { changeBaseCurrency } = await import('../js/modules/settings.js');
+    const dbm2 = await import('../js/db.js');
+    const ratesBefore = await dbGetAll(STORES.EXCHANGE_RATES);
+    await dbAdd(STORES.EXCHANGE_RATE_HISTORY, { id: 'rh-x', code: 'USD', date: '2026-05-01', rateToBase: 0.9 });
+    const res = await changeBaseCurrency('USD');
+    const ratesAfter = await dbGetAll(STORES.EXCHANGE_RATES);
+    assertEqual('devise de base : le nouveau taux de base n\'a pas de ligne', ratesAfter.some((r) => r.code === 'USD'), false);
+    const eur = ratesAfter.find((r) => r.code === 'EUR');
+    assertTrue('devise de base : l\'ancienne base (EUR, utilisée par des portefeuilles) reçoit un taux non confirmé', !!eur && eur.confirmed === false && eur.rateToBase === 1, JSON.stringify(eur));
+    assertEqual('devise de base : l\'historique des taux est purgé', (await dbGetAll(STORES.EXCHANGE_RATE_HISTORY)).length, 0);
+    assertEqual('devise de base : réglage mis à jour', await dbm2.getSetting('baseCurrency'), 'USD');
+    assertTrue('devise de base : la liste renvoyée désigne EUR comme à confirmer', res.unconfirmed.includes('EUR'), JSON.stringify(res));
+    // Remise en l'état pour la suite des tests.
+    for (const r of ratesAfter) await dbDelete(STORES.EXCHANGE_RATES, r.code);
+    for (const r of ratesBefore) await dbAdd(STORES.EXCHANGE_RATES, r);
+    await dbm2.setSetting('baseCurrency', 'EUR');
+  } catch (err) { assertTrue('devise de base : changeBaseCurrency chargeable', false, err.message); }
+
   render();
 }
 

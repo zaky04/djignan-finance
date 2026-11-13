@@ -144,7 +144,7 @@ async function openWalletModal(wallet = null, { onDone = null, preset = null } =
 
     // Changer la devise d'un portefeuille qui a déjà des mouvements réinterpréterait tous ses montants
     // (100 EUR deviendraient 100 USD) et désynchroniserait dettes, objectifs et investissements liés.
-    if (wallet && currency !== wallet.currency && (await dbGetAllByIndex(STORES.TRANSACTIONS, 'byWallet', wallet.id)).length) {
+    if (wallet && currency !== wallet.currency && (await walletTransactionCount(wallet.id))) {
       showToast(t('La devise ne peut plus changer : ce portefeuille a déjà des transactions. Créez un nouveau portefeuille dans cette devise.'));
       return;
     }
@@ -192,6 +192,15 @@ async function openWalletModal(wallet = null, { onDone = null, preset = null } =
     showToast(wallet ? t('Portefeuille mis à jour.') : t('Portefeuille créé.'));
     notifyDataChanged('wallets');
   });
+}
+
+/** Nombre de transactions qui touchent ce portefeuille, VIREMENTS REÇUS compris (ils portent targetWalletId, pas walletId :
+    l'index byWallet seul les ignore, et un portefeuille qui n'a fait que recevoir des virements passait pour vide — sa
+    suppression faisait disparaître l'argent reçu du patrimoine et laissait des virements pointant vers rien). */
+export async function walletTransactionCount(walletId) {
+  const own = await dbGetAllByIndex(STORES.TRANSACTIONS, 'byWallet', walletId);
+  if (own.length) return own.length;
+  return (await dbGetAll(STORES.TRANSACTIONS)).filter((t) => t.targetWalletId === walletId).length;
 }
 
 async function ensureExchangeRateRow(currency) {
@@ -534,7 +543,7 @@ export function initWalletsModule() {
           return;
         }
       }
-      const txCount = (await dbGetAllByIndex(STORES.TRANSACTIONS, 'byWallet', walletId)).length;
+      const txCount = await walletTransactionCount(walletId);
       if (!wallet.archived && txCount === 0) {
         const ok = await confirmDialog(t('Supprimer définitivement "{name}" ? Ce portefeuille n\'a aucune transaction, la suppression est possible.', { name: wallet.name }), { danger: true, requirePin: true, confirmText: t('Supprimer') });
         if (ok) {

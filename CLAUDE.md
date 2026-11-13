@@ -3952,6 +3952,27 @@ Tests : ledger 163/163 (14 nouveaux), features 199/199 ; parcours vérifiés dan
 filtre + bandeau, détail depuis les deux écrans, somme exacte). Non fait (choix) : conseil n°4 (stockage des projets avec
 trace des suppressions) ; pas de téléphone mémorisé pour le partage (on choisit le contact/groupe dans WhatsApp).
 
+### 13 novembre 2026 (audit complet) — 4 bugs corrigés (`CACHE_VERSION` `v163`)
+
+Audit en lecture (moteur de calcul, prévisions, prêts, graphes, import, PIN, i18n, précache) : tests 163 + 199 verts, agrégats
+cohérents entre vues, 13 écrans sans erreur console, i18n et précache complets. Quatre vrais bugs, corrigés et testés :
+1. **Changer la devise de base fausse tout en silence** (`settings.js`, `changeBaseCurrency` exportée) : les taux étaient remis à 1
+   sans `confirmed:false` (donc aucune alerte), l'ancienne base n'avait pas de ligne de taux (non corrigeable) et l'historique des
+   taux, exprimé dans l'ancienne base, continuait de servir à la courbe du patrimoine. Désormais : anciens taux + historique
+   supprimés, une ligne 1:1 **non confirmée** par devise réellement utilisée (ancienne base comprise), le tout dans un `dbWriteBatch`.
+2. **Un portefeuille qui n'avait reçu que des virements était supprimable** (`wallets.js`, `walletTransactionCount`) : l'index
+   `byWallet` ignore `targetWalletId`. L'argent reçu disparaissait du patrimoine. Même garde réparée pour le changement de devise.
+3. **ROI inversé après une vente totale avec gain** (`investments.js`, `computeMetrics` exportée) : capital net négatif → gain
+   divisé par un négatif (−100 % au lieu de +50 %). Base de repli = capital initial + apports.
+4. **`guessCategoryId`** : une ancienne note de 1-2 caractères (« a », « ok ») « correspondait » à presque toute nouvelle note ;
+   les notes passées de moins de 3 caractères sont ignorées.
+Tests : ledger 175/175 (12 nouveaux), features 199/199. À jour aussi : §5 points 15 (import désormais atomique, validé) et
+23 (anti-brute-force couvre `changePin`) sont résolus. Restent connus, non traités : bilan par étiquette qui garde les
+exceptionnelles, part des frais Mobile Money (dénominateur avec exceptionnelles), prévision `forecast.js` sans `anchorDay`
+de repli pour d'anciennes récurrences, taux actuel (et non historique) dans les agrégats mensuels, soldes des autres
+participants jamais réglables dans Partage de dépenses, rendement annualisé gonflé pour un investissement récent,
+`computeMonthlyBudgetSummary` qui appelle `ctx()` pour rien, restauration « Remplacer tout » qui garde les stores absents.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

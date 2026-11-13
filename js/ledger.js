@@ -1227,6 +1227,9 @@ export async function guessCategoryId(note, type) {
   for (const t of transactions) {
     if (t.type !== type || !t.categoryId || !t.note) continue;
     const tn = norm(t.note);
+    // Une note passée de 1-2 caractères (« a », « ok ») est contenue dans presque toute nouvelle note : l'inclusion dans ce
+    // sens n'a de sens qu'à partir de 3 caractères, comme pour la note saisie.
+    if (tn.length < 3) continue;
     if (tn !== n && !tn.includes(n) && !n.includes(tn)) continue;
     scores.set(t.categoryId, (scores.get(t.categoryId) || 0) + 1);
   }
