@@ -3856,6 +3856,82 @@ autres on note seulement « X a payé Y » (suivi). « Partage de dépenses » (
   compte gardé (patrimoine −300 000, solde du compte 1 500 000 → 1 200 000 → 1 300 000 après un remboursement de
   100 000), suppression d'une participation de suivi, intégration dans l'écran réel. Données de test effacées.
 
+### 12 novembre 2026 (fin) — Revue bugs + sécurité de tout ce lot, corrections (`CACHE_VERSION` `v159`)
+
+Revue complète demandée par l'auteur (logique + sécurité). Chaque suspicion a été reproduite dans l'app avant d'être
+corrigée. **Sécurité : aucune faille trouvée** — HTML piégé dans noms/notes/ids de projets, participants, `sourceName`
+de dettes : rien ne s'exécute, rien n'est injecté (`openModal` échappe le titre, `confirmDialog` le message, les toasts
+sont en `textContent`, la fiche PDF est du texte) ; suppressions réelles derrière le PIN ; aucune nouvelle requête réseau.
+Seule fragilité : les nouvelles données d'une sauvegarde importée ne sont pas validées (réglage `groupProjects`).
+
+Corrigés :
+1. **Grave — la case « exceptionnelle » était contournée** : l'auto-catégorisation d'après la note, les favoris et le
+   changement de type posaient la catégorie par programme (pas d'évènement `change`) → case restée décochée → `exceptional:
+   false` enregistré → dépense comptée comme courante. Maintenant `syncExceptionalFromCategory()` après chaque changement
+   fait par le code, et un choix explicite n'est mémorisé que si l'utilisateur a touché la case (`exceptionalTouchedByUser`).
+   La case est cachée sur une transaction liée (verrouillée : le choix y était ignoré sans message).
+2. **Prêts de projet** (`debt.projectId`) : suppression refusée depuis Dettes & créances ; montant/date/devise/type non
+   modifiables (avertissement dans le formulaire) — sinon projet, dépense exceptionnelle et mouvement du compte gardé se
+   désynchronisaient. Taux, échéance, note, participants restent éditables. Le retrait passe par le projet.
+3. **Import « fusionner »** : les projets (un seul réglage) étaient écrasés. `mergeProjectLists` (`group-project.js`) les
+   réunit par id (version locale gardée + participations nouvelles) ; branché dans `importAllData` (`db.js`). Le mode
+   « remplacer » reste un remplacement. `sanitizeProjects` ignore les éléments corrompus (un projet `null` faisait planter
+   tout l'écran Partage de dépenses). Suppressions de projet/participation : relecture de la liste avant écriture.
+4. **Calendrier** (détail du jour) et **outil d'anomalies** excluent maintenant les dépenses exceptionnelles (le total de la
+   case et la liste divergeaient : 5 000 contre 205 000) ; l'outil d'anomalies excluait aussi à tort, depuis toujours, les
+   remboursements de dette et achats d'investissement — corrigé au passage.
+5. **Budgets d'une catégorie exceptionnelle** : ignorés dans `computeBudgetVsActual` et son historique (ils restaient
+   réservés dans le reste à vivre alors que leur « réel » tombait à 0) ; conservés en base, donc réversibles (décocher la
+   catégorie les réactive). Un message prévient quand on marque une catégorie qui a déjà un historique ou des budgets.
+   Nouvelle fonction `exceptionalCategoryIds(categories)` (héritage parent → sous-catégorie).
+
+Tests : ledger 131/131 (9 nouveaux), features 199/199 ; scénarios rejoués dans l'app (auto-catégorie, décochage volontaire,
+verrou des prêts de projet, calendrier, anomalies). **Non corrigé, assumé** : l'export CSV ne contient pas l'indicateur
+(un aller-retour CSV perd les choix individuels, pas ceux de catégorie) ; le récap « Votre année » exclut les exceptionnelles
+sans le dire et les questions en langage naturel les incluent ; suppression d'une participation par prêt en deux écritures
+non atomiques ; pas de plafond de participants.
+
+### 12 novembre 2026 (fin, 2e revue) — nouveaux défauts trouvés et corrigés (`CACHE_VERSION` `v160`)
+
+Deuxième passe, sur le code corrigé et sur des zones non vues. Reproduits dans l'app avant correction :
+1. **Grave — supprimer une catégorie exceptionnelle rendait ses dépenses « courantes »** : elles suivent leur catégorie ;
+   une fois supprimée (`categoryId` orphelin) elles sortaient de l'exceptionnel d'un coup (30 500 → 830 500 de dépenses du
+   mois). Le bouton Supprimer de Budgets > Catégories colle maintenant `exceptional: true` aux dépenses concernées (catégorie
+   exceptionnelle OU héritée d'un parent) dans le même lot. Reste vrai et voulu : décocher la case d'une catégorie
+   reclasse son historique ; déplacer une catégorie sous un autre parent peut aussi changer son statut hérité (non traité).
+2. **Double soumission = doublons** (2 remboursements pour un formulaire) : `once()` / `onceSubmit()` (`utils.js`) sur les
+   formulaires de dette, de remboursement, de participation, de projet et la saisie express.
+3. **« 50.000 » lu comme 50** dans la liste des participants : `parseAmountText()` (milliers à la française reconnus) ;
+   lignes limitées à 200 caractères (analyse quadratique : 415 ms pour 40 000 espaces) et 300 participants au plus.
+4. **Mode discret** : le contenu d'un `<option>` n'est jamais masqué par `privacy.js` ; les soldes des comptes gardés et les
+   « reste X » des participants y étaient lisibles → `amountForOption()` écrit des points en mode discret.
+5. **Dépense d'un projet modifiable/supprimable depuis Transactions** (désynchronisation) : `projectId` rejoint
+   `transactionLinkKind` → montant/date/portefeuille/type verrouillés, suppression refusée (elle part avec la participation).
+Vérifié aussi : les 12 écrans s'affichent sans erreur console ; tous les fichiers JS sont dans `APP_SHELL` (hors ligne OK) ;
+`privacy.js` masque déjà les montants écrits dans une phrase (pas de fuite sur les nouveaux écrans, sauf les `<option>`).
+Tests : ledger 140/140, features 199/199.
+
+### 13 novembre 2026 (3e revue) — logique sur la durée, corrigée (`CACHE_VERSION` `v161`)
+
+Analyse des hypothèses qui vieillissent mal ; chaque point reproduit avant correction :
+1. **Couverture d'une mensualité par une récurrence** (`computeEndOfMonthForecast`) : le seul montant (±1 %) suffisait, donc
+   un « Loyer » de même montant faisait disparaître TOUTE la réserve des mensualités (533 095 → 0, en F CFA les montants
+   ronds sont fréquents). Il faut maintenant le même montant ET un lien avec le prêt : nom de la récurrence contenant celui
+   du prêteur, ou catégorie « Prêt »/« Loan ». À défaut on compte les deux (prudent).
+2. **Vieille dette en retard** : `debt.forecastIgnored` (case dans le formulaire de dette, dettes seulement) la sort du
+   reste à vivre (`computeEndOfMonthForecast`) et de la prévision à 60 jours (`forecast.js`) ; elle reste dans le patrimoine
+   et sur sa carte (« Ignorée dans la prévision »). Avant : un retard de 2024 pesait indéfiniment (500 000).
+3. **Part abandonnée** : `debt.waived: [{id, participantId, amount, date, note}]` (mode « Il ne paiera pas » du bouton
+   « Participation reçue »). La créance sur ce participant baisse sans aucun mouvement d'argent (perte pour moi, patrimoine
+   −300 000 testé) ; avant, seule l'annulation de TOUTE la dette effaçait une part impayée (et toutes les autres avec).
+4. **Suggestions de budget** : plus de suggestion (ni de plancher de récurrence) pour une catégorie exceptionnelle, dont le
+   budget est ignoré.
+Tests : ledger 149/149 (9 nouveaux), features 199/199 ; parcours réels vérifiés (case dette ignorée : +500 000 de reste à
+vivre, patrimoine inchangé ; abandon de part). **Non traité, assumé** : l'augmentation du montant d'un prêt partagé reporte
+la différence sur MA part (aperçu affiché, pas d'alerte) ; la fusion d'import ressuscite ce qui a été supprimé en local
+(pas de trace des suppressions) ; une participation de projet ne se modifie pas (supprimer puis recréer) ; la catégorie
+créée par un projet n'est pas supprimée avec lui.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

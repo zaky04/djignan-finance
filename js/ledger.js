@@ -50,19 +50,25 @@ async function ctx() {
     enregistrée) pour que chaque agrégat n'ait qu'un test à faire. Les transactions viennent de dbGetAll (copies) :
     les muter ici est sans effet sur la base. */
 export function markExceptionalTransactions(transactions, categories) {
-  const byId = new Map(categories.map((c) => [c.id, c]));
-  const categoryIsExceptional = (id) => {
-    let c = byId.get(id);
-    for (let depth = 0; c && depth < 4; depth++) {
-      if (c.exceptional === true) return true;
-      c = c.parentId ? byId.get(c.parentId) : null;
-    }
-    return false;
-  };
+  const exceptionalIds = exceptionalCategoryIds(categories);
   for (const t of transactions) {
-    t.isExceptional = t.type === 'expense' && (typeof t.exceptional === 'boolean' ? t.exceptional : categoryIsExceptional(t.categoryId));
+    t.isExceptional = t.type === 'expense' && (typeof t.exceptional === 'boolean' ? t.exceptional : exceptionalIds.has(t.categoryId));
   }
   return transactions;
+}
+
+/** Identifiants des catégories « exceptionnelles », sous-catégories comprises (une sous-catégorie hérite de sa parente). */
+export function exceptionalCategoryIds(categories) {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const ids = new Set();
+  for (const c of categories) {
+    let cur = c;
+    for (let depth = 0; cur && depth < 4; depth++) {
+      if (cur.exceptional === true) { ids.add(c.id); break; }
+      cur = cur.parentId ? byId.get(cur.parentId) : null;
+    }
+  }
+  return ids;
 }
 
 /** Vrai pour une dépense à sortir des agrégats de discipline (voir markExceptionalTransactions). Les mouvements
@@ -527,7 +533,9 @@ export async function computeMonthlyNetSavingsHistory(year) {
     computeMonthlyBudgetSummary() pour "toutes catégories" : seules les catégories ayant un budget
     posé ce mois-là entrent dans le total (comparer à des dépenses hors budget n'aurait pas de sens). */
 export async function computeMonthlyBudgetVsActualHistory(year, categoryId = null) {
-  const { wallets, transactions, budgets, rates, baseCurrency } = await ctx();
+  const { wallets, transactions, categories, budgets: allBudgets, rates, baseCurrency } = await ctx();
+  const exceptionalIds = exceptionalCategoryIds(categories);
+  const budgets = allBudgets.filter((b) => !exceptionalIds.has(b.categoryId)); // voir computeBudgetVsActual
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
   const budgetTotals = new Array(12).fill(0);
   const actualTotals = new Array(12).fill(0);
@@ -562,7 +570,11 @@ export async function computeBudgetVsActual(monthKey = currentMonthKey()) {
   const { wallets, transactions, categories, budgets, rates, baseCurrency } = await ctx();
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
   const catName = Object.fromEntries(categories.map((c) => [c.id, c.name]));
-  const monthBudgets = budgets.filter((b) => b.month === monthKey);
+  // Les budgets d'une catégorie marquée « exceptionnelle » sont ignorés : ses dépenses n'entrent plus dans le budget (leur
+  // « réel » serait à 0), donc le budget resterait réservé pour rien dans le reste à vivre. Ils ne sont pas supprimés :
+  // décocher la catégorie les réactive.
+  const exceptionalIds = exceptionalCategoryIds(categories);
+  const monthBudgets = budgets.filter((b) => b.month === monthKey && !exceptionalIds.has(b.categoryId));
 
   const actualByCategory = new Map();
   for (const t of transactions) {
@@ -732,8 +744,11 @@ export async function computeBudgetSuggestions(monthKey = currentMonthKey()) {
   // budgets comme partout ailleurs) en équivalent mensuel. Les récurrences annuelles sont ignorées :
   // ce n'est pas un coût mensuel (elles ont leur propre onglet "Budgets annuels").
   const floors = new Map();
+  // Les catégories « exceptionnelles » n'ont pas de budget (ignoré, voir computeBudgetVsActual) : ni suggestion, ni plancher.
+  // Avant, une récurrence de scolarité y produisait une suggestion de budget comptée dans le total proposé.
+  const exceptionalIds = exceptionalCategoryIds(categories);
   for (const r of recurring) {
-    if (!r.active || r.type !== 'expense' || r.investmentId || !r.categoryId) continue;
+    if (!r.active || r.type !== 'expense' || r.investmentId || !r.categoryId || exceptionalIds.has(r.categoryId)) continue;
     const factor = r.frequency === 'monthly' ? 1 : r.frequency === 'weekly' ? 52 / 12 : 0;
     if (!factor) continue;
     const amt = toBase(Number(r.amount) || 0, walletCurrency[r.walletId] || baseCurrency, rates, baseCurrency) * factor;
@@ -743,7 +758,7 @@ export async function computeBudgetSuggestions(monthKey = currentMonthKey()) {
   const currentLimits = new Map(budgets.filter((b) => b.month === monthKey).map((b) => [b.categoryId, b.limit || 0]));
   const rows = [];
   for (const c of categories) {
-    if (c.type !== 'expense') continue;
+    if (c.type !== 'expense' || exceptionalIds.has(c.id)) continue;
     const amounts = months.map((m) => spend.get(`${m}|${c.id}`) || 0);
     const s = suggestBudgetFromHistory(amounts, floors.get(c.id) || 0);
     if (!s) continue;
@@ -911,7 +926,7 @@ export async function computeAnnualCategoryActuals(year, type = 'expense') {
 /** Solde prévisionnel de fin de mois = liquidités actuelles + récurrences actives restant à échoir ce mois-ci
     − mensualités de prêt (et dettes arrivant à échéance) à régler d'ici la fin du mois. */
 export async function computeEndOfMonthForecast() {
-  const { wallets, transactions, rates, baseCurrency, debts, debtPayments } = await ctx();
+  const { wallets, transactions, categories, rates, baseCurrency, debts, debtPayments } = await ctx();
   const recurring = await dbGetAll(STORES.RECURRING);
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
   const balances = walletBalancesAsOf(wallets, transactions);
@@ -953,13 +968,26 @@ export async function computeEndOfMonthForecast() {
   // dont la discipline ne tient pas compte mais dont le reste à vivre, lui, doit tenir compte). Même lecture que la
   // prévision de trésorerie (forecast.js) : mensualités de l'échéancier restant à payer, en retard comprises, sinon le
   // restant dû à la date d'échéance. Les créances (ce qu'on me doit) ne sont pas comptées : rien n'est certain.
-  // Une récurrence de dépense du même montant (±1 %) est supposée déjà couvrir la mensualité : on ne la compte pas deux fois.
-  const recurringExpenseAmounts = recurring
+  // Une récurrence de dépense déjà saisie pour cette mensualité ne doit pas être comptée deux fois. Elle la couvre si elle a
+  // le même montant (±1 %) ET un lien avec CE prêt : son nom contient celui du prêteur, ou sa catégorie est « Prêt ». Le
+  // montant seul ne suffit pas : en F CFA les montants ronds sont fréquents, et un loyer de même montant faisait disparaître
+  // en silence toute la réserve des mensualités (reste à vivre trop optimiste, sans aucun signe visible).
+  const loanCategoryIds = new Set(categories.filter((c) => ['prêt', 'loan'].includes(String(c.name || '').trim().toLowerCase())).map((c) => c.id));
+  const recurringExpenses = recurring
     .filter((r) => r.active && r.type === 'expense')
-    .map((r) => toBase(Number(r.amount) || 0, walletCurrency[r.walletId] || baseCurrency, rates, baseCurrency));
-  const coveredByRecurring = (amount) => recurringExpenseAmounts.some((a) => Math.abs(a - amount) <= Math.max(0.5, amount * 0.01));
+    .map((r) => ({
+      amount: toBase(Number(r.amount) || 0, walletCurrency[r.walletId] || baseCurrency, rates, baseCurrency),
+      name: String(r.name || '').trim().toLowerCase(),
+      loanCategory: loanCategoryIds.has(r.categoryId),
+    }));
+  const coveredByRecurring = (amount, debt) => {
+    const lender = String(debt.personName || '').trim().toLowerCase();
+    return recurringExpenses.some((r) => Math.abs(r.amount - amount) <= Math.max(0.5, amount * 0.01)
+      && (r.loanCategory || (lender && r.name.includes(lender))));
+  };
   for (const d of debts) {
     if (d.type !== 'debt' || d.status === 'paid' || d.status === 'cancelled') continue;
+    if (d.forecastIgnored) continue; // l'utilisateur a demandé à ne pas la compter dans la prévision (vieille dette oubliée…)
     const installments = unpaidInstallments(d, debtPayments, todayStr, ZERO_DECIMAL_CURRENCIES.has(d.currency) ? 0 : 2);
     let dues;
     if (installments.length) {
@@ -969,7 +997,7 @@ export async function computeEndOfMonthForecast() {
       dues = left > 0.005 ? [{ date: d.dueDate, amount: toBase(left, d.currency, rates, baseCurrency), scheduled: false }] : [];
     } else dues = [];
     for (const due of dues) {
-      if (due.scheduled && coveredByRecurring(due.amount)) continue;
+      if (due.scheduled && coveredByRecurring(due.amount, d)) continue;
       projected -= due.amount;
       upcoming.push({ name: d.personName, type: 'expense', nextDate: due.date, amountBase: due.amount, isDebt: true });
     }

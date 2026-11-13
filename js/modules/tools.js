@@ -6,7 +6,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, getSetting } from '../db.js';
-import { computeMonthSummary, computeLiquidBalance, computeNetWorth, detectRecurringCandidates } from '../ledger.js';
+import { computeMonthSummary, computeLiquidBalance, computeNetWorth, detectRecurringCandidates, markExceptionalTransactions, isExceptionalExpense, isInvestmentMovementExcluded } from '../ledger.js';
 import { formatCurrency, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, convertAmount, localISODate, intlLocale } from '../utils.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour un outil (objet
 // {html, wire}) dans renderTools() et pour une transaction dans renderAnomalyTool() — même piège
@@ -260,7 +260,8 @@ async function renderSubscriptionsTool() {
 
 /* ---------- 6. Analyse des habitudes & détection d'anomalies ---------- */
 async function renderAnomalyTool() {
-  const [wallets, transactions] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.TRANSACTIONS)]);
+  const [wallets, transactions, categories] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.TRANSACTIONS), dbGetAll(STORES.CATEGORIES)]);
+  markExceptionalTransactions(transactions, categories);
   const walletCurrency = Object.fromEntries(wallets.map((w) => [w.id, w.currency]));
   const { rates, baseCurrency } = await getExchangeRatesSafe();
 
@@ -271,6 +272,9 @@ async function renderAnomalyTool() {
   const dailyTotals = new Map();
   for (const t of transactions) {
     if (t.type !== 'expense' || !t.date || t.date < cutoffStr) continue;
+    // Mêmes exclusions que les autres agrégats de dépenses : un remboursement de dette, un apport d'investissement ou une
+    // dépense exceptionnelle (un voyage) n'est pas une habitude — il ressortait comme « jour anormal » et gonflait l'écart-type.
+    if (t.debtId || isInvestmentMovementExcluded(t) || isExceptionalExpense(t)) continue;
     const amt = convertAmount(t.amount, walletCurrency[t.walletId] || baseCurrency, baseCurrency, rates, baseCurrency);
     dailyTotals.set(t.date, (dailyTotals.get(t.date) || 0) + amt);
   }

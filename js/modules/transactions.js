@@ -10,7 +10,7 @@ import { openSmsImportModal, initSmsImport } from './sms-import.js';
 import { isVoiceSupported, listenOnce, parseSpokenEntry } from '../voice-input.js';
 import { getTemplates, addTemplate, removeTemplate, computeFrequentSuggestions } from '../quick-templates.js';
 import { getEnrichedTransactions, guessCategoryId, checkUnusualExpense, isDailyWallet } from '../ledger.js';
-import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast, safeNumber, compressImageBlob, ZERO_DECIMAL_CURRENCIES } from '../utils.js';
+import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast, safeNumber, compressImageBlob, ZERO_DECIMAL_CURRENCIES, onceSubmit } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { extractReceiptDataFromImage } from '../ocr.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
@@ -48,9 +48,10 @@ function transactionLinkKind(t) {
   if (t.investmentId) return 'investment';
   if (t.tontineId) return 'tontine';
   if (t.sharedExpenseId) return 'shared';
+  if (t.projectId) return 'project'; // participation à un projet collectif (group-projects.js) : montant repris dans le projet
   return null;
 }
-const LINK_KIND_LABELS = { debt: 'une dette ou créance', investment: 'un investissement', tontine: 'une tontine', shared: 'une dépense partagée' };
+const LINK_KIND_LABELS = { debt: 'une dette ou créance', investment: 'un investissement', tontine: 'une tontine', shared: 'une dépense partagée', project: 'un projet collectif' };
 
 export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null, prefill = null } = {}) {
   document.querySelectorAll('#modal-root .modal-backdrop[data-modal="quick-add"]').forEach((el) => el.remove());
@@ -263,7 +264,15 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     return false;
   };
   function refreshExceptionalRow() {
-    exceptionalRow.hidden = currentType !== 'expense' || splitMode;
+    // Caché pour une transaction liée (intérêts de prêt…) : le choix y serait ignoré sans le dire.
+    exceptionalRow.hidden = !!lockedLink || currentType !== 'expense' || splitMode;
+  }
+  /** La case suit la catégorie tant que l'utilisateur n'y a pas touché. À rappeler chaque fois que le CODE change la
+      catégorie (auto-catégorisation d'après la note, favoris, changement de type) : un `change` posé par programme ne
+      déclenche pas l'écouteur du <select>, et la case restait alors décochée — la dépense était enregistrée comme
+      « courante » alors que sa catégorie est exceptionnelle. */
+  function syncExceptionalFromCategory() {
+    if (!exceptionalTouchedByUser) exceptionalBox.checked = categoryIsExceptional(categorySelect.value);
   }
   exceptionalBox.addEventListener('change', () => { exceptionalTouchedByUser = true; });
 
@@ -300,6 +309,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     // arrivent et sélectionnent la première (la catégorie changeait en silence à chaque modification).
     if (type === 'transfer') return Promise.resolve();
     return populateCategories().then(() => {
+      syncExceptionalFromCategory(); // la liste vient d'être refaite : la catégorie est revenue à « Choisir »
       splitList.querySelectorAll('.split-category').forEach((sel) => {
         const prevVal = sel.value;
         sel.innerHTML = splitCategoryOptions();
@@ -315,7 +325,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
   let categoryTouchedByUser = !!editTransaction;
   categorySelect.addEventListener('change', () => {
     categoryTouchedByUser = true;
-    if (!exceptionalTouchedByUser) exceptionalBox.checked = categoryIsExceptional(categorySelect.value);
+    syncExceptionalFromCategory();
   });
 
   async function suggestCategoryFromNote() {
@@ -324,6 +334,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     const categoryId = await guessCategoryId(note, currentType);
     if (categoryId && categorySelect.querySelector(`option[value="${escapeHtml(categoryId)}"]`)) {
       categorySelect.value = categoryId;
+      syncExceptionalFromCategory();
     }
   }
   let suggestDebounce = null;
@@ -359,6 +370,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       categorySelect.value = tpl.categoryId;
       categoryTouchedByUser = true;
     }
+    syncExceptionalFromCategory();
     form.elements.note.value = tpl.note || '';
     form.elements.amount.value = tpl.amount > 0 ? String(tpl.amount) : '';
     (tpl.amount > 0 ? form.querySelector('button[type="submit"]') : form.elements.amount).focus();
@@ -499,7 +511,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
     }
   })();
 
-  form.addEventListener('submit', async (e) => {
+  onceSubmit(form, async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     const type = currentType;
@@ -571,10 +583,14 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
       reconciled: editTransaction?.reconciled || false,
       createdAt: editTransaction?.createdAt || new Date().toISOString(),
     };
-    // Dépense exceptionnelle : n'est mémorisée que si le choix diffère du défaut de la catégorie (voir plus haut).
+    // Dépense exceptionnelle : un choix EXPLICITE n'est mémorisé que si l'utilisateur a touché la case (ou en avait déjà
+    // un à l'ouverture) ET qu'il diffère du défaut de la catégorie. Sinon la transaction suit sa catégorie — jamais un
+    // `false` déduit d'une case restée décochée, qui annulait silencieusement une catégorie exceptionnelle.
     // delete (pas `= undefined`) : le record remplace l'ancien et reprend ses champs, y compris un ancien choix.
-    if (type === 'expense' && !lockedLink && exceptionalBox.checked !== categoryIsExceptional(record.categoryId)) record.exceptional = exceptionalBox.checked;
-    else if (!lockedLink) delete record.exceptional;
+    if (!lockedLink) {
+      if (type === 'expense' && exceptionalTouchedByUser && exceptionalBox.checked !== categoryIsExceptional(record.categoryId)) record.exceptional = exceptionalBox.checked;
+      else delete record.exceptional;
+    }
     // min="0" sur le champ laisse passer 0 : une transaction à 0 ne veut rien dire et pollue la liste.
     if (!(record.amount > 0)) { showToast(tr('Saisissez un montant supérieur à 0.')); return; }
     const before = editTransaction ? { ...editTransaction } : null;

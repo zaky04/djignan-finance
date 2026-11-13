@@ -202,6 +202,29 @@ export function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+/** Montant pour un texte que le mode discret ne peut PAS masquer (le contenu d'un <option> est ignoré par privacy.js :
+    on ne peut pas y glisser d'élément). En mode discret on écrit des points à la place du montant. */
+export function amountForOption(amount, currency) {
+  return document.body?.dataset?.privacy === 'hidden' ? '•••••' : formatCurrency(amount, currency);
+}
+
+/** Garde-fou contre la double soumission d'un formulaire (double tape sur mobile, Entrée + clic) : tant qu'un envoi est en
+    cours, un second est ignoré. Sans lui, deux gestionnaires `submit` s'exécutaient en parallèle et enregistraient deux fois
+    le même remboursement ou le même prêt (vérifié : deux paiements pour un seul formulaire). */
+export function once(handler) {
+  let busy = false;
+  return async (e) => {
+    if (busy) { e?.preventDefault?.(); return undefined; }
+    busy = true;
+    try { return await handler(e); } finally { busy = false; }
+  };
+}
+
+/** `form.addEventListener('submit', once(handler))`, en plus lisible aux endroits où le gestionnaire est long. */
+export function onceSubmit(form, handler) {
+  form.addEventListener('submit', once(handler));
+}
+
 /** Toast simple, auto-disparaissant. */
 /** Toast simple, ou avec une action (ex: "Annuler") si actionLabel/onAction sont fournis. */
 export function showToast(message, { duration = 3000, actionLabel = null, onAction = null } = {}) {

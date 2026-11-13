@@ -9,11 +9,11 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbAdd, dbWriteBatch, logAudit, getSetting } from '../db.js';
-import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, confirmDialog, showToast, safeNumber, currencySelectHtml, wireCurrencySelect, readCurrencyValue } from '../utils.js';
+import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, confirmDialog, showToast, safeNumber, currencySelectHtml, wireCurrencySelect, readCurrencyValue, onceSubmit, amountForOption } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { isDailyWallet } from '../ledger.js';
 import { ensureDebtCategoryId, deleteDebtCascade } from './debts.js';
-import { projectTotals, knownContributors } from '../group-project.js';
+import { projectTotals, knownContributors, sanitizeProjects } from '../group-project.js';
 import { t } from '../i18n.js';
 import { icon as svgIcon } from '../icons.js';
 
@@ -22,8 +22,7 @@ const DELETE_ICON = svgIcon('trash', 16);
 const SETTING_KEY = 'groupProjects';
 
 async function loadProjects() {
-  const value = await getSetting(SETTING_KEY, []);
-  return Array.isArray(value) ? value : [];
+  return sanitizeProjects(await getSetting(SETTING_KEY, []));
 }
 /** Écriture des projets, à joindre à un lot dbWriteBatch (atomique avec les transactions/dettes créées en même temps). */
 const projectsOp = (projects) => ({ store: STORES.SETTINGS, type: 'put', value: { key: SETTING_KEY, value: projects } });
@@ -137,7 +136,7 @@ async function openProjectModal(project = null) {
     </form>`, { title: project ? t('Modifier le projet') : t('Nouveau projet collectif') });
   if (!project) wireCurrencySelect(modal.el);
   const form = modal.el.querySelector('#project-form');
-  form.addEventListener('submit', async (e) => {
+  onceSubmit(form, async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     const name = String(fd.get('name') || '').trim().slice(0, 60);
@@ -201,7 +200,7 @@ async function openContributionModal(project, allProjects) {
             </select></div>
           <div class="form-row" data-field="lenderName"><label>${t('Nom du prêteur')}</label><input type="text" name="lenderName" maxlength="60"></div>
           <div class="form-row" data-field="keptRow" hidden><label>${t('Compte gardé')}</label>
-            <select name="keptAccountId">${keptChoices.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.ownerName)} — ${formatCurrency(keptBalance(a, keptEntries), a.currency)}</option>`).join('')}</select>
+            <select name="keptAccountId">${keptChoices.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.ownerName)} — ${amountForOption(keptBalance(a, keptEntries), a.currency)}</option>`).join('')}</select>
             <p class="fs-12 c-muted mt-6">${t("L'argent sort de ce compte (son solde baisse) et y revient à chaque remboursement. Il reste hors de votre patrimoine ; la dette, elle, y est.")}</p></div>
           <div class="form-row"><label>${t("Taux d'intérêt annuel % (optionnel)")}</label><input type="number" step="0.01" min="0" name="interestRate"></div>
           <div class="form-row"><label>${t('Échéance (optionnel)')}</label><input type="date" name="dueDate"></div>
@@ -236,7 +235,7 @@ async function openContributionModal(project, allProjects) {
   form.elements.lender.addEventListener('change', refresh);
   refresh();
 
-  form.addEventListener('submit', async (e) => {
+  onceSubmit(form, async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     const amount = safeNumber(parseFloat(fd.get('amount')));
@@ -319,6 +318,10 @@ async function openContributionModal(project, allProjects) {
 
 /* ---------- Suppressions ---------- */
 async function deleteContribution(project, projects, contributionId) {
+  // Relecture : la liste reçue date du dernier affichage ; écrire à partir d'elle pourrait écraser un changement récent.
+  projects = await loadProjects();
+  project = projects.find((p) => p.id === project.id);
+  if (!project) return;
   const contribution = (project.contributions || []).find((c) => c.id === contributionId);
   if (!contribution) return;
   const real = contribution.kind !== 'other';
@@ -347,6 +350,9 @@ async function deleteContribution(project, projects, contributionId) {
 }
 
 async function deleteProject(project, projects) {
+  projects = await loadProjects();
+  project = projects.find((p) => p.id === project.id);
+  if (!project) return;
   const real = (project.contributions || []).some((c) => c.kind !== 'other');
   const ok = await confirmDialog(
     real

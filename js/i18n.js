@@ -490,6 +490,8 @@ const EN = {
     "a tontine",
   "une dépense partagée":
     "a shared expense",
+  "un projet collectif":
+    "a group project",
   "Cette catégorie a des sous-catégories : elle ne peut pas devenir elle-même une sous-catégorie.":
     "This category has sub-categories: it can't become a sub-category itself.",
   "Le type ne peut plus changer : cette catégorie a des sous-catégories ou des transactions.":
@@ -2106,6 +2108,24 @@ const EN = {
   'Remboursement du prêt par {name}': 'Loan repayment by {name}',
   'moi': 'me',
   "Ce mouvement vient d'un prêt : modifiez le prêt ou son remboursement depuis Dettes & créances.": 'This entry comes from a loan: edit the loan or its repayment from Debts & receivables.',
+
+  /* ---- Troisième revue : logique sur la durée ---- */
+  'Ne pas compter cette dette dans la prévision et le reste à vivre': 'Do not count this debt in the forecast and safe-to-spend',
+  "Pour une vieille dette en retard que vous ne comptez plus régler : sans cela, elle réduit votre reste à vivre indéfiniment. Elle reste visible ici et dans le patrimoine.": 'For an old overdue debt you no longer plan to pay: without this, it lowers your safe-to-spend indefinitely. It stays visible here and in net worth.',
+  'Ignorée dans la prévision et le reste à vivre': 'Ignored in the forecast and safe-to-spend',
+  'Il ne paiera pas : abandonner sa part (ou une partie)': "They won't pay: write off their share (or part of it)",
+  "Aucun argent ne bouge : la créance sur lui baisse, et c'est une perte pour vous (vous devez toujours tout au prêteur).": 'No money moves: the receivable from them drops, and it is a loss for you (you still owe everything to the lender).',
+  'Part abandonnée (prêt partagé)': 'Share written off (shared loan)',
+  'abandonné : {amount}': 'written off: {amount}',
+
+  /* ---- Deuxième revue ---- */
+  'Trop de participants : 300 au maximum.': 'Too many participants: 300 at most.',
+
+  /* ---- Corrections de la revue : prêts de projet, catégorie exceptionnelle ---- */
+  "Ce prêt a été créé par un projet collectif : le montant, la date, la devise et le type ne se modifient pas ici (ils sont repris dans le projet, la dépense et le compte gardé). Pour les changer, retirez la participation depuis Partage de dépenses.": 'This loan was created by a group project: the amount, date, currency and type cannot be changed here (they are repeated in the project, the expense and the managed account). To change them, remove the contribution from Shared expenses.',
+  'Ce prêt appartient à un projet collectif : le montant, la date, la devise et le type se changent depuis le projet.': 'This loan belongs to a group project: the amount, date, currency and type are changed from the project.',
+  'Ce prêt appartient à un projet collectif : retirez la participation depuis Partage de dépenses.': 'This loan belongs to a group project: remove the contribution from Shared expenses.',
+  '« {name} » est exceptionnelle : {count} dépense(s) déjà saisie(s) sortent du suivi mensuel et ses budgets sont ignorés (ils reviennent si vous décochez).': '"{name}" is exceptional: {count} expense(s) already entered leave the monthly tracking and its budgets are ignored (they come back if you untick it).',
 
   /* ---- Bilan annuel : dépenses exceptionnelles ---- */
   'Total réellement dépensé : {amount}': 'Total actually spent: {amount}',

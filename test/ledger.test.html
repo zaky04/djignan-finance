@@ -438,11 +438,24 @@ async function runTests() {
   await dbAdd(STORES.DEBTS, loan);
   const fcLoan = await computeEndOfMonthForecast();
   assertEqual('prévision : toutes les mensualités restantes jusqu\'à fin de mois sont retirées (en retard comprises)', fcLoan.projected - fcBase.projected, -dueRows.reduce((s, r) => s + r.payment, 0), 0.05);
-  // Une récurrence de dépense du même montant est supposée déjà couvrir la mensualité : pas de double comptage.
-  await dbAdd(STORES.RECURRING, { id: 'rec-loan', name: 'Mensualité prêt', type: 'expense', active: true, walletId: 'w1', amount: dueRows[0].payment, frequency: 'monthly', nextDate: '2099-01-01' });
+  // Une récurrence de même montant ET liée à ce prêt (nom du prêteur) couvre la mensualité : pas de double comptage.
+  await dbAdd(STORES.RECURRING, { id: 'rec-loan', name: 'Mensualité Prêt mensualisé', type: 'expense', active: true, walletId: 'w1', amount: dueRows[0].payment, frequency: 'monthly', nextDate: '2099-01-01' });
   const fcCovered = await computeEndOfMonthForecast();
-  assertEqual('prévision : une récurrence du même montant évite de compter deux fois la mensualité', fcCovered.projected - fcBase.projected, 0, 0.05);
+  assertEqual('prévision : une récurrence du même montant ET du même prêteur évite de compter deux fois la mensualité', fcCovered.projected - fcBase.projected, 0, 0.05);
   await dbm.dbDelete(STORES.RECURRING, 'rec-loan');
+  // 3e revue : un loyer de même montant mais SANS rapport avec le prêt ne doit plus faire disparaître la réserve.
+  await dbAdd(STORES.RECURRING, { id: 'rec-rent', name: 'Loyer', type: 'expense', active: true, walletId: 'w1', amount: dueRows[0].payment, frequency: 'monthly', nextDate: '2099-01-01' });
+  const fcRent = await computeEndOfMonthForecast();
+  assertEqual('prévision : une récurrence de même montant mais sans lien avec le prêt ne couvre PAS la mensualité', fcRent.projected - fcBase.projected, -dueRows.reduce((s, r) => s + r.payment, 0), 0.05);
+  await dbm.dbDelete(STORES.RECURRING, 'rec-rent');
+  // Une récurrence dans la catégorie « Prêt » couvre, quel que soit son nom.
+  await dbAdd(STORES.CATEGORIES, { id: 'cat-pret', name: 'Prêt', type: 'expense' });
+  await dbAdd(STORES.RECURRING, { id: 'rec-cat', name: 'Virement mensuel', type: 'expense', active: true, walletId: 'w1', categoryId: 'cat-pret', amount: dueRows[0].payment, frequency: 'monthly', nextDate: '2099-01-01' });
+  assertEqual('prévision : une récurrence de la catégorie « Prêt » et de même montant couvre la mensualité', (await computeEndOfMonthForecast()).projected - fcBase.projected, 0, 0.05);
+  await dbm.dbDelete(STORES.RECURRING, 'rec-cat');
+  // Dette que l'utilisateur ne veut plus voir dans la prévision.
+  await dbm.dbPut(STORES.DEBTS, { ...loan, forecastIgnored: true });
+  assertEqual('prévision : une dette marquée « ignorée » ne pèse plus sur le solde prévisionnel', (await computeEndOfMonthForecast()).projected - fcBase.projected, 0, 0.05);
   await dbm.dbDelete(STORES.DEBTS, 'dm2');
 
   // --- Bilan annuel : total des exceptionnelles de l'année ---
@@ -473,6 +486,64 @@ async function runTests() {
   assertEqual('projet : objectif dépassé = reste négatif', projectTotals({ ...trip, target: 1000000 }).remaining, -700000);
   assertEqual('projet : noms connus (sans moi, sans doublon)', knownContributors([trip]).join(','), 'Awa,Moussa');
   assertEqual('projet : sans participation, rien collecté', projectTotals({ target: 500, contributions: [] }).collected, 0);
+
+  // --- Revue : budgets d'une catégorie exceptionnelle ignorés (le budget ne reste pas réservé pour rien) ---
+  const { exceptionalCategoryIds } = await import('../js/ledger.js');
+  await dbAdd(STORES.BUDGETS, { id: 'b-trip', categoryId: 'cx-trip', month: '2027-03', limit: 777 });
+  const marchRows = await computeBudgetVsActual('2027-03');
+  assertTrue('budgets : le budget d\'une catégorie exceptionnelle est ignoré', !marchRows.some((r) => r.categoryId === 'cx-trip'));
+  assertTrue('budgets : le budget d\'une catégorie normale reste (Alimentation)', marchRows.some((r) => r.categoryId === 'c1'));
+  assertEqual('budgets : le reste à vivre ne réserve rien pour la catégorie exceptionnelle', computeSafeToSpend({ current: 1000, upcoming: [] }, marchRows).reservedBudget, 800);
+  assertEqual('catégories : une sous-catégorie hérite du statut exceptionnel', [...exceptionalCategoryIds([{ id: 'p', exceptional: true }, { id: 'k', parentId: 'p' }, { id: 'n' }])].sort().join(','), 'k,p');
+
+  // --- Revue : projets collectifs, fusion à l'import et données corrompues ---
+  const { mergeProjectLists, sanitizeProjects } = await import('../js/group-project.js');
+  assertEqual('sanitizeProjects : un élément nul ou sans identifiant est ignoré', sanitizeProjects([null, { name: 'x' }, { id: 'ok', contributions: 'oops' }]).map((p) => `${p.id}:${p.contributions.length}`).join(','), 'ok:0');
+  const merged = mergeProjectLists(
+    [{ id: 'a', name: 'Local', target: 10, contributions: [{ id: '1', amount: 1 }] }],
+    [{ id: 'a', name: 'Importé', target: 99, contributions: [{ id: '1', amount: 1 }, { id: '2', amount: 2 }] }, { id: 'b', name: 'Autre', target: 5, contributions: [] }],
+  );
+  assertEqual('fusion : même projet = version locale + participations nouvelles', `${merged[0].name}:${merged[0].target}:${merged[0].contributions.length}`, 'Local:10:2');
+  assertEqual('fusion : un projet absent en local est ajouté', merged.map((p) => p.id).join(','), 'a,b');
+  await setSetting('groupProjects', [{ id: 'local1', name: 'Projet local', target: 100, currency: 'XOF', contributions: [] }]);
+  await importAllData({ stores: { [STORES.SETTINGS]: [{ key: 'groupProjects', value: [{ id: 'imp1', name: 'Projet importé', target: 5, currency: 'XOF', contributions: [] }] }] } }, { merge: true });
+  const afterImport = (await dbGetAll(STORES.SETTINGS)).find((r) => r.key === 'groupProjects')?.value || [];
+  assertEqual('import en fusion : les projets locaux ne sont plus écrasés', afterImport.map((p) => p.id).sort().join(','), 'imp1,local1');
+  await importAllData({ stores: { [STORES.SETTINGS]: [{ key: 'groupProjects', value: [{ id: 'imp1', name: 'Projet importé', target: 5, currency: 'XOF', contributions: [] }] }] } }, { merge: false });
+  const afterReplace = (await dbGetAll(STORES.SETTINGS)).find((r) => r.key === 'groupProjects')?.value || [];
+  assertEqual('import en remplacement : la liste devient celle de la sauvegarde', afterReplace.map((p) => p.id).join(','), 'imp1');
+
+  // --- 2e revue : saisie des participants et double soumission ---
+  const { parseAmountText, MAX_PARTICIPANTS } = await import('../js/shared-loan.js');
+  assertEqual('montant : « 50.000 » = cinquante mille (milliers à la française), pas 50', parseAmountText('50.000'), 50000);
+  assertEqual('montant : « 1,234,567 » = un million deux cent trente-quatre mille…', parseAmountText('1,234,567'), 1234567);
+  assertEqual('montant : « 50 000 » avec espace', parseAmountText('50 000'), 50000);
+  assertEqual('montant : « 12,5 » reste une virgule décimale', parseAmountText('12,5'), 12.5);
+  assertEqual('participants : « Awa : 50.000 » = 50 000', parseParticipants('Awa : 50.000', 300000, 0).participants[0].share, 50000);
+  assertEqual('participants : plus de 300 lignes refusées', parseParticipants(Array.from({ length: MAX_PARTICIPANTS + 1 }, (_, i) => 'N' + i).join('\n'), 1000, 0).error, 'too-many');
+  // --- 3e revue : part abandonnée d'un participant (sans annuler toute la dette) ---
+  const wDebt = { id: 'dw', type: 'debt', principal: 900, startDate: '2026-01-01', status: 'active', participants: [{ id: 'a', name: 'Awa', share: 300 }, { id: 'b', name: 'Moussa', share: 300 }], waived: [{ id: 'w1', participantId: 'a', amount: 300, date: '2026-05-01' }] };
+  assertEqual('abandon : la part abandonnée par Awa ne lui est plus comptée (reste 300 pour Moussa)', participantReceivablesAsOf(wDebt, []), 300);
+  assertEqual('abandon : le statut d\'Awa garde sa trace (abandonné 300, reste 0)', `${participantStatuses(wDebt, [])[0].waived}/${participantStatuses(wDebt, [])[0].owed}`, '300/0');
+  assertEqual('abandon : avant la date d\'abandon, la part est encore due', participantReceivablesAsOf(wDebt, [], '2026-04-01'), 600);
+  assertEqual('abandon : un abandon partiel (100 sur 300) laisse 200', participantReceivablesAsOf({ ...wDebt, waived: [{ id: 'w2', participantId: 'a', amount: 100, date: '2026-05-01' }] }, []), 500);
+  // --- 3e revue : suggestions de budget — pas de suggestion pour une catégorie exceptionnelle ---
+  await dbAdd(STORES.CATEGORIES, { id: 'cat-school-x', name: 'Scolarité (test)', type: 'expense', exceptional: true });
+  await dbAdd(STORES.RECURRING, { id: 'rec-school-x', name: 'Frais de scolarité', type: 'expense', active: true, walletId: 'w1', categoryId: 'cat-school-x', amount: 75, frequency: 'monthly', nextDate: '2099-01-01' });
+  await dbAdd(STORES.CATEGORIES, { id: 'cat-ctl-x', name: 'Témoin normal (test)', type: 'expense' });
+  await dbAdd(STORES.RECURRING, { id: 'rec-ctl-x', name: 'Abonnement témoin', type: 'expense', active: true, walletId: 'w1', categoryId: 'cat-ctl-x', amount: 75, frequency: 'monthly', nextDate: '2099-01-01' });
+  const suggAfter = await computeBudgetSuggestions('2026-12');
+  assertTrue('suggestions : (témoin) une catégorie normale avec la même récurrence est bien suggérée', suggAfter.rows.some((r) => r.categoryId === 'cat-ctl-x'), `insufficient=${suggAfter.insufficient}`);
+  assertTrue('suggestions : aucune pour une catégorie exceptionnelle, même avec une récurrence', !suggAfter.rows.some((r) => r.categoryId === 'cat-school-x'));
+  await dbm.dbDelete(STORES.RECURRING, 'rec-school-x'); await dbm.dbDelete(STORES.RECURRING, 'rec-ctl-x');
+  const t0 = performance.now(); parseParticipants('Awa' + ' '.repeat(100000) + 'x', 1000, 0);
+  assertTrue('participants : une ligne géante ne fige pas l\'analyse (< 50 ms)', performance.now() - t0 < 50, `${Math.round(performance.now() - t0)} ms`);
+  const { once } = await import('../js/utils.js');
+  let runs = 0; const guarded = once(async () => { runs++; await new Promise((r) => setTimeout(r, 20)); });
+  await Promise.all([guarded({ preventDefault() {} }), guarded({ preventDefault() {} })]);
+  assertEqual('once : une double soumission simultanée ne s\'exécute qu\'une fois', runs, 1);
+  await guarded({ preventDefault() {} });
+  assertEqual('once : une soumission ultérieure repasse normalement', runs, 2);
 
   render();
 }

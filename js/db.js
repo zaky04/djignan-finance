@@ -6,6 +6,7 @@
    ========================================================================== */
 
 import { DEFAULT_CATEGORY_LOOK } from './icons.js';
+import { mergeProjectLists } from './group-project.js';
 
 // Le nom de la base est normalement fixe ; le seul point d'extension est un test dédié
 // (test/ledger.test.html) qui pose ce global AVANT d'importer ce module pour rediriger toutes
@@ -395,6 +396,15 @@ export async function importAllData(data, { merge = false } = {}) {
     plan.push({ store, rows: cleaned });
   }
   if (!plan.length) return;
+  // Mode « fusionner » : les projets collectifs (un seul réglage contenant toute la liste) sont réunis par identifiant au
+  // lieu d'être remplacés en bloc par ceux de la sauvegarde — sinon importer une sauvegarde effaçait les projets locaux.
+  if (merge) {
+    const settingsPlan = plan.find((p) => p.store === STORES.SETTINGS);
+    if (settingsPlan && settingsPlan.rows.some((r) => r.key === 'groupProjects')) {
+      const localProjects = (await dbGetAll(STORES.SETTINGS)).find((r) => r.key === 'groupProjects')?.value;
+      settingsPlan.rows = settingsPlan.rows.map((r) => (r.key === 'groupProjects' ? { ...r, value: mergeProjectLists(localProjects, r.value) } : r));
+    }
+  }
   // Remplacement complet : les réglages propres à CET appareil (PIN, biométrie, mot de passe de la
   // sauvegarde cloud automatique, rappels Android — voir DEVICE_LOCAL_SETTING_KEYS) ne viennent jamais
   // d'une sauvegarde, donc ne doivent pas être effacés avec le reste : sans ça, restaurer une sauvegarde

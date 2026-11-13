@@ -7,7 +7,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, dbWriteBatch, logAudit, getSetting } from '../db.js';
-import { computeCategoryActuals, computeEndOfMonthForecast, computeEnvelopeCarryover, computeAnnualCategoryActuals, computeBudgetSuggestions, isDailyWallet } from '../ledger.js';
+import { computeCategoryActuals, computeEndOfMonthForecast, computeEnvelopeCarryover, computeAnnualCategoryActuals, computeBudgetSuggestions, isDailyWallet, exceptionalCategoryIds } from '../ledger.js';
 import { ensureInvestmentCategoryId, wireWalletSplit } from './investments.js';
 import { renderProvisionsTab } from './provisions.js';
 import {
@@ -443,6 +443,16 @@ function openCategoryModal(category = null, presetParentId = null, presetType = 
     await logAudit({ entityType: 'category', entityId: record.id, action: category ? 'update' : 'create', before, after: record });
     modal.close();
     showToast(category ? t('Catégorie mise à jour.') : t('Catégorie créée.'));
+    // Catégorie qui devient « exceptionnelle » alors qu'elle a déjà un historique : dire ce que ça change, pour ne pas
+    // laisser croire que le budget ou les dépenses du mois ont disparu par erreur.
+    if (category && record.exceptional && !category.exceptional) {
+      const [txs, budgetRows] = await Promise.all([dbGetAll(STORES.TRANSACTIONS), dbGetAll(STORES.BUDGETS)]);
+      const count = txs.filter((x) => x.type === 'expense' && x.categoryId === record.id && typeof x.exceptional !== 'boolean').length;
+      const hasBudgets = budgetRows.some((b) => b.categoryId === record.id);
+      if (count > 0 || hasBudgets) {
+        showToast(t('« {name} » est exceptionnelle : {count} dépense(s) déjà saisie(s) sortent du suivi mensuel et ses budgets sont ignorés (ils reviennent si vous décochez).', { name: record.name, count }), { duration: 8000 });
+      }
+    }
     notifyDataChanged('categories');
   });
 }
@@ -494,8 +504,18 @@ async function renderCategoriesTab(container) {
         // Une catégorie supprimée ne doit laisser derrière elle ni budget fantôme (limite sans catégorie),
         // ni règle d'auto-catégorisation qui continuerait à assigner une catégorie inexistante, ni
         // récurrence pointant dessus : on les nettoie dans la même transaction que la suppression.
-        const [allBudgets, allRules, allRecurring] = await Promise.all([dbGetAll(STORES.BUDGETS), dbGetAll(STORES.CATEGORIZATION_RULES), dbGetAll(STORES.RECURRING)]);
+        const [allBudgets, allRules, allRecurring, allTransactions] = await Promise.all([dbGetAll(STORES.BUDGETS), dbGetAll(STORES.CATEGORIZATION_RULES), dbGetAll(STORES.RECURRING), dbGetAll(STORES.TRANSACTIONS)]);
+        // Catégorie « exceptionnelle » (ou sous-catégorie d'une exceptionnelle) : ses dépenses SUIVENT la catégorie. Une fois
+        // celle-ci supprimée, elles ne la suivraient plus et redeviendraient d'un coup des dépenses courantes (un voyage de
+        // 800 000 faisait sauter les dépenses du mois). On leur colle donc le choix explicite avant de supprimer.
+        const wasExceptional = exceptionalCategoryIds(categories2).has(cat.id);
+        const stampExceptional = wasExceptional
+          ? allTransactions
+            .filter((x) => x.type === 'expense' && x.categoryId === cat.id && typeof x.exceptional !== 'boolean')
+            .map((x) => ({ store: STORES.TRANSACTIONS, type: 'put', value: { ...x, exceptional: true } }))
+          : [];
         await dbWriteBatch([
+          ...stampExceptional,
           { store: STORES.CATEGORIES, type: 'delete', value: cat.id },
           ...allBudgets.filter((x) => x.categoryId === cat.id).map((x) => ({ store: STORES.BUDGETS, type: 'delete', value: x.id })),
           ...allRules.filter((x) => x.categoryId === cat.id).map((x) => ({ store: STORES.CATEGORIZATION_RULES, type: 'delete', value: x.id })),

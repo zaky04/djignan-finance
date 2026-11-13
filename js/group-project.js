@@ -41,6 +41,33 @@ export function projectTotals(project) {
   };
 }
 
+/** Liste de projets lisible quoi qu'il y ait dans le réglage (sauvegarde corrompue ou forgée) : les éléments qui ne sont
+    pas des objets à identifiant texte sont ignorés, et `contributions` est toujours un tableau d'objets. Sans cela, un seul
+    élément nul faisait planter tout l'écran « Partage de dépenses ». */
+export function sanitizeProjects(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((p) => p && typeof p === 'object' && !Array.isArray(p) && typeof p.id === 'string' && p.id)
+    .map((p) => ({ ...p, contributions: (Array.isArray(p.contributions) ? p.contributions : []).filter((c) => c && typeof c === 'object' && typeof c.id === 'string') }));
+}
+
+/** Fusion de deux listes de projets (import en mode « fusionner ») : les projets sont réunis par identifiant. Pour un
+    projet présent des deux côtés, la version locale (nom, objectif) est gardée et on y ajoute les participations qu'elle
+    n'avait pas encore. Avant, la sauvegarde importée REMPLAÇAIT toute la liste locale (un seul réglage = tout écrasé). */
+export function mergeProjectLists(local, imported) {
+  const mine = sanitizeProjects(local);
+  const theirs = sanitizeProjects(imported);
+  const byId = new Map(mine.map((p) => [p.id, p]));
+  for (const p of theirs) {
+    const existing = byId.get(p.id);
+    if (!existing) { byId.set(p.id, p); continue; }
+    const known = new Set(existing.contributions.map((c) => c.id));
+    const extra = p.contributions.filter((c) => !known.has(c.id));
+    if (extra.length) byId.set(p.id, { ...existing, contributions: [...existing.contributions, ...extra] });
+  }
+  return [...byId.values()];
+}
+
 /** Noms déjà utilisés dans tous les projets (hors moi), pour la saisie rapide d'une participation. */
 export function knownContributors(projects) {
   const seen = new Map();

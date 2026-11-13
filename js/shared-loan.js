@@ -12,13 +12,26 @@
 
 const norm = (s) => String(s || '').trim().toLowerCase();
 
+export const MAX_PARTICIPANTS = 300;
+
+/** Montant écrit à la main : « 50000 », « 50 000 », « 50.000 » (séparateur de milliers à la française, groupes de 3 chiffres),
+    « 1,234,567 » ou « 12,5 » (virgule décimale). Avant, « 50.000 » donnait 50 — une perte de magnitude silencieuse. */
+export function parseAmountText(raw) {
+  const s = String(raw || '').replace(/\s/g, '');
+  if (/^\d{1,3}([.,]\d{3})+$/.test(s)) return Number(s.replace(/[.,]/g, '')); // groupes de milliers
+  return Number(s.replace(',', '.'));
+}
+
 /** Analyse la liste saisie (une personne par ligne : « Nom » ou « Nom : montant ») et répartit le prêt.
     Les lignes sans montant se partagent, avec moi, ce qui reste après les montants fixés ; ma part est donc
     égale à la leur. `existing` (participants déjà enregistrés) permet de garder le même identifiant à un nom
     inchangé, pour ne pas perdre ce qu'il a déjà versé. Renvoie { participants, myShare } ou { error }. */
 export function parseParticipants(text, principal, decimals = 2, existing = []) {
-  const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // Une ligne ne dépasse jamais 200 caractères (un nom + un montant) : au-delà, l'analyse ci-dessous deviendrait lente sur un
+  // collage énorme (mesuré : 415 ms pour 40 000 espaces, croissance quadratique). Et au plus MAX_PARTICIPANTS lignes.
+  const lines = String(text || '').split(/\r?\n/).map((l) => l.trim().slice(0, 200)).filter(Boolean);
   if (!lines.length) return { participants: [], myShare: principal };
+  if (lines.length > MAX_PARTICIPANTS) return { error: 'too-many' };
   const factor = Math.pow(10, decimals);
   const round = (v) => Math.round(v * factor) / factor;
   const rows = [];
@@ -28,7 +41,7 @@ export function parseParticipants(text, principal, decimals = 2, existing = []) 
     if (!m && /[:=]/.test(line)) return { error: 'amount', line }; // « Awa : abc » : une faute de frappe, pas un nom
     const name = (m ? m[1] : line).trim().slice(0, 60);
     if (!name) return { error: 'name' };
-    const fixed = m ? Number(m[2].replace(/\s/g, '').replace(',', '.')) : null;
+    const fixed = m ? parseAmountText(m[2]) : null;
     if (m && !Number.isFinite(fixed)) return { error: 'amount', line };
     rows.push({ name, fixed });
   }
@@ -59,13 +72,18 @@ export function participantStatuses(debt, payments, cutoffDate = null) {
   if (!list.length) return [];
   const direct = payments.filter((p) => p.debtId === debt.id && p.source === 'participant' && (!cutoffDate || p.date <= cutoffDate));
   const handed = (debt.handedIn || []).filter((h) => !cutoffDate || h.date <= cutoffDate);
+  // Parts abandonnées (`debt.waived`) : le participant ne paiera pas (tout ou partie). La créance sur lui baisse sans qu'aucun
+  // argent ne bouge — c'est une perte pour moi, qui reste redevable de la dette entière envers le prêteur. Sans cela, la seule
+  // façon de ne plus compter une part impayée était d'annuler TOUTE la dette (qui efface toutes les parts d'un coup).
+  const waived = (debt.waived || []).filter((h) => !cutoffDate || h.date <= cutoffDate);
   const sum = (arr, id) => arr.filter((x) => x.participantId === id).reduce((s, x) => s + (Number(x.amount) || 0), 0);
   return list.map((p) => {
     const share = Number(p.share) || 0;
     const paidDirect = sum(direct, p.id);
     const paidHanded = sum(handed, p.id);
     const paid = paidDirect + paidHanded;
-    return { id: p.id, name: p.name, share, paidDirect, paidHanded, paid, owed: Math.max(0, share - paid) };
+    const waivedAmount = sum(waived, p.id);
+    return { id: p.id, name: p.name, share, paidDirect, paidHanded, paid, waived: waivedAmount, owed: Math.max(0, share - paid - waivedAmount) };
   });
 }
 

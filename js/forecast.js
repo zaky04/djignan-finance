@@ -64,6 +64,7 @@ export function buildCashflowForecast({ wallets = [], transactions = [], recurri
 
   // 2. Dettes et créances à échéance, pour ce qui reste dû.
   for (const d of debts) {
+    if (d.forecastIgnored) continue; // dette que l'utilisateur ne veut plus voir dans la prévision (vieille dette oubliée…)
     // Prêt à intérêts avec échéancier : chaque mensualité restante pèse à sa date (au lieu d'une seule échéance finale).
     const installments = unpaidInstallments(d, payments, today, ZERO_DECIMAL_CURRENCIES.has(d.currency) ? 0 : 2);
     if (installments.length) {
