@@ -41,6 +41,27 @@ export function projectTotals(project) {
   };
 }
 
+/** Le point du projet en texte, à envoyer sur WhatsApp ou par SMS à la famille : objectif, collecté, reste à couvrir et
+    « qui a payé combien ». `translate`, `format` (montant) et `formatDay` (date) sont fournis par l'appelant : le calcul reste
+    pur et testable. Ne contient que ce que l'utilisateur a saisi dans le projet. */
+export function projectAsText(project, { translate, format, formatDay, senderName = '', today = '' }) {
+  const totals = projectTotals(project);
+  const cur = project.currency;
+  const lines = [String(project.name || '')];
+  lines.push(translate('Objectif : {amount}', { amount: format(totals.target, cur) }));
+  lines.push(translate('Collecté : {amount} ({pct} %)', { amount: format(totals.collected, cur), pct: Math.round(totals.percent) }));
+  if (totals.remaining < -0.005) lines.push(translate('Objectif dépassé de {amount}', { amount: format(Math.abs(totals.remaining), cur) }));
+  else if (totals.remaining <= 0.005) lines.push(translate('Objectif atteint.'));
+  else lines.push(translate('Reste à couvrir : {amount}', { amount: format(totals.remaining, cur) }));
+  if (totals.byPerson.length) {
+    lines.push('', translate('Qui a payé combien'));
+    for (const p of totals.byPerson) lines.push(`• ${p.name || translate('Moi')} : ${format(p.total, cur)}`);
+  }
+  const footer = [today ? translate('Point au {date}', { date: formatDay(today) }) : '', senderName ? `— ${senderName}` : ''].filter(Boolean).join(' ');
+  if (footer) lines.push('', footer);
+  return lines.join('\n');
+}
+
 /** Liste de projets lisible quoi qu'il y ait dans le réglage (sauvegarde corrompue ou forgée) : les éléments qui ne sont
     pas des objets à identifiant texte sont ignorés, et `contributions` est toujours un tableau d'objets. Sans cela, un seul
     élément nul faisait planter tout l'écran « Partage de dépenses ». */

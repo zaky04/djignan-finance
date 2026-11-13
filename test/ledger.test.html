@@ -39,6 +39,7 @@ const {
   computeNetWorthComposition, computeEndOfMonthForecast, computeLiquidBalance, computeSavingsAllocations,
   isDailyWallet, walletUsage, withdrawalLockedUntil, computeSafeToSpend,
   markExceptionalTransactions, computeAnnualExceptionalExpenses,
+  explainSafeToSpend, computeExceptionalShare, EXCEPTIONAL_SHARE_WARNING_PCT,
 } = await import('../js/ledger.js');
 
 const results = [];
@@ -521,6 +522,35 @@ async function runTests() {
   assertEqual('montant : « 12,5 » reste une virgule décimale', parseAmountText('12,5'), 12.5);
   assertEqual('participants : « Awa : 50.000 » = 50 000', parseParticipants('Awa : 50.000', 300000, 0).participants[0].share, 50000);
   assertEqual('participants : plus de 300 lignes refusées', parseParticipants(Array.from({ length: MAX_PARTICIPANTS + 1 }, (_, i) => 'N' + i).join('\n'), 1000, 0).error, 'too-many');
+  // --- Améliorations : détail du reste à vivre, part des exceptionnelles, texte à partager ---
+  const sampleForecast = { current: 10000, upcoming: [
+    { name: 'Loyer', type: 'expense', nextDate: '2026-11-20', amountBase: 3000, categoryId: 'cA' },
+    { name: 'Banque', type: 'expense', nextDate: '2026-11-25', amountBase: 1500, isDebt: true },
+    { name: 'Salaire', type: 'income', nextDate: '2026-11-28', amountBase: 9000 },
+  ] };
+  const sampleRows = [{ categoryId: 'cA', label: 'Logement', budget: 4000, actual: 500 }, { categoryId: 'cB', label: 'Courses', budget: 2000, actual: 2500 }];
+  const explained = explainSafeToSpend(sampleForecast, sampleRows);
+  assertEqual('détail : les échéances de dépense sont listées (3000 + 1500), pas le revenu', explained.billsTotal, 4500);
+  assertEqual('détail : Logement 4000-500 = 3500 moins le loyer déjà compté (3000) = 500 ; Courses dépassé = 0', explained.reservedTotal, 500);
+  assertEqual('détail : une seule ligne de budget réservé (Logement)', explained.reserved.map((r) => r.label).join(','), 'Logement');
+  assertEqual('détail : somme des lignes = reste à vivre (10000 - 4500 - 500)', explained.current - explained.billsTotal - explained.reservedTotal, explained.safeToSpend);
+  assertEqual('détail : identique au chiffre de computeSafeToSpend (pas de divergence possible)', computeSafeToSpend(sampleForecast, sampleRows).safeToSpend, explained.safeToSpend);
+  assertTrue('détail : la dette est signalée', explained.bills.some((b) => b.name === 'Banque' && b.isDebt));
+
+  const share2027 = await computeExceptionalShare(2027);
+  assertEqual('part exceptionnelle : 1600 sur 3000 de revenus 2027', Math.round(share2027.percent * 10) / 10, 53.3);
+  assertTrue('part exceptionnelle : dépasse le seuil d\'alerte', share2027.percent >= EXCEPTIONAL_SHARE_WARNING_PCT);
+  assertEqual('part exceptionnelle : sans revenu, pas de pourcentage', (await computeExceptionalShare(2031)).percent, null);
+
+  const { projectAsText } = await import('../js/group-project.js');
+  const fakeT = (k, v = {}) => k.replace(/\{(\w+)\}/g, (_, n) => v[n]);
+  const shareText = projectAsText(trip, { translate: fakeT, format: (a, c) => `${a} ${c}`, formatDay: (d) => d, senderName: 'Karidja', today: '2026-11-13' });
+  assertTrue('texte partagé : contient l\'objectif, le collecté (85 %) et le reste', shareText.includes('Objectif : 2000000 XOF') && shareText.includes('Collecté : 1700000 XOF (85 %)') && shareText.includes('Reste à couvrir : 300000 XOF'), shareText);
+  assertTrue('texte partagé : liste qui a payé combien, le plus gros d\'abord', shareText.indexOf('• Karidja : 700000 XOF') < shareText.indexOf('• Awa : 500000 XOF'), shareText);
+  assertTrue('texte partagé : signé et daté', shareText.includes('Point au 2026-11-13') && shareText.includes('— Karidja'));
+  assertTrue('texte partagé : objectif dépassé annoncé', projectAsText({ ...trip, target: 1000000 }, { translate: fakeT, format: (a) => String(a), formatDay: (d) => d }).includes('Objectif dépassé de 700000'));
+  assertTrue('texte partagé : objectif atteint annoncé', projectAsText({ ...trip, target: 1700000 }, { translate: fakeT, format: (a) => String(a), formatDay: (d) => d }).includes('Objectif atteint.'));
+
   // --- 3e revue : part abandonnée d'un participant (sans annuler toute la dette) ---
   const wDebt = { id: 'dw', type: 'debt', principal: 900, startDate: '2026-01-01', status: 'active', participants: [{ id: 'a', name: 'Awa', share: 300 }, { id: 'b', name: 'Moussa', share: 300 }], waived: [{ id: 'w1', participantId: 'a', amount: 300, date: '2026-05-01' }] };
   assertEqual('abandon : la part abandonnée par Awa ne lui est plus comptée (reste 300 pour Moussa)', participantReceivablesAsOf(wDebt, []), 300);

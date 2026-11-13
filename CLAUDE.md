@@ -3932,6 +3932,26 @@ la différence sur MA part (aperçu affiché, pas d'alerte) ; la fusion d'import
 (pas de trace des suppressions) ; une participation de projet ne se modifie pas (supprimer puis recréer) ; la catégorie
 créée par un projet n'est pas supprimée avec lui.
 
+### 13 novembre 2026 (améliorations conseillées 1, 2, 3, 5) (`CACHE_VERSION` `v162`)
+
+1. **Partager le point d'un projet** (`group-projects.js`, `openShareProjectModal`) : bouton sur la carte ; texte pur
+   `projectAsText` (`group-project.js`, testé : objectif, collecté + %, reste/atteint/dépassé, « qui a payé combien »,
+   date, signature) dans un message modifiable, puis WhatsApp (sans numéro → l'utilisateur choisit le contact OU le groupe de
+   la famille) / SMS (si dispo) / Partager… (Web Share) / Copier. Réutilise `whatsappUrl`/`smsUrl` de `person-ledger.js`.
+2. **Modifier une participation** (`openEditContributionModal`) : suivi = nom/montant/date/note ; portefeuille = montant/date/
+   note, la dépense liée suit dans le même `dbWriteBatch` ; prêt = note seulement (montant et date repris par le prêt, la
+   dépense et le compte gardé). Relecture de la liste avant écriture.
+3. **Filtre « Exceptionnelles »** dans Transactions (toutes / seulement / sans) et **bandeau de garde-fou** : part des
+   exceptionnelles de l'année dans les revenus (`computeExceptionalShare`, seuil `EXCEPTIONAL_SHARE_WARNING_PCT` = 30 %,
+   rouge au-delà). Masqué s'il n'y en a pas.
+5. **Détail du reste à vivre** (`modules/safe-to-spend-detail.js`) : bouton « Voir le détail » sur les deux cartes
+   (tableau de bord, portefeuilles) → liquidités − chaque échéance (récurrence ou dette, « en retard » signalé) − chaque
+   budget encore disponible = reste à vivre. `explainSafeToSpend` (`ledger.js`) porte la formule ; `computeSafeToSpend` en
+   découle, donc le détail ne peut pas diverger du chiffre (testé : somme des lignes = chiffre).
+Tests : ledger 163/163 (14 nouveaux), features 199/199 ; parcours vérifiés dans l'app (partage, modification des 3 types,
+filtre + bandeau, détail depuis les deux écrans, somme exacte). Non fait (choix) : conseil n°4 (stockage des projets avec
+trace des suppressions) ; pas de téléphone mémorisé pour le partage (on choisit le contact/groupe dans WhatsApp).
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

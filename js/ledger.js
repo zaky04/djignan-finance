@@ -1015,19 +1015,42 @@ export async function computeEndOfMonthForecast() {
     - le dépassement d'une catégorie ne vient plus « compenser » le reste d'une autre (le reste réservé est
       la somme des restes positifs, catégorie par catégorie). */
 export function computeSafeToSpend(forecast, budgetRows) {
+  const e = explainSafeToSpend(forecast, budgetRows);
+  return { safeToSpend: e.safeToSpend, upcomingBillsTotal: e.billsTotal, reservedBudget: e.reservedTotal };
+}
+
+/** Le « reste à vivre » EXPLIQUÉ, ligne par ligne : liquidités courantes, chaque échéance à venir ce mois-ci (récurrence ou
+    dette), chaque budget encore disponible (déjà net des échéances de sa catégorie). Même calcul que computeSafeToSpend
+    (qui en découle), donc le détail affiché ne peut pas diverger du chiffre : somme des lignes = reste à vivre. */
+export function explainSafeToSpend(forecast, budgetRows) {
   const billsByCategory = new Map();
-  let upcomingBillsTotal = 0;
+  const bills = [];
+  let billsTotal = 0;
   for (const u of forecast.upcoming) {
     if (u.type !== 'expense') continue;
-    upcomingBillsTotal += u.amountBase;
+    billsTotal += u.amountBase;
+    bills.push({ name: u.name, date: u.nextDate, amount: u.amountBase, isDebt: !!u.isDebt });
     if (u.categoryId) billsByCategory.set(u.categoryId, (billsByCategory.get(u.categoryId) || 0) + u.amountBase);
   }
-  let reservedBudget = 0;
+  const reserved = [];
+  let reservedTotal = 0;
   for (const r of budgetRows) {
     const left = (r.budget || 0) - (r.actual || 0);
-    reservedBudget += Math.max(0, left - (billsByCategory.get(r.categoryId) || 0));
+    const amount = Math.max(0, left - (billsByCategory.get(r.categoryId) || 0));
+    reservedTotal += amount;
+    if (amount > 0.005) reserved.push({ label: r.label, amount });
   }
-  return { safeToSpend: forecast.current - upcomingBillsTotal - reservedBudget, upcomingBillsTotal, reservedBudget };
+  reserved.sort((a, b) => b.amount - a.amount);
+  return { current: forecast.current, bills, billsTotal, reserved, reservedTotal, safeToSpend: forecast.current - billsTotal - reservedTotal };
+}
+
+/** Part des dépenses exceptionnelles de l'année dans les revenus de l'année : un garde-fou. Si presque tout devenait
+    « exceptionnel », la mesure de discipline (qui les écarte) ne voudrait plus rien dire. `percent` est null sans revenu. */
+export const EXCEPTIONAL_SHARE_WARNING_PCT = 30;
+export async function computeExceptionalShare(year = new Date().getFullYear()) {
+  const [exceptional, incomeHistory] = await Promise.all([computeAnnualExceptionalExpenses(year), computeMonthlyTypeHistory(year, 'income', null)]);
+  const income = incomeHistory.points.reduce((s, p) => s + p.value, 0);
+  return { year, exceptional: exceptional.total, income, percent: income > 0 ? (exceptional.total / income) * 100 : null, currency: exceptional.currency };
 }
 
 /** Transactions jointes (portefeuille/catégorie), triées récentes d'abord, avec filtres optionnels. */

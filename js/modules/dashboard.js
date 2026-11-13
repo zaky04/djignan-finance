@@ -3,6 +3,7 @@
    ========================================================================== */
 
 import { formatCurrency, formatDate, formatMonthLabel, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';
+import { openSafeToSpendDetail } from './safe-to-spend-detail.js';
 import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeSafeToSpend, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates, computeBudgetSuggestions } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderBudgetVsActualChart, renderMultiTrendChart } from '../charts.js';
 import { loadCashflowForecast } from '../forecast.js';
@@ -406,6 +407,8 @@ export async function renderDashboard() {
 
   if (panels.safeToSpend) {
     const { safeToSpend } = computeSafeToSpend(forecast, budgetVsActual);
+    const detailBtn = document.getElementById('dash-safe-detail-btn');
+    if (detailBtn) detailBtn.onclick = () => openSafeToSpendDetail(); // onclick (pas addEventListener) : chaque rendu réaffecte, sans empiler
     setAmount(document.getElementById('dash-safe-to-spend-value'), safeToSpend, forecast.currency);
     safeToSpendEl?.classList.toggle('is-negative', safeToSpend < 0);
     const dailyEl = document.getElementById('dash-safe-to-spend-daily');

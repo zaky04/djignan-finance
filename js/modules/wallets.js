@@ -3,6 +3,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbPut, dbAdd, dbDelete, dbGetAllByIndex, logAudit, getSetting, setSetting } from '../db.js';
+import { openSafeToSpendDetail } from './safe-to-spend-detail.js';
 import { getAllWalletBalances, computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeBudgetVsActual, computeSafeToSpend, computeEndOfMonthForecast, getEnrichedTransactions, computeSavingsAllocations, walletUsage, isDailyWallet, withdrawalLockedUntil } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, currentMonthKey, openModal, confirmDialog, showToast, currencySelectHtml, wireCurrencySelect, readCurrencyValue, safeNumber } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
@@ -50,6 +51,8 @@ async function renderWealthHero() {
   }
 
   const { safeToSpend } = computeSafeToSpend(forecast, budgetRows);
+  const detailBtn = document.getElementById('safe-detail-btn');
+  if (detailBtn) detailBtn.onclick = () => openSafeToSpendDetail();
   setAmount(document.getElementById('safe-to-spend-value'), safeToSpend, forecast.currency);
   document.getElementById('hero-safe-to-spend')?.classList.toggle('is-negative', safeToSpend < 0);
   const safeTrendEl = document.getElementById('safe-to-spend-trend');

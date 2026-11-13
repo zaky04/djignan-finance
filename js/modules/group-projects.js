@@ -9,16 +9,18 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbAdd, dbWriteBatch, logAudit, getSetting } from '../db.js';
-import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, confirmDialog, showToast, safeNumber, currencySelectHtml, wireCurrencySelect, readCurrencyValue, onceSubmit, amountForOption } from '../utils.js';
+import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, confirmDialog, showToast, safeNumber, currencySelectHtml, wireCurrencySelect, readCurrencyValue, onceSubmit, amountForOption, openExternalUrl, openSmsUrl, canSendSms } from '../utils.js';
+import { whatsappUrl, smsUrl } from './person-ledger.js';
 import { notifyDataChanged } from '../state.js';
 import { isDailyWallet } from '../ledger.js';
 import { ensureDebtCategoryId, deleteDebtCascade } from './debts.js';
-import { projectTotals, knownContributors, sanitizeProjects } from '../group-project.js';
+import { projectTotals, knownContributors, sanitizeProjects, projectAsText } from '../group-project.js';
 import { t } from '../i18n.js';
 import { icon as svgIcon } from '../icons.js';
 
 const EDIT_ICON = svgIcon('edit', 16);
 const DELETE_ICON = svgIcon('trash', 16);
+const SHARE_ICON = svgIcon('message', 16);
 const SETTING_KEY = 'groupProjects';
 
 async function loadProjects() {
@@ -68,6 +70,7 @@ function projectCardHtml(project) {
         <div class="tx-sub">${formatDate(c.date)}${c.note ? ' · ' + escapeHtml(c.note) : ''}</div>
       </div>
       <div class="tx-amount amount">${formatCurrency(c.amount, cur)}</div>
+      <button type="button" class="icon-btn" data-action="edit-contribution" aria-label="${t('Modifier')}" title="${t('Modifier')}">${EDIT_ICON}</button>
       <button type="button" class="icon-btn" data-action="delete-contribution" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
     </div>`;
   }).join('');
@@ -79,6 +82,7 @@ function projectCardHtml(project) {
           <div class="tx-sub">${t('Objectif : {amount}', { amount: formatCurrency(totals.target, cur) })}</div>
         </div>
         <div class="card-actions">
+          <button type="button" class="icon-btn" data-action="share-project" aria-label="${t('Partager le point')}" title="${t('Partager le point par WhatsApp, SMS ou en copiant le texte')}">${SHARE_ICON}</button>
           <button type="button" class="icon-btn" data-action="edit-project" aria-label="${t('Modifier')}" title="${t('Modifier')}">${EDIT_ICON}</button>
           <button type="button" class="icon-btn" data-action="delete-project" aria-label="${t('Supprimer')}" title="${t('Supprimer')}">${DELETE_ICON}</button>
         </div>
@@ -115,7 +119,11 @@ export async function renderGroupProjects(container) {
     const project = projects.find((p) => p.id === card.dataset.projectId);
     if (!project) return;
     card.querySelector('[data-action="add-contribution"]').addEventListener('click', () => openContributionModal(project, projects));
+    card.querySelector('[data-action="share-project"]').addEventListener('click', () => openShareProjectModal(project));
     card.querySelector('[data-action="edit-project"]').addEventListener('click', () => openProjectModal(project));
+    card.querySelectorAll('[data-action="edit-contribution"]').forEach((btn) => {
+      btn.addEventListener('click', () => openEditContributionModal(project, btn.closest('[data-contribution-id]').dataset.contributionId));
+    });
     card.querySelector('[data-action="delete-project"]').addEventListener('click', () => deleteProject(project, projects));
     card.querySelectorAll('[data-action="delete-contribution"]').forEach((btn) => {
       btn.addEventListener('click', () => deleteContribution(project, projects, btn.closest('[data-contribution-id]').dataset.contributionId));
@@ -313,6 +321,94 @@ async function openContributionModal(project, allProjects) {
         { entityType: 'debt', entityId: debt.id, action: 'create', after: debt, note: t('Prêt pour un projet collectif') },
         { entityType: 'transaction', entityId: expenseTx.id, action: 'create', after: expenseTx, note: t('Participation à un projet collectif') },
       ])();
+  });
+}
+
+/* ---------- Partage du point du projet (WhatsApp / SMS / copie) ---------- */
+/** Même principe que la relance d'une créance (person-ledger.js) : message modifiable, puis WhatsApp / SMS / copier / partager.
+    Les liens sont ouverts DANS le clic (avant tout await) : Safari et certains navigateurs mobiles bloquent sinon la fenêtre.
+    Sans numéro, WhatsApp laisse choisir le contact — ou le GROUPE de la famille. */
+async function openShareProjectModal(project) {
+  const profile = await getSetting('userProfile', {});
+  const senderName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ');
+  const message = projectAsText(project, { translate: t, format: formatCurrency, formatDay: formatDate, senderName, today: todayISO() });
+  const sms = canSendSms();
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  const modal = openModal(`
+    <div class="form-row">
+      <label for="share-msg">${t('Message')}</label>
+      <textarea id="share-msg" rows="10" maxlength="1500">${escapeHtml(message)}</textarea>
+      <p class="fs-12 c-muted mt-6">${t('Vous pouvez modifier le texte avant de l\'envoyer. WhatsApp vous laisse choisir un contact ou un groupe.')}</p>
+    </div>
+    <div class="modal-actions" style="flex-wrap:wrap;">
+      <button type="button" class="btn btn-primary" id="share-wa">WhatsApp</button>
+      ${sms ? '<button type="button" class="btn btn-ghost" id="share-sms">SMS</button>' : ''}
+      ${canShare ? `<button type="button" class="btn btn-ghost" id="share-native">${t('Partager…')}</button>` : ''}
+      <button type="button" class="btn btn-ghost" id="share-copy">${t('Copier le message')}</button>
+    </div>`, { title: t('Partager le point — {name}', { name: project.name }) });
+  const msgEl = modal.el.querySelector('#share-msg');
+  const empty = () => { if (!msgEl.value.trim()) { showToast(t('Le message est vide.')); return true; } return false; };
+  modal.el.querySelector('#share-wa').addEventListener('click', () => { if (!empty()) openExternalUrl(whatsappUrl('', msgEl.value)); });
+  modal.el.querySelector('#share-sms')?.addEventListener('click', () => { if (!empty()) openSmsUrl(smsUrl('', msgEl.value)); });
+  modal.el.querySelector('#share-native')?.addEventListener('click', async () => {
+    if (empty()) return;
+    try { await navigator.share({ title: project.name, text: msgEl.value }); } catch (err) { if (err?.name !== 'AbortError') showToast(t('Impossible de partager : copiez le message.')); }
+  });
+  modal.el.querySelector('#share-copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(msgEl.value); showToast(t('Message copié : collez-le dans votre messagerie.')); }
+    catch { showToast(t('Impossible de copier : sélectionnez le texte à la main.')); }
+  });
+}
+
+/* ---------- Participation : modification ---------- */
+/** Corriger une participation sans la supprimer puis la recréer (ce qui, pour la sienne, recréait aussi la dépense).
+    - suivi (autre personne) : nom, montant, date, note ;
+    - portefeuille : montant, date, note — la dépense créée sur le portefeuille suit (même lot d'écriture) ;
+    - prêt : note seulement. Le montant et la date sont repris par le prêt, sa dépense et, si besoin, le compte gardé :
+      les changer ici les désynchroniserait. */
+async function openEditContributionModal(project, contributionId) {
+  const contribution = (project.contributions || []).find((c) => c.id === contributionId);
+  if (!contribution) return;
+  const cur = project.currency;
+  const loan = contribution.kind === 'loan';
+  const modal = openModal(`
+    <form id="edit-contribution-form">
+      ${contribution.kind === 'other' ? `<div class="form-row"><label>${t('Qui a payé ?')}</label><input type="text" name="who" required maxlength="60" value="${escapeHtml(contribution.who || '')}"></div>` : ''}
+      <div class="form-row"><label>${t('Montant')} (${escapeHtml(cur)})</label><input type="number" step="0.01" min="0" name="amount" required value="${escapeHtml(contribution.amount)}" ${loan ? 'disabled' : ''}></div>
+      <div class="form-row"><label>${t('Date')}</label><input type="date" name="date" value="${escapeHtml(contribution.date || todayISO())}" ${loan ? 'disabled' : ''}></div>
+      <div class="form-row"><label>${t('Note (optionnel)')}</label><input type="text" name="note" maxlength="140" value="${escapeHtml(contribution.note || '')}"></div>
+      ${loan ? `<p class="fs-12 c-muted mb-12">${t("Le montant et la date d'une participation financée par prêt ne se changent pas ici (le prêt, la dépense et le compte gardé les reprennent) : supprimez-la puis recréez-la.")}</p>` : ''}
+      <button type="submit" class="btn btn-primary btn-block">${t('Enregistrer')}</button>
+    </form>`, { title: t('Modifier la participation') });
+
+  onceSubmit(modal.el.querySelector('#edit-contribution-form'), async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const amount = loan ? contribution.amount : safeNumber(parseFloat(fd.get('amount')));
+    const date = loan ? contribution.date : (fd.get('date') || contribution.date || todayISO());
+    const note = String(fd.get('note') || '').trim().slice(0, 140);
+    if (!(amount > 0)) { showToast(t('Saisissez un montant supérieur à 0.')); return; }
+    const who = contribution.kind === 'other' ? String(fd.get('who') || '').trim().slice(0, 60) : contribution.who;
+    if (!who) return;
+
+    // Relecture : écrire à partir de la liste du dernier affichage pourrait écraser un changement récent.
+    const projects = await loadProjects();
+    const current = projects.find((p) => p.id === project.id);
+    const existing = current?.contributions.find((c) => c.id === contributionId);
+    if (!current || !existing) { modal.close(); return; }
+    const updatedContribution = { ...existing, who, amount, date, note };
+    const updatedProject = { ...current, contributions: current.contributions.map((c) => (c.id === contributionId ? updatedContribution : c)) };
+    const ops = [];
+    if (existing.kind === 'wallet' && existing.transactionId) {
+      const tx = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === existing.transactionId);
+      if (tx) ops.push({ store: STORES.TRANSACTIONS, type: 'put', value: { ...tx, amount, date } });
+    }
+    ops.push(projectsOp(projects.map((p) => (p.id === current.id ? updatedProject : p))));
+    await dbWriteBatch(ops);
+    await logAudit({ entityType: 'groupProject', entityId: current.id, action: 'update', before: current, after: updatedProject, note: t('Participation modifiée') });
+    modal.close();
+    showToast(t('Participation modifiée.'));
+    notifyDataChanged('all');
   });
 }
 

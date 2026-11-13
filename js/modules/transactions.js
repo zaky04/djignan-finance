@@ -9,7 +9,7 @@ import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, dbWriteBatch, logAudit, getSe
 import { openSmsImportModal, initSmsImport } from './sms-import.js';
 import { isVoiceSupported, listenOnce, parseSpokenEntry } from '../voice-input.js';
 import { getTemplates, addTemplate, removeTemplate, computeFrequentSuggestions } from '../quick-templates.js';
-import { getEnrichedTransactions, guessCategoryId, checkUnusualExpense, isDailyWallet } from '../ledger.js';
+import { getEnrichedTransactions, guessCategoryId, checkUnusualExpense, isDailyWallet, computeExceptionalShare, EXCEPTIONAL_SHARE_WARNING_PCT } from '../ledger.js';
 import { uuid, formatCurrency, formatDate, formatMonthLabel, escapeHtml, todayISO, currentMonthKey, monthKeyOffset, openModal, confirmDialog, showToast, safeNumber, compressImageBlob, ZERO_DECIMAL_CURRENCIES, onceSubmit } from '../utils.js';
 import { notifyDataChanged } from '../state.js';
 import { extractReceiptDataFromImage } from '../ocr.js';
@@ -733,7 +733,7 @@ function openReconciliationModal() {
 /* ==========================================================================
    Liste des transactions (vue complète, filtrable)
    ========================================================================== */
-const filters = { monthKey: currentMonthKey(), walletId: '', categoryId: '', type: '', reconciled: '', tag: '' };
+const filters = { monthKey: currentMonthKey(), walletId: '', categoryId: '', type: '', reconciled: '', tag: '', exceptional: '' };
 let bulkMode = false;
 const selectedIds = new Set();
 let visibleIds = [];
@@ -796,6 +796,9 @@ async function renderList() {
   if (filters.tag) rows = rows.filter((r) => (r.tags || []).includes(filters.tag));
   if (filters.reconciled === 'yes') rows = rows.filter((r) => r.reconciled);
   if (filters.reconciled === 'no') rows = rows.filter((r) => !r.reconciled);
+  // Dépenses exceptionnelles (hors suivi mensuel) : `isExceptional` est posé par ledger.js (case de la transaction, sinon sa catégorie).
+  if (filters.exceptional === 'yes') rows = rows.filter((r) => r.isExceptional);
+  if (filters.exceptional === 'no') rows = rows.filter((r) => !r.isExceptional);
   visibleIds = rows.map((r) => r.id);
   for (const id of [...selectedIds]) { if (!visibleIds.includes(id)) selectedIds.delete(id); }
 
@@ -955,6 +958,11 @@ async function renderFiltersBar() {
       <option value="">${tr('Rapprochement : toutes')}</option>
       <option value="yes" ${filters.reconciled === 'yes' ? 'selected' : ''}>${tr('Pointées')}</option>
       <option value="no" ${filters.reconciled === 'no' ? 'selected' : ''}>${tr('Non pointées')}</option>
+    </select>
+    <select id="tx-filter-exceptional" aria-label="${tr('Dépenses exceptionnelles')}">
+      <option value="">${tr('Exceptionnelles : toutes')}</option>
+      <option value="yes" ${filters.exceptional === 'yes' ? 'selected' : ''}>${tr('Exceptionnelles seulement')}</option>
+      <option value="no" ${filters.exceptional === 'no' ? 'selected' : ''}>${tr('Sans les exceptionnelles')}</option>
     </select>`;
 
   bar.querySelector('#tx-prev-month').onclick = () => { filters.monthKey = monthKeyOffset(filters.monthKey, -1); renderTransactions(); };
@@ -963,13 +971,32 @@ async function renderFiltersBar() {
   bar.querySelector('#tx-filter-category').onchange = (e) => { filters.categoryId = e.target.value; renderList(); };
   bar.querySelector('#tx-filter-type').onchange = (e) => { filters.type = e.target.value; renderList(); };
   bar.querySelector('#tx-filter-reconciled').onchange = (e) => { filters.reconciled = e.target.value; renderList(); };
+  bar.querySelector('#tx-filter-exceptional').onchange = (e) => { filters.exceptional = e.target.value; renderList(); };
   const tagSelect = bar.querySelector('#tx-filter-tag');
   if (tagSelect) tagSelect.onchange = (e) => { filters.tag = e.target.value; renderList(); };
+}
+
+/** Garde-fou : part des dépenses exceptionnelles de l'année dans les revenus de l'année. Si presque tout devenait
+    « exceptionnel », la discipline mesurée (qui les écarte) ne voudrait plus rien dire. Affichée seulement s'il y en a. */
+async function renderExceptionalStrip() {
+  const strip = document.getElementById('transactions-exceptional-strip');
+  if (!strip) return;
+  const year = Number(filters.monthKey.slice(0, 4)) || new Date().getFullYear();
+  const share = await computeExceptionalShare(year);
+  if (!(share.exceptional > 0.005)) { strip.hidden = true; return; }
+  const high = share.percent !== null && share.percent >= EXCEPTIONAL_SHARE_WARNING_PCT;
+  const text = share.percent === null
+    ? tr('Dépenses exceptionnelles de {year} : {amount} (aucun revenu enregistré cette année).', { year, amount: formatCurrency(share.exceptional, share.currency) })
+    : tr('Dépenses exceptionnelles de {year} : {amount}, soit {pct} % de vos revenus.', { year, amount: formatCurrency(share.exceptional, share.currency), pct: Math.round(share.percent) });
+  strip.className = `fs-13 mb-10 ${high ? 'c-neg' : 'c-muted'}`;
+  strip.textContent = high ? `${text} ${tr('Vérifiez que tout est vraiment exceptionnel : au-delà, votre suivi mensuel ne dit plus grand-chose.')}` : text;
+  strip.hidden = false;
 }
 
 export async function renderTransactions() {
   await renderFiltersBar();
   await renderList();
+  await renderExceptionalStrip();
 }
 
 export function initTransactionsModule() {
