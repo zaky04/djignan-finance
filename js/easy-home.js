@@ -356,6 +356,29 @@ export async function openEasyEntry(type) {
   render();
 }
 
+/** Bouton « + » (barre du bas et du haut) en accueil facile : au lieu du formulaire classique, deux gros choix
+    (« J'ai reçu » / « J'ai dépensé ») qui ouvrent la saisie guidée. Les tuiles reprennent le style de l'accueil. */
+export function openEasyChooser() {
+  const modal = openModal(`<div class="easy-tiles easy-chooser">
+      <button type="button" class="easy-tile easy-in" data-easy="income">${icon('arrowDown', 44)}<span class="easy-tile-label">${escapeHtml(t("J'ai reçu"))}</span></button>
+      <button type="button" class="easy-tile easy-out" data-easy="expense">${icon('arrowUp', 44)}<span class="easy-tile-label">${escapeHtml(t("J'ai dépensé"))}</span></button>
+    </div>`, { title: t('Que voulez-vous noter ?') });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  modal.el.querySelector('.easy-chooser').addEventListener('click', (event) => {
+    const tile = event.target.closest('[data-easy]');
+    if (!tile) return;
+    const kind = tile.dataset.easy;
+    modal.close();
+    openEasyEntry(kind); // dans le même geste : primeSpeech() reste valable
+  });
+}
+
+/** Ce que fait le bouton « + » : saisie guidée en accueil facile, sinon la saisie rapide habituelle (`openClassic`). */
+export function openAddEntry(openClassic) {
+  if (document.body.dataset.easyHome === 'on') openEasyChooser();
+  else openClassic();
+}
+
 /* ---------- Câblage (une seule fois) ---------- */
 
 /** `navigateTo` vient d'app.js (qui importe ce module : l'importer ici ferait un cycle). */

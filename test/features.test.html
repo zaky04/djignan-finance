@@ -517,6 +517,25 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   const toastBox = Object.assign(document.createElement('div'), { id: 'toast-container' });
   const easyHost = Object.assign(document.createElement('div'), { id: 'easy-home' });
   document.body.append(modalRoot, toastBox, easyHost);
+
+  // Bouton « + » : saisie classique hors accueil facile, deux gros choix en accueil facile
+  {
+    const { openAddEntry } = await import('../js/easy-home.js');
+    let classicCalls = 0;
+    const before = document.body.dataset.easyHome;
+    document.body.dataset.easyHome = 'off';
+    openAddEntry(() => { classicCalls++; });
+    eq('« + » hors accueil facile : ouvre la saisie habituelle, pas de choix', [classicCalls, !!document.querySelector('.easy-chooser')], [1, false]);
+    document.body.dataset.easyHome = 'on';
+    openAddEntry(() => { classicCalls++; });
+    const chooser = document.querySelector('.easy-chooser');
+    eq('« + » en accueil facile : deux gros choix (reçu / dépensé), saisie classique non ouverte', [classicCalls, chooser && [...chooser.querySelectorAll('[data-easy]')].map((b) => b.dataset.easy)], [1, ['income', 'expense']]);
+    chooser?.querySelector('[data-easy="expense"]').click();
+    await new Promise((r) => setTimeout(r, 250));
+    eq('« + » : choisir « dépensé » ouvre la saisie guidée à la place du choix', [!!document.querySelector('.easy-chooser'), !!document.querySelector('#easy-step')], [false, true]);
+    document.querySelectorAll('#modal-root .modal-backdrop, #modal-root .modal-overlay, #modal-root > *').forEach((el) => el.remove());
+    if (before === undefined) delete document.body.dataset.easyHome; else document.body.dataset.easyHome = before;
+  }
   const press = (sel) => modalRoot.querySelector(sel).click();
 
   await openEasyEntry('expense');
@@ -711,6 +730,17 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     { store: STORES.DEBTS, type: 'put', value: { id: 'd-own', personName: 'Koffi', type: 'receivable', principal: 0, currency: 'XOF', startDate: '2026-10-01' } },
   ])), (await getAll(STORES.TRANSACTIONS)).some((x) => x.id === 'tx-never')], [true, false]);
   eq('aidant : peut créer une nouvelle dette', !!(await dbAdd(STORES.DEBTS, { id: 'd-new', personName: 'Ali', type: 'debt', principal: 100, currency: 'XOF', startDate: '2026-10-05' })), true);
+  // Dernier remboursement : la dette passe « soldée » (seule réécriture de dette permise), tout autre changement reste refusé
+  const settleDebt = { id: 'd-settle', personName: 'Awa', type: 'receivable', principal: 500, currency: 'XOF', startDate: '2026-10-05', status: 'active' };
+  await dbAdd(STORES.DEBTS, { ...settleDebt });
+  eq('aidant : solder une dette par un remboursement (active → soldée, rien d\'autre ne change) est permis, même en lot', await dbm.dbWriteBatch([
+    { store: STORES.DEBT_PAYMENTS, type: 'add', value: { id: 'p-settle', debtId: 'd-settle', amount: 500, date: '2026-10-06' } },
+    { store: STORES.DEBTS, type: 'put', value: { ...settleDebt, status: 'paid' } },
+  ]).then(() => (async () => (await getAll(STORES.DEBTS)).find((x) => x.id === 'd-settle').status)()), 'paid');
+  eq('aidant : une dette soldée ne peut plus être rouverte', await rejects(() => dbm.dbPut(STORES.DEBTS, { ...settleDebt, status: 'active' })), true);
+  await dbAdd(STORES.DEBTS, { ...settleDebt, id: 'd-settle2' });
+  eq('aidant : « soldée » accompagné d\'un autre changement (montant effacé) reste refusé', await rejects(() => dbm.dbPut(STORES.DEBTS, { ...settleDebt, id: 'd-settle2', status: 'paid', principal: 0 })), true);
+  eq('aidant : annuler une dette (status « cancelled ») reste refusé', await rejects(() => dbm.dbPut(STORES.DEBTS, { ...settleDebt, id: 'd-settle2', status: 'cancelled' })), true);
   eq('aidant : les projets collectifs (réglage du propriétaire) sont protégés, un réglage ordinaire non', [await rejects(() => setSetting('groupProjects', [])), await setSetting('privacyHidden', true).then(() => true)], [true, true]);
   eq('aidant : pas d\'écrasement en masse (import CSV, données de démonstration)', await rejects(() => dbm.dbBulkPut(STORES.WALLETS, [{ id: 'w-x', name: 'X', currency: 'XOF' }])), true);
   await dbDelete(STORES.TRANSACTIONS, 'tx-helper');

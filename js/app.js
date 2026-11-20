@@ -49,7 +49,7 @@ import { initSearchModule } from './modules/search.js';
 import { openSmsImportModal } from './modules/sms-import.js';
 import { getUiMode, setUiMode, applyUiMode, SIMPLE_MORE_VIEWS } from './ui-mode.js';
 import { syncNativeReminders } from './native-reminders.js';
-import { initEasyHome, applyEasyHome, renderEasyHome, setEasyHome } from './easy-home.js';
+import { initEasyHome, applyEasyHome, renderEasyHome, setEasyHome, openAddEntry } from './easy-home.js';
 import { maybeRunMonthlyBackupCheck } from './backup-verify.js';
 import { queueSharedSms } from './sms-queue.js';
 import { isSpeechSupported } from './speech-out.js';
@@ -175,8 +175,8 @@ function wireGlobalChrome() {
 
   document.getElementById('bottom-nav-more')?.addEventListener('click', openMoreSheet);
 
-  document.getElementById('quick-add-btn')?.addEventListener('click', () => openQuickAdd());
-  document.getElementById('bottom-nav-add')?.addEventListener('click', () => openQuickAdd());
+  document.getElementById('quick-add-btn')?.addEventListener('click', () => openAddEntry(() => openQuickAdd()));
+  document.getElementById('bottom-nav-add')?.addEventListener('click', () => openAddEntry(() => openQuickAdd()));
 
   document.getElementById('privacy-toggle')?.addEventListener('click', async () => {
     appState.privacyHidden = !appState.privacyHidden;

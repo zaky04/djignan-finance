@@ -240,8 +240,20 @@ async function checkHelperWrite(store, value, kind) {
   }
   if (kind === 'put') {
     const key = value[STORE_KEY_PATH[store] || 'id'];
-    if (key !== undefined && await dbGet(store, key)) throw new HelperRestrictedError();
+    const existing = key !== undefined ? await dbGet(store, key) : null;
+    if (existing && !(store === STORES.DEBTS && isSettleOnlyChange(existing, value))) throw new HelperRestrictedError();
   }
+}
+
+/** Seule modification d'une dette existante permise à l'aidant : la passer de « active » à « soldée » parce qu'un remboursement
+    qu'il vient d'enregistrer a tout couvert (le lot d'écritures de debts.js contient alors ce `put`). Tout autre champ
+    modifié (montant, nom, échéance, annulation…) reste refusé. */
+function isSettleOnlyChange(before, after) {
+  if (before.status !== 'active' || after.status !== 'paid') return false;
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  keys.delete('status');
+  for (const k of keys) if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) return false;
+  return true;
 }
 
 export async function dbAdd(store, value) {

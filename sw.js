@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v175';
+const CACHE_VERSION = 'v176';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 // Nom volontairement SANS le préfixe "geofinance-" : le nettoyage de l'activate ci-dessous
 // supprime tout cache "geofinance-*" différent de CACHE_NAME à chaque déploiement (mécanisme de
@@ -148,6 +148,14 @@ self.addEventListener('fetch', (event) => {
   if (request.method === 'POST' && url.pathname.endsWith('/share-target')) {
     event.respondWith((async () => {
       try {
+        // Un partage venant d'une autre app (galerie, messagerie) n'a pas d'origine web, ou la nôtre. Un formulaire posté par un
+        // AUTRE SITE porte son origine (Origin) et Sec-Fetch-Site « cross-site » : refusé, sinon n'importe quelle page pourrait
+        // remplir la file de SMS à valider. On ne refuse que ce qui est sûrement étranger, jamais un partage légitime.
+        const origin = request.headers.get('Origin');
+        const foreignOrigin = origin && origin !== 'null' && origin !== self.location.origin;
+        if (foreignOrigin || request.headers.get('Sec-Fetch-Site') === 'cross-site') {
+          return Response.redirect(new URL('./', self.location.href).href, 303);
+        }
         const formData = await request.formData();
         // Texte partagé (ex: un SMS Mobile Money transféré depuis la messagerie) : gardé tel quel,
         // borné en taille (n'importe quel site peut poster ici) ; lu par applyShareTarget() (app.js).

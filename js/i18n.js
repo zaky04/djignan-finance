@@ -2177,6 +2177,7 @@ const EN = {
   "Il vous reste {amount} à dépenser ce mois-ci": 'You have {amount} left to spend this month',
   'Attention : dépenses prévues au-dessus de votre argent': 'Warning: planned spending is above your money',
   "Créez d'abord un portefeuille (menu Plus, puis Portefeuilles).": 'Create a wallet first (More menu, then Wallets).',
+  'Que voulez-vous noter ?': 'What do you want to record?',
   "J'ai reçu de l'argent": 'I received money',
   "J'ai dépensé de l'argent": 'I spent money',
   'Sur quel portefeuille ?': 'Which wallet?',

@@ -4053,12 +4053,22 @@ import de SMS : seuls les SMS réglés quittent la file (décoché = reste) ; v�
 dès le lendemain après un échec ; erreur d'export chiffré visible dans le rappel hebdomadaire, relecture de contrôle sautée au-delà de ~30 Mo (mémoire) ; accueil facile :
 `e.currentTarget` après `await`, rendu même si le tableau de bord échoue, redessin à la fin de l'assistant ; voix : montants arrondis comme l'affichage, « canceled » n'est plus
 pris pour « aucune voix » ; restauration du premier écran jamais bloquée par l'empreinte (le chiffré est déjà authentifié).
-**Connu, non corrigé (faible)** : `/share-target` accepte un POST de n'importe quel site (le SW ne contrôle pas l'origine) : de faux SMS peuvent remplir la file (50 max, rien n'est
+**Connu, corrigé depuis (voir « Finitions », v176)** : `/share-target` acceptait un POST de n'importe quel site ; de faux SMS pouvaient remplir la file (50 max, rien n'est
 importé sans validation).
 
 **Tests** : `features.test.html` 243 → **330** (empreinte, relecture, vérification à blanc, import refusé puis forcé, codes, rôles, garde db et règle d'écriture, file SMS, parcours réels) ;
 `ledger.test.html` 175/175. Audit statique (`audit.mjs` en scratchpad : imports nommés, précache, traductions) : 986 imports, 80 fichiers précachés, 1841 clés EN, aucun écart.
 `CACHE_VERSION` finale de la nuit : **v175**.
+
+### 20 novembre 2026 (suite) — Finitions des lots 1 à 4 (Djignan uniquement, `CACHE_VERSION` `v176`)
+
+- **Bouton « + » en accueil facile** (`easy-home.js` `openEasyChooser`/`openAddEntry`, câblé dans `app.js` pour `#quick-add-btn` et `#bottom-nav-add`) : deux gros choix « J'ai reçu » /
+  « J'ai dépensé » qui ouvrent la saisie guidée ; hors accueil facile, la saisie rapide habituelle (test via `body[data-easy-home]`, pas d'accès base au clic).
+- **Aidant : dernier remboursement d'une dette** (`db.js` `isSettleOnlyChange`) : le seul `put` permis sur une dette existante est « active → soldée » sans autre champ modifié (le lot
+  d'écritures de `debts.js` le contient quand le remboursement couvre tout). Rouvrir, annuler, changer le montant : toujours refusés. Les remboursements partiels passaient déjà.
+- **`/share-target`** (`sw.js`) : un POST portant une origine étrangère (`Origin` ≠ la nôtre, hors « null ») ou `Sec-Fetch-Site: cross-site` est redirigé sans rien mettre en cache. Un partage
+  de l'OS (sans `Origin`) passe. Vérifié par simulation du gestionnaire sous Node (5 cas) ; **non testé sur un vrai téléphone**.
+- Tests : `features.test.html` 330 → **337** ; `ledger.test.html` 175/175.
 
 ## 7. Pistes prioritaires non traitées
 
