@@ -15,6 +15,9 @@ import { getTemplates, recordTemplateNow, undoRecordedTemplate } from '../quick-
 import { notifyDataChanged } from '../state.js';
 import { showToast } from '../utils.js';
 import { getCloudAutoBackupAlert } from '../firebase-sync.js';
+import { getBackupVerificationAlert } from '../backup-verify.js';
+import { getSmsInboxCount } from '../sms-queue.js';
+import { openSmsImportModal } from './sms-import.js';
 // Aliasé en tr (pas t) : ce fichier utilise déjà `t` comme nom de paramètre pour une transaction
 // (voir txRowHtml(t)) — importer la fonction de traduction sous le même nom la masquerait
 // silencieusement à l'intérieur de cette fonction (t('Sans catégorie') appellerait alors la
@@ -511,6 +514,33 @@ export async function renderDashboard() {
     const div = document.createElement('div');
     div.className = 'alert alert-warn';
     div.dataset.cloudAutoAlert = '1';
+    div.textContent = message;
+    stack.appendChild(div);
+  }).catch(() => {});
+  // SMS Mobile Money partagés vers l'appli et pas encore validés (sms-queue.js) : un rappel avec accès direct à la validation.
+  getSmsInboxCount().then((count) => {
+    const stack = document.getElementById('dashboard-alerts');
+    if (!count || !stack || stack.querySelector('[data-sms-inbox-alert]')) return;
+    const div = document.createElement('div');
+    div.className = 'alert alert-warn';
+    div.dataset.smsInboxAlert = '1';
+    const label = document.createElement('span');
+    label.textContent = `${tr('{count} SMS Mobile Money en attente de validation.', { count })} `;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'link-btn';
+    button.textContent = tr('Valider');
+    button.addEventListener('click', () => openSmsImportModal());
+    div.append(label, button);
+    stack.appendChild(div);
+  }).catch(() => {});
+  // Dernière vérification de sauvegarde en échec (backup-verify.js) : visible ici jusqu'à ce qu'une vérification réussisse.
+  getBackupVerificationAlert().then((message) => {
+    const stack = document.getElementById('dashboard-alerts');
+    if (!message || !stack || stack.querySelector('[data-backup-check-alert]')) return;
+    const div = document.createElement('div');
+    div.className = 'alert alert-warn';
+    div.dataset.backupCheckAlert = '1';
     div.textContent = message;
     stack.appendChild(div);
   }).catch(() => {});

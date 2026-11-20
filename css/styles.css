@@ -1007,3 +1007,91 @@ body { font-size: 16px; line-height: 1.45; }
 .preset-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .preset-chip { cursor: pointer; font: inherit; }
 .preset-chip:hover, .preset-chip:focus-visible { border-color: var(--accent); color: var(--text); }
+
+/* ==========================================================================
+   Accueil facile (gros boutons, images, voix) — voir easy-home.js. Piloté par body[data-easy-home].
+   Cibles tactiles ≥ 56 px, texte ≥ 15 px, une action par écran, couleurs jamais seules (icône + texte).
+   ========================================================================== */
+body[data-easy-home="on"] .dash-top,
+body[data-easy-home="on"] #dashboard-panels-grid,
+body[data-easy-home="on"] #dashboard-charts-grid,
+body[data-easy-home="on"] #panel-forecast,
+body[data-easy-home="on"] #panel-recap,
+body[data-easy-home="on"] #panel-recent-transactions { display: none !important; }
+
+.easy-home { display: flex; flex-direction: column; gap: 18px; margin-bottom: 18px; }
+.easy-balance { background: var(--hero-bg); color: #f3efe3; border-radius: var(--radius-lg); padding: 22px 18px; text-align: center; }
+.easy-balance-label { font-size: 18px; color: var(--gold); font-weight: 600; }
+.easy-balance-value { font-size: 44px; font-weight: 700; margin: 6px 0; font-variant-numeric: tabular-nums; color: inherit; line-height: 1.1; }
+.easy-balance-sub { font-size: 16px; margin-bottom: 12px; }
+.easy-balance-sub.is-bad { color: #ffb4a8; font-weight: 600; }
+.easy-speak { display: inline-flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 24px; border-radius: 999px; border: 2px solid #f3efe3; background: transparent; color: #f3efe3; font: inherit; font-size: 18px; font-weight: 700; cursor: pointer; }
+.easy-speak:hover { background: rgba(255, 255, 255, .12); }
+.easy-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.easy-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 150px; padding: 14px 10px; border-radius: var(--radius-lg); border: 2px solid currentColor; background: var(--surface); font: inherit; cursor: pointer; text-align: center; }
+.easy-tile:active { transform: scale(.97); }
+.easy-tile-label { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.15; }
+.easy-tile-amount { font-size: 17px; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.easy-in { color: var(--pos); background: var(--pos-soft); }
+.easy-out { color: var(--neg); background: var(--neg-soft); }
+.easy-owed, .easy-owe { color: var(--accent); background: var(--accent-soft); }
+.easy-section-title { font-size: 18px; margin: 4px 0 0; }
+.easy-recent { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.easy-recent-row { display: flex; align-items: center; gap: 12px; padding: 14px; border-bottom: 1px solid var(--border); font-size: 18px; }
+.easy-recent-row:last-child { border-bottom: 0; }
+.easy-recent-icon { display: flex; flex: 0 0 auto; }
+.easy-recent-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.easy-recent-amount { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hero-speak-btn { margin-left: 12px; }
+
+/* Saisie guidée (fenêtre) */
+.easy-modal { width: min(460px, 100%); }
+.easy-dots { display: flex; justify-content: center; gap: 8px; margin-bottom: 10px; }
+.easy-dots span { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+.easy-dots .is-done { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.easy-dots .is-current { background: var(--accent); }
+.easy-question { font-size: 24px; font-weight: 700; text-align: center; margin: 4px 0 12px; }
+.easy-amount { text-align: center; font-size: 36px; font-weight: 700; font-variant-numeric: tabular-nums; padding: 6px 10px; border: 2px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-alt); overflow-wrap: anywhere; }
+.easy-amount-words { min-height: 22px; text-align: center; font-size: 14px; color: var(--text-muted); margin: 6px 0 10px; }
+.easy-quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.easy-quick-btn { min-height: 46px; border-radius: var(--radius-md); border: 2px solid var(--gold); background: var(--surface); color: var(--text); font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; }
+.easy-keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.easy-key { min-height: 56px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 28px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.easy-key:active, .easy-quick-btn:active, .easy-wallet:active, .easy-cat:active { background: var(--accent-soft); }
+.easy-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.easy-actions-stack { flex-direction: column; }
+/* Les boutons d'action restent visibles en bas de la fenêtre même sur un écran bas (le pavé défile dessous). */
+.easy-modal .easy-actions { position: sticky; bottom: 0; background: var(--surface); padding: 8px 0 2px; }
+.easy-modal .easy-actions-stack .easy-actions { position: static; padding: 0; }
+.easy-btn { flex: 1; min-height: 56px; font-size: 18px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.easy-next { flex: 2; }
+.easy-btn:disabled { opacity: .45; }
+.easy-save { background: var(--pos); color: #fff; min-height: 72px; font-size: 22px; font-weight: 700; width: 100%; flex: none; }
+.easy-wallets { display: grid; gap: 10px; }
+.easy-wallet { display: flex; align-items: center; gap: 14px; min-height: 72px; padding: 0 16px; border-radius: var(--radius-lg); border: 2px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 20px; font-weight: 700; cursor: pointer; text-align: left; }
+.easy-wallet-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.easy-wallet-cur { font-size: 14px; color: var(--text-muted); font-weight: 600; }
+.easy-cats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+.easy-cat { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 104px; padding: 8px 4px; border-radius: var(--radius-lg); border: 2px solid var(--cat, var(--border)); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; text-align: center; }
+.easy-cat-icon { color: var(--cat, var(--accent)); display: flex; }
+.easy-cat-name { font-size: 15px; font-weight: 700; line-height: 1.15; overflow-wrap: anywhere; }
+.easy-summary { border: 2px solid var(--border); border-radius: var(--radius-lg); padding: 16px; text-align: center; background: var(--surface-alt); margin-bottom: 12px; }
+.easy-summary-kind { display: inline-flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 700; }
+.easy-summary-kind.pos { color: var(--pos); }
+.easy-summary-kind.neg { color: var(--neg); }
+.easy-summary-amount { font-size: 38px; font-weight: 700; margin: 6px 0 2px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.easy-summary-words { font-size: 14px; color: var(--text-muted); margin-bottom: 10px; }
+.easy-summary-line { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 18px; margin-top: 6px; }
+.easy-warning { background: var(--warn-soft); color: var(--warn-text); border: 2px solid var(--warn); border-radius: var(--radius-md); padding: 12px 14px; font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+/* Code aidant : les réglages lui sont fermés (settings.js l'explique), on ne lui montre même pas l'entrée du menu latéral. */
+body[data-role="helper"] [data-view-target="settings"] { display: none !important; }
+.unlock-report { margin: 0 0 16px; padding-left: 20px; line-height: 1.5; font-size: 15px; }
+.unlock-report li + li { margin-top: 8px; }
+.easy-warning p { margin: 0 0 6px; }
+.easy-warning p:last-child { margin: 0; }
+@media (max-width: 380px) {
+  .easy-balance-value { font-size: 36px; }
+  .easy-tile { min-height: 132px; }
+  .easy-cats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { .easy-tile:active { transform: none; } }

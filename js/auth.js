@@ -74,15 +74,96 @@ export async function getPinLength() {
   return getSetting('pinLength', 6);
 }
 
-export async function verifyPin(pin) {
-  const saltB64 = await getSetting('pinSalt');
-  const hashB64 = await getSetting('pinHash');
-  const iterations = await getSetting('pinIterations', PBKDF2_ITERATIONS);
+/** Compare un code au hachage enregistré sous `prefix` (« pin » = propriétaire, « helperPin » = aidant : clés
+    pinSalt/pinHash/pinIterations, helperPinSalt/helperPinHash/helperPinIterations). Ne touche à aucun compteur. */
+async function codeMatches(prefix, code) {
+  const saltB64 = await getSetting(`${prefix}Salt`);
+  const hashB64 = await getSetting(`${prefix}Hash`);
+  const iterations = await getSetting(`${prefix}Iterations`, PBKDF2_ITERATIONS);
   if (!saltB64 || !hashB64) return false;
-  const candidate = await derivePinHash(pin, base64ToBuf(saltB64), iterations);
-  const ok = timingSafeEqual(new Uint8Array(candidate), new Uint8Array(base64ToBuf(hashB64)));
+  const candidate = await derivePinHash(code, base64ToBuf(saltB64), iterations);
+  return timingSafeEqual(new Uint8Array(candidate), new Uint8Array(base64ToBuf(hashB64)));
+}
+
+/* ---------- Journal des codes ratés ----------
+   Chaque code faux (au déverrouillage ou avant une action sensible) est daté dans un journal propre à l'appareil, gardé à 30
+   entrées. Au déverrouillage suivant du propriétaire : « 3 codes ratés depuis votre dernière visite » (consumeUnlockReport).
+   Quelqu'un qui a tenté d'ouvrir le téléphone devient visible au lieu de rester silencieux. */
+const FAILURE_LOG_MAX = 30;
+async function logPinFailure() {
+  const log = await getSetting('pinFailureLog', []);
+  const list = Array.isArray(log) ? log : [];
+  list.push(Date.now());
+  await setSetting('pinFailureLog', list.slice(-FAILURE_LOG_MAX));
+}
+
+/** À appeler à chaque déverrouillage du PROPRIÉTAIRE (jamais de l'aidant, sinon il effacerait ce que le propriétaire doit
+    voir). Renvoie les codes ratés depuis sa dernière visite, puis date cette visite. Première visite : rien à signaler. */
+export async function consumeUnlockReport(now = Date.now()) {
+  const since = Number(await getSetting('lastUnlockAt', 0)) || 0;
+  const log = await getSetting('pinFailureLog', []);
+  await setSetting('lastUnlockAt', now);
+  if (!since) return { since: 0, failures: 0, lastFailureAt: null };
+  const recent = (Array.isArray(log) ? log : []).filter((ts) => ts > since && ts <= now);
+  return { since, failures: recent.length, lastFailureAt: recent.length ? Math.max(...recent) : null };
+}
+
+/** Les fautes de frappe du propriétaire juste AVANT sa réussite (dans la dernière minute) ne sont pas une intrusion : on les retire du
+    journal, sinon « 1 code incorrect pendant votre absence » s'afficherait à chaque coquille suivie du bon code. */
+const OWN_TYPO_WINDOW_MS = 60 * 1000;
+async function forgetRecentFailures(now = Date.now()) {
+  const log = await getSetting('pinFailureLog', []);
+  if (!Array.isArray(log) || !log.length) return;
+  const kept = log.filter((ts) => ts < now - OWN_TYPO_WINDOW_MS);
+  if (kept.length !== log.length) await setSetting('pinFailureLog', kept);
+}
+
+export async function verifyPin(pin) {
+  if (!(await getSetting('pinSalt')) || !(await getSetting('pinHash'))) return false;
+  const ok = await codeMatches('pin', pin);
   await setSetting('failedAttempts', ok ? 0 : (await getSetting('failedAttempts', 0)) + 1);
+  if (ok) await forgetRecentFailures(); else await logPinFailure();
   return ok;
+}
+
+/** Déverrouillage : renvoie 'owner' (code du propriétaire), 'helper' (code aidant) ou null (aucun des deux). Un code faux
+    compte UNE tentative, qu'un code aidant existe ou non (même blocage anti-brute-force). */
+export async function verifyAccessCode(code) {
+  if (await codeMatches('pin', code)) { await setSetting('failedAttempts', 0); await forgetRecentFailures(); return 'owner'; }
+  // Le code aidant ne remet PAS le compteur d'échecs à zéro : sinon quelqu'un qui le connaît pourrait deviner le code du propriétaire
+  // par séries de 4 essais en repassant par le code aidant entre deux séries (le blocage anti-brute-force ne se déclencherait jamais).
+  if (await isHelperConfigured() && await codeMatches('helperPin', code)) return 'helper';
+  if (!(await getSetting('pinSalt'))) return null; // aucun code configuré : rien à compter
+  await setSetting('failedAttempts', (await getSetting('failedAttempts', 0)) + 1);
+  await logPinFailure();
+  return null;
+}
+
+/* ---------- Code aidant ---------- */
+export async function isHelperConfigured() {
+  return !!(await getSetting('helperPinHash'));
+}
+
+/** Définit (ou remplace) le code de l'aidant. Exige le code du propriétaire. Le code aidant a le même nombre de chiffres que celui du
+    propriétaire (l'écran de verrouillage valide tout seul à cette longueur) et doit être différent. Lève une Error au message affichable. */
+export async function setupHelperPin(code, ownerPin) {
+  const { ok, waitSeconds } = await verifyPinForAction(ownerPin);
+  if (!ok) throw new Error(waitSeconds > 0 ? t('Trop de tentatives. Réessayez dans {s}s.', { s: waitSeconds }) : t('Code PIN incorrect.'));
+  const length = await getPinLength();
+  if (!/^\d{4,6}$/.test(code) || code.length !== length) throw new Error(t('Le code aidant doit avoir {n} chiffres, comme votre code.', { n: length }));
+  if (await codeMatches('pin', code)) throw new Error(t('Le code aidant doit être différent du vôtre.'));
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const hash = await derivePinHash(code, salt);
+  await setSetting('helperPinSalt', bufToBase64(salt));
+  await setSetting('helperPinHash', bufToBase64(hash));
+  await setSetting('helperPinIterations', PBKDF2_ITERATIONS);
+  await setSetting('helperPinLength', code.length);
+  await logAudit({ entityType: 'security', entityId: 'helper-pin', action: 'setup', note: t('Code aidant défini') });
+}
+
+export async function removeHelperPin() {
+  for (const key of ['helperPinSalt', 'helperPinHash', 'helperPinIterations', 'helperPinLength']) await setSetting(key, null);
+  await logAudit({ entityType: 'security', entityId: 'helper-pin', action: 'remove', note: t('Code aidant retiré') });
 }
 
 /** Vérifie le PIN pour une action sensible (suppression, réinitialisation) en réutilisant le même
@@ -110,6 +191,14 @@ export async function changePin(oldPin, newPin) {
   const { ok, waitSeconds } = await verifyPinForAction(oldPin);
   if (!ok) throw new Error(waitSeconds > 0 ? t('Trop de tentatives. Réessayez dans {s}s.', { s: waitSeconds }) : t('Ancien code PIN incorrect.'));
   await setupPin(newPin);
+  // Le code aidant doit rester de même longueur que le nôtre et différent : sinon l'écran de verrouillage ne pourrait plus
+  // l'accepter (ou, pire, les deux codes seraient identiques). On le retire plutôt que de le laisser inutilisable.
+  let helperRemoved = false;
+  if (await isHelperConfigured()) {
+    const sameLength = (await getSetting('helperPinLength', 0)) === newPin.length;
+    if (!sameLength || await codeMatches('helperPin', newPin)) { await removeHelperPin(); helperRemoved = true; }
+  }
+  return { helperRemoved };
 }
 
 /* ---------- Biométrie (WebAuthn, authenticator de plateforme) ---------- */
@@ -331,7 +420,7 @@ export function initLockScreen({ onUnlock }) {
         if (buffer === firstEntry) {
           try {
             await setupPin(buffer);
-            onUnlock();
+            onUnlock({ role: 'owner' });
           } catch (err) {
             // Filet de sécurité : une erreur ici (ex. IndexedDB indisponible) laissait jusqu'ici le
             // clavier silencieusement mort — dots remplis, rien d'autre — sans le moindre signal pour
@@ -355,11 +444,14 @@ export function initLockScreen({ onUnlock }) {
       if (buffer.length === expectedLength && !verifying) {
         verifying = true;
         try {
-          const ok = await verifyPin(buffer);
-          if (ok) {
-            throttledUntil = 0;
-            await setSetting('pinThrottledUntil', 0);
-            onUnlock();
+          const role = await verifyAccessCode(buffer); // 'owner' | 'helper' | null (code aidant : voir setupHelperPin)
+          if (role) {
+            // Seul le propriétaire lève le blocage (voir verifyAccessCode : le code aidant ne doit pas pouvoir le contourner).
+            if (role === 'owner') {
+              throttledUntil = 0;
+              await setSetting('pinThrottledUntil', 0);
+            }
+            onUnlock({ role });
           } else {
             const attempts = await getSetting('failedAttempts', 0);
             shakeError(t('Code PIN incorrect.'));
@@ -413,7 +505,7 @@ export function initLockScreen({ onUnlock }) {
               throttledUntil = 0;
               await setSetting('pinThrottledUntil', 0);
               await setSetting('failedAttempts', 0);
-              onUnlock();
+              onUnlock({ role: 'owner' }); // l'empreinte enregistrée est celle du propriétaire
             } else {
               shakeError(t('Échec de la vérification biométrique.'));
             }

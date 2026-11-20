@@ -3973,9 +3973,109 @@ de repli pour d'anciennes récurrences, taux actuel (et non historique) dans les
 participants jamais réglables dans Partage de dépenses, rendement annualisé gonflé pour un investissement récent,
 `computeMonthlyBudgetSummary` qui appelle `ctx()` pour rien, restauration « Remplacer tout » qui garde les stores absents.
 
+### 20 novembre 2026 — Accueil facile (gros boutons, images) et lecture à voix haute (Djignan uniquement, `CACHE_VERSION` `v167`)
+
+Lot 1 d'une feuille de route « accessibilité / personnes qui lisent peu » issue d'une analyse concurrentielle (voir §7, pistes 8 à 12).
+Rien n'est commité à la fin de la session (à faire à la demande de l'auteur : `git push djignan main`, jamais `origin`).
+
+**Nouveaux fichiers** (ajoutés à `APP_SHELL`) : `js/speech-out.js`, `js/easy-home.js`. Réglages : `easyHome` (bool, **désactivé par défaut** : une
+installation existante ne change jamais) et `speakConfirmations` (bool, désactivé par défaut, posé à `true` par le choix « Très facile » de
+l'assistant de configuration quand la synthèse vocale existe).
+- **Lecture vocale** (`speech-out.js`) : `speechSynthesis` du navigateur, donc aucune donnée n'est envoyée par l'appli (≠ dictée `voice-input.js`) et
+  elle fonctionne aussi dans APK/EXE. Les montants sont dits **en toutes lettres** (`amountInWords`, déjà utilisé pour la reconnaissance de dette) : une
+  voix lit « 45000 » de façons variables. Textes purs et testés : `buildBalanceSpeech`, `buildSavedSpeech`, `buildConfirmSpeech`. `primeSpeech()` est
+  appelé dans le geste du clic avant tout `await` (iOS exige un geste). `speak()` ne rejette jamais (une lecture ratée ne bloque aucun enregistrement),
+  découpe en phrases (Chrome coupe les lectures longues) et choisit une voix locale avant une voix en ligne (`pickVoice`).
+- **Accueil facile** (`easy-home.js`, panneau `#easy-home` en tête du tableau de bord, `body[data-easy-home]` masque le reste en CSS) : solde en grand + bouton
+  « Écouter », quatre grosses touches (J'ai reçu / J'ai dépensé / On me doit / Je dois), trois dernières opérations. « On me doit » et « Je dois » ouvrent
+  Dettes & créances. Bouton « Écouter mon solde » aussi sur la carte « Reste à vivre » du tableau de bord habituel (`#dash-speak-btn`).
+- **Saisie guidée** (`openEasyEntry`) : portefeuille (seulement s'il y en a plusieurs courants, le plus utilisé d'abord) → montant (pavé + billets/pièces qui
+  s'additionnent, montant écrit en lettres, bouton « Écouter ») → catégorie en images (les plus utilisées d'abord) → récapitulatif. **Réutilise
+  `recordTemplateNow`** (`quick-templates.js`) : même transaction, même audit, annulable (toast « Annuler »). Avertissements au récapitulatif, sans bloquer :
+  dépense supérieure au solde du portefeuille, et montant très au-dessus de l'habitude (`checkUnusualExpense` : le zéro de trop). Pas de note libre ni de
+  transfert dans ce parcours (les garder dans « Saisie express »).
+- **Réglages** : section « Accueil facile et voix » (Paramètres), 3e choix « Très facile — gros boutons et voix » à la 1re étape de l'assistant.
+- Pièges : `navigateTo` est passé à `initEasyHome({ navigateTo })` (importer `app.js` ferait un cycle) ; le panneau est redessiné par `VIEW_RENDERERS.dashboard`
+  et par `DATA_CHANGED` scope `'all'` (restauration) ; dans la page de tests, `[data-key]` existe aussi sur le clavier du PIN : toujours viser `.easy-modal`.
+- **Tests** : `test/features.test.html` 199 → **243** (pavé, billets, voix, textes lus, parcours complet avec vrai clic jusqu'à l'enregistrement, accueil) ;
+  `ledger.test.html` 175/175. Vérifié dans l'appli (PIN, données de démo, 800 et 375 px) : parcours complet, texte lu capté via un `speechSynthesis.speak`
+  simulé, alerte solde insuffisant + montant inhabituel, retour au tableau de bord classique en désactivant. 1789 clés EN, 0 doublon.
+- **Non vérifié** : la voix réelle (le panneau de test n'a pas de voix installée) ; un vrai téléphone Android/iOS ; les APK/EXE (copier `speech-out.js`,
+  `easy-home.js`, `icons.js`, CSS, HTML, `i18n.js` dans les builds embarqués, voir §9-10). Le « + » de la barre du bas ouvre toujours la Saisie express
+  classique, pas la saisie guidée. Le rappel de sauvegarde hebdomadaire peut s'afficher par-dessus la saisie guidée (pile de modales déjà tolérée).
+
+### 20 novembre 2026 (nuit) — Lots 2, 3 et 4 : sauvegarde vérifiée, code aidant, file d'attente des SMS (Djignan uniquement, `CACHE_VERSION` `v175`)
+
+Rien n'est commité (voir l'entrée précédente). Nouveaux fichiers (tous dans `APP_SHELL`) : `js/backup-integrity.js`, `js/backup-verify.js`, `js/sms-queue.js`.
+Nouvelles clés de réglages **propres à l'appareil** (ajoutées à `DEVICE_LOCAL_SETTING_KEYS`, jamais exportées ni importables) : `helperPin*`,
+`pinFailureLog`, `lastUnlockAt`, `backupVerification`, `smsInbox`.
+
+**Lot 2 — sauvegarde vérifiée et journal des codes ratés**
+- **Empreinte d'intégrité** : chaque export (JSON clair ET chiffré) porte `integrity: { algo:'SHA-256', checksum }` calculée sur `JSON.stringify(stores)` APRÈS
+  la sérialisation des photos ; recalculée à l'import AVANT `deserializeReceiptsForImport` (qui transforme les photos). Écart → `BackupIntegrityError` →
+  `confirmDialog` « Importer quand même ? » (settings.js, `runImportWithIntegrityCheck`), jamais en silence. Ancienne sauvegarde sans empreinte → acceptée comme avant.
+  **Limite** : c'est une empreinte, pas une signature : elle détecte l'accident ou une modification maladroite, pas un faussaire qui la recalcule (aucun secret, aucun
+  serveur). Le chiffré, lui, est authentifié par AES-GCM. La validation ligne par ligne d'`importAllData` reste la vraie barrière contre un fichier forgé.
+- **Export chiffré relu** : `exportEncryptedBackup` déchiffre aussitôt son propre résultat et recompare l'empreinte avant de proposer le fichier.
+- **Vérifier ma sauvegarde** (`verifyBackup`, `backup-verify.js`) : export → JSON → relecture → empreinte → signature (lignes par table + somme des transactions en
+  centimes) comparée à la base → `importAllData(…, { dryRun:true })` (nouvelle option : valide sans écrire). Bouton dans Paramètres + automatique au plus une fois par mois
+  (propriétaire, 9 s après le déverrouillage) ; un échec reste en alerte sur le tableau de bord. Photos comptées mais pas rejouées.
+- **Journal des codes ratés** (`auth.js`) : chaque code faux est daté (30 entrées). Au déverrouillage du propriétaire, fenêtre « Depuis votre dernière visite »
+  (`consumeUnlockReport`, `showUnlockReport` dans app.js) : codes ratés + opérations saisies par l'aidant. Première visite : rien. `lastUnlockAt` n'avance que pour le propriétaire.
+
+**Lot 3 — code aidant** (un proche tient le cahier d'un parent qui ne lit pas)
+- `auth.js` : second code (`setupHelperPin`, autorisé par le PIN propriétaire ; même nombre de chiffres que le sien, différent ; `removeHelperPin`) ; `verifyAccessCode`
+  renvoie `'owner' | 'helper' | null` (un code faux compte UNE tentative, même blocage anti-brute-force). `changePin` retire le code aidant s'il devient incompatible.
+  L'écran de verrouillage appelle `onUnlock({ role })` ; l'empreinte = toujours propriétaire.
+- `db.js` : garde `setAccessRole/getAccessRole/HelperRestrictedError`. Aidant : `dbDelete` refusé (sauf annuler SA propre saisie), `dbClear`, suppression en lot, `importAllData`
+  (hors `dryRun`), `wipe*` refusés ; ce qu'il ajoute porte `enteredBy:'helper'` ; `logAudit` note `actor:'helper'`. `appState.role` + `body[data-role]` côté interface :
+  `confirmDialog` refuse tout de suite les confirmations `requirePin/typeToConfirm`, Paramètres affiche un simple avis, l'entrée de menu est masquée, badge « Saisi par l'aidant ».
+- **Piège** : `onUnlocked` pose le rôle `owner` pendant `generateDueRecurring()` (tâche système, jamais attribuée à l'aidant) puis le rôle de la session.
+- **Règle d'écriture** (`checkHelperWrite`, db.js, appliquée à `dbAdd`/`dbPut`/`dbWriteBatch`) : l'aidant peut CRÉER n'importe quel enregistrement mais pas ÉCRASER l'existant ;
+  exceptions : ses propres transactions (modifiables, marque conservée), le journal d'audit et les réglages ordinaires (sauf `groupProjects`, `baseCurrency`, `userProfile`).
+  Donc « Annuler la dette », modifier une opération du propriétaire, archiver un portefeuille, réécrire un budget… lui sont refusés ; `dbBulkPut` aussi. Conséquence assumée :
+  l'aidant ne peut pas enregistrer un remboursement de dette (il met à jour la dette existante). Les rappels de sauvegarde/cloud ne s'affichent qu'au propriétaire ;
+  le code aidant ne remet pas à zéro le compteur anti-brute-force. Relu par une sous-session indépendante : 4 failles trouvées et corrigées (dont l'écrasement par `dbPut`).
+- **Limite assumée** : toutes les données étant locales, ce n'est pas un coffre-fort (devtools). L'aidant peut encore exporter un CSV/une preuve PDF (lecture seule).
+
+**Lot 4 — file d'attente des SMS Mobile Money** (`sms-queue.js`)
+- Un SMS partagé vers l'appli (Web Share Target, déjà en place) est GARDÉ au lieu d'être importé de force : dédoublonné, 50 au plus, 30 jours au plus. Le tableau de bord
+  affiche « N SMS en attente de validation » + « Valider » ; la fenêtre d'import s'ouvre préremplie, avec « Ignorer ces SMS ». Un import ne retire de la file que les SMS
+  présents dans le texte validé ; fermer la fenêtre sans importer les laisse en attente.
+- **Volontairement PAS fait** : la lecture automatique des SMS de l'appareil (Android natif + permission). Les vrais formats d'Orange/Wave/MTN/Moov n'ont jamais été
+  vérifiés ; lire en continu des messages mal analysés serait pire que ne rien lire. À reprendre seulement avec des SMS réels fournis par l'auteur.
+- Trois formats plausibles mais INVENTÉS (style Wave/Orange/MTN) ajoutés aux tests : ils passent, ce qui ne prouve rien sur les vrais opérateurs.
+
+**Relecture indépendante (2 sous-sessions en lecture seule) — corrigé et testé** : le rôle aidant ne tombait plus « ouvert » si une tâche de démarrage échouait (`try/finally`,
+rôle d'interface posé avant l'affichage) ; saisies du formulaire classique (`dbPut`) maintenant marquées ; faute de frappe du propriétaire suivie du bon code ne déclenche plus
+la fausse alerte d'intrusion (fenêtre d'une minute) ; `splitSentences` sans lookbehind (une erreur de syntaxe aurait empêché tout démarrage sous Safari < 16.4) ;
+import de SMS : seuls les SMS réglés quittent la file (décoché = reste) ; vérification de sauvegarde refaite une fois en cas d'écart (course avec une écriture) et revérifiée
+dès le lendemain après un échec ; erreur d'export chiffré visible dans le rappel hebdomadaire, relecture de contrôle sautée au-delà de ~30 Mo (mémoire) ; accueil facile :
+`e.currentTarget` après `await`, rendu même si le tableau de bord échoue, redessin à la fin de l'assistant ; voix : montants arrondis comme l'affichage, « canceled » n'est plus
+pris pour « aucune voix » ; restauration du premier écran jamais bloquée par l'empreinte (le chiffré est déjà authentifié).
+**Connu, non corrigé (faible)** : `/share-target` accepte un POST de n'importe quel site (le SW ne contrôle pas l'origine) : de faux SMS peuvent remplir la file (50 max, rien n'est
+importé sans validation).
+
+**Tests** : `features.test.html` 243 → **330** (empreinte, relecture, vérification à blanc, import refusé puis forcé, codes, rôles, garde db et règle d'écriture, file SMS, parcours réels) ;
+`ledger.test.html` 175/175. Audit statique (`audit.mjs` en scratchpad : imports nommés, précache, traductions) : 986 imports, 80 fichiers précachés, 1841 clés EN, aucun écart.
+`CACHE_VERSION` finale de la nuit : **v175**.
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :
+
+*(Pistes 8 à 12 ajoutées le 20 novembre 2026, issues d'une analyse concurrentielle — YNAB/Monarch/Copilot, apps africaines de suivi, carnets de crédit
+Khatabook/OkCredit, interfaces vocales pour personnes peu alphabétisées. Limite de cette analyse : rien trouvé sur Wave/Orange Money/Kolo ni sur la
+reconnaissance vocale en wolof/bambara/dioula. Piste 8 = lot 1, fait, voir §6 du 20 novembre.)*
+
+8. ~~**Accueil facile + lecture vocale**~~ — **fait, voir §6** (20 novembre 2026). Suite possible : « + » de la barre du bas qui ouvre la saisie guidée en mode facile,
+   message vocal WhatsApp pour la relance des créances, libellés et audios en langue locale (enregistrés par de vrais locuteurs, avant toute reconnaissance vocale).
+9. ~~**Mode aidant**~~ — **fait, voir §6** (nuit du 20 novembre). Suite possible : aidant en lecture seule stricte (aujourd'hui il peut modifier, pas supprimer) ; plusieurs aidants.
+10. ~~**Sauvegarde vérifiée et signée**~~ — **fait, voir §6** : empreinte SHA-256 (pas une vraie signature : voir la limite), vérification mensuelle à blanc, export chiffré relu,
+    journal des codes ratés. Une vraie signature demanderait un secret conservé hors de l'appareil.
+11. **Capture automatique des SMS Mobile Money** (APK, avec permission) — la **file d'attente** des SMS partagés est faite (§6) ; la lecture automatique des SMS reste **à faire,
+    seulement après validation avec de vrais SMS** d'Orange/Wave/MTN/Moov (les formats actuels sont inventés).
+12. **Assistant IA optionnel** — désactivé par défaut, seuls des agrégats anonymisés partiraient (jamais notes ni noms), consentement explicite ; bilan du mois en langage simple.
 
 1. ~~**Rendre la sauvegarde vraiment robuste**~~ — **fait, voir §6** (sauvegarde cloud Google + rappel
    périodique dédié, entrées du 14 août 2026).

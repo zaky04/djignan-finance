@@ -6,11 +6,11 @@
    ========================================================================== */
 
 import './app-mode.js'; // en tout premier : pose .is-app avant le moindre rendu (voir app-mode.js)
-import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAULT_CATEGORIES } from './db.js';
-import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigured } from './auth.js';
+import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAULT_CATEGORIES, setAccessRole } from './db.js';
+import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigured, consumeUnlockReport } from './auth.js';
 import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
 import { setAutoMasking } from './privacy.js';
-import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES } from './utils.js';
+import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES, intlLocale } from './utils.js';
 import { checkWeeklyBackupReminder, importEncryptedBackup } from './backup.js';
 import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, warmUpGoogleSignIn, initCloudAutoBackup } from './firebase-sync.js';
 import { seedDemoData, clearDemoData } from './demo-data.js';
@@ -18,6 +18,13 @@ import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
 import { initI18n, t } from './i18n.js';
 import { icon as svgIcon } from './icons.js';
+
+// Une action refusée au rôle « aidant » (db.js) : un message clair plutôt qu'une erreur silencieuse dans la console.
+window.addEventListener('unhandledrejection', (event) => {
+  if (event.reason?.name !== 'HelperRestrictedError') return;
+  event.preventDefault();
+  showToast(t('Action réservée au propriétaire.'));
+});
 import { initCardActions } from './card-actions.js';
 import { initPanels } from './panels.js';
 import { REQUIRE_ACTIVATION_CODE, ACTIVATION_CODE_HASH } from './activation-config.js';
@@ -42,9 +49,15 @@ import { initSearchModule } from './modules/search.js';
 import { openSmsImportModal } from './modules/sms-import.js';
 import { getUiMode, setUiMode, applyUiMode, SIMPLE_MORE_VIEWS } from './ui-mode.js';
 import { syncNativeReminders } from './native-reminders.js';
+import { initEasyHome, applyEasyHome, renderEasyHome, setEasyHome } from './easy-home.js';
+import { maybeRunMonthlyBackupCheck } from './backup-verify.js';
+import { queueSharedSms } from './sms-queue.js';
+import { isSpeechSupported } from './speech-out.js';
 
 const VIEW_RENDERERS = {
-  dashboard: renderDashboard,
+  // Accueil facile (easy-home.js) : rendu en plus du tableau de bord, seulement si le réglage est activé.
+  // `finally` : l'accueil facile se dessine même si un panneau du tableau de bord lève une erreur (sinon écran vide).
+  dashboard: async () => { try { await renderDashboard(); } finally { await renderEasyHome(); } },
   wallets: renderWallets,
   transactions: renderTransactions,
   budgets: renderBudgets,
@@ -194,7 +207,11 @@ function wireGlobalChrome() {
     // modules optionnels (ex: keptAccountsEnabled) sans passer par settings.js, qui applique déjà
     // la visibilité lui-même — sans ça le bouton de nav reste dans l'état d'avant l'import jusqu'au
     // prochain rechargement de page.
-    if (scope === 'all') { applyOptionalModuleVisibility(); applyUiMode(); }
+    if (scope === 'all') {
+      applyOptionalModuleVisibility(); applyUiMode();
+      // Une restauration peut avoir changé le réglage de l'accueil facile : on le réapplique avant de redessiner.
+      applyEasyHome().then(() => { if (appState.currentView === 'dashboard') renderEasyHome(); });
+    }
     scheduleNativeReminderSync();
   });
 }
@@ -288,8 +305,13 @@ async function applyShareTarget() {
       openQuickAdd({ sharedReceiptBlob: await response.blob() });
       return;
     }
-    // Texte partagé sans photo : le plus souvent un SMS Mobile Money transféré depuis la messagerie.
-    if (textResponse) openSmsImportModal({ text: await textResponse.text() });
+    // Texte partagé sans photo : le plus souvent un SMS Mobile Money transféré depuis la messagerie. Gardé en file d'attente
+    // (sms-queue.js) pour ne pas être perdu si l'utilisateur ferme la fenêtre : le tableau de bord rappelle « N SMS à valider ».
+    if (textResponse) {
+      await queueSharedSms(await textResponse.text());
+      notifyDataChanged('settings'); // fait apparaître le rappel du tableau de bord, même si la fenêtre est fermée sans importer
+      openSmsImportModal();
+    }
   } catch (err) {
     console.warn('[ShareTarget]', err);
   }
@@ -331,7 +353,16 @@ async function maybeShowOnboarding() {
           </button>
           <button type="button" class="btn btn-ghost btn-block mt-10" id="ob-mode-full" style="display:block;text-align:left;white-space:normal;height:auto;padding:12px 14px;">
             <strong>${t('Complet')}</strong><br><span style="font-weight:400;" class="fs-13">${t('Budgets, épargne, investissements, rapports, outils…')}</span>
+          </button>
+          <button type="button" class="btn btn-ghost btn-block mt-10" id="ob-mode-easy" style="display:block;text-align:left;white-space:normal;height:auto;padding:12px 14px;">
+            <strong>${t('Très facile — gros boutons et voix')}</strong><br><span style="font-weight:400;" class="fs-13">${t('Quatre grosses touches, des images, et l\'appli peut vous lire votre solde à voix haute.')}</span>
           </button>`;
+        el.querySelector('#ob-mode-easy').addEventListener('click', async () => {
+          await setUiMode('simple');
+          await setEasyHome(true);
+          if (isSpeechSupported()) await setSetting('speakConfirmations', true);
+          next();
+        });
         el.querySelector('#ob-mode-simple').addEventListener('click', async () => { await setUiMode('simple'); next(); });
         el.querySelector('#ob-mode-full').addEventListener('click', async () => { await setUiMode('full'); next(); });
       },
@@ -522,7 +553,11 @@ async function maybeShowOnboarding() {
   }
   async function next() {
     index++;
-    if (index >= steps.length) { modal.close(); return; }
+    if (index >= steps.length) {
+      modal.close();
+      notifyDataChanged('all'); // réglages posés pendant l'assistant (accueil facile, mode…) : on redessine, même sans portefeuille créé
+      return;
+    }
     await renderStep();
   }
 
@@ -687,7 +722,9 @@ function showRestoreScreenIfNeeded() {
         submitBtn.disabled = true;
         errorEl.hidden = true;
         try {
-          await importEncryptedBackup(file, passphrase, { merge: false });
+          // ignoreIntegrity : sur ce premier écran il n'y a aucun moyen de « confirmer » un écart, et le fichier chiffré est déjà authentifié par
+          // son mot de passe (AES-GCM) : un écart d'empreinte ne pourrait venir que d'un défaut de l'appli, qui ne doit jamais bloquer une restauration.
+          await importEncryptedBackup(file, passphrase, { merge: false, ignoreIntegrity: true });
           finish();
         } catch (err) {
           errorEl.textContent = err.message || t('Restauration impossible.');
@@ -745,15 +782,44 @@ function showRestoreScreenIfNeeded() {
   });
 }
 
-async function onUnlocked() {
+/** Ce que le propriétaire doit savoir à son retour : codes ratés pendant son absence, opérations saisies par l'aidant. */
+async function showUnlockReport() {
+  const report = await consumeUnlockReport();
+  if (!report.since) return; // toute première visite : rien à comparer
+  const sinceIso = new Date(report.since).toISOString();
+  const helperEntries = (await dbGetAll(STORES.TRANSACTIONS)).filter((tx) => tx.enteredBy === 'helper' && (tx.createdAt || '') > sinceIso).length;
+  if (!report.failures && !helperEntries) return;
+  const when = (ts) => new Date(ts).toLocaleString(intlLocale(), { dateStyle: 'medium', timeStyle: 'short' });
+  const lines = [];
+  if (report.failures) lines.push(t('{count} code(s) incorrect(s) saisi(s) pendant votre absence, le dernier le {date}. Si ce n\'était pas vous, changez votre code PIN dans Paramètres.', { count: report.failures, date: when(report.lastFailureAt) }));
+  if (helperEntries) lines.push(t('Votre aidant a saisi {count} opération(s).', { count: helperEntries }));
+  const modal = openModal(`
+    <ul class="unlock-report">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
+    <div class="modal-actions">
+      ${helperEntries ? `<button type="button" class="btn btn-ghost" data-act="see">${escapeHtml(t('Voir les opérations'))}</button>` : ''}
+      <button type="button" class="btn btn-primary" data-act="ok">${escapeHtml(t('OK'))}</button>
+    </div>`, { title: t('Depuis votre dernière visite') });
+  modal.el.querySelector('[data-act="ok"]').addEventListener('click', () => modal.close());
+  modal.el.querySelector('[data-act="see"]')?.addEventListener('click', () => { modal.close(); navigateTo('transactions'); });
+}
+
+async function onUnlocked({ role = 'owner' } = {}) {
+  // Le rôle côté interface est posé AVANT que l'appli soit montrée : sinon un aidant verrait un instant l'écran du propriétaire
+  // (Paramètres encore affichés) avec ses droits, le temps des tâches ci-dessous.
+  appState.role = role;
+  document.body.dataset.role = role;
   document.getElementById('lock-screen').hidden = true;
   document.getElementById('app').hidden = false;
   markActivity();
-  await generateDueRecurring();
+  // Les tâches du système (récurrences échues…) s'exécutent toujours en « propriétaire » côté base : elles ne doivent ni être
+  // refusées ni être attribuées à l'aidant. `finally` : même si elles échouent, la session reprend SON rôle (jamais de droits en trop).
+  setAccessRole('owner');
+  try { await generateDueRecurring(); } finally { setAccessRole(role); }
   // Mode discret : les montants sont masqués dès l'ouverture (dans le métro, au bureau…) — l'œil de la barre du haut
   // les réaffiche d'un geste. Non mémorisé : ça ne change pas le choix manuel enregistré pour les autres cas.
   if (await getSetting('privacyAutoHide', false)) { appState.privacyHidden = true; applyPrivacy(true); }
   navigateTo('dashboard');
+  if (role === 'owner') showUnlockReport().catch((err) => console.warn('[Rapport de visite]', err));
   applyShortcutParams();
   await applyShareTarget();
   await renderDemoModeBanner();
@@ -764,12 +830,18 @@ async function onUnlocked() {
   // de doublons/données écrasées si l'utilisateur commence à saisir sur cet appareil) prime sur les
   // simples rappels de sauvegarde ci-dessous. checkCloudStaleness() ne charge le SDK Firebase que
   // pour un utilisateur déjà connecté au cloud (cloudBackupWasSignedIn) — jamais par défaut.
-  setTimeout(() => checkCloudStaleness(), 2000);
-  setTimeout(() => checkWeeklyBackupReminder(), 4000); // décalé pour ne pas superposer les deux invites
-  // Encore décalé par rapport au rappel local : si les deux sont dus le même jour, on ne veut pas
-  // les empiler l'un sur l'autre. checkWeeklyCloudBackupReminder() ne charge le SDK Firebase que si
-  // l'utilisateur clique "Sauvegarder maintenant" dans le rappel, jamais pour décider s'il s'affiche.
-  setTimeout(() => checkWeeklyCloudBackupReminder(), 6000);
+  // Toutes ces invites touchent aux sauvegardes (exporter, restaurer, envoyer dans le cloud) : réservées au propriétaire.
+  // Un aidant (code aidant, db.js) ne les voit pas — et ne pourrait de toute façon pas restaurer.
+  if (role === 'owner') {
+    setTimeout(() => checkCloudStaleness(), 2000);
+    setTimeout(() => checkWeeklyBackupReminder(), 4000); // décalé pour ne pas superposer les deux invites
+    // Encore décalé par rapport au rappel local : si les deux sont dus le même jour, on ne veut pas
+    // les empiler l'un sur l'autre. checkWeeklyCloudBackupReminder() ne charge le SDK Firebase que si
+    // l'utilisateur clique "Sauvegarder maintenant" dans le rappel, jamais pour décider s'il s'affiche.
+    setTimeout(() => checkWeeklyCloudBackupReminder(), 6000);
+    // Une fois par mois au plus : la sauvegarde est-elle relisible et complète ? (échec visible sur le tableau de bord.)
+    setTimeout(() => maybeRunMonthlyBackupCheck().then((result) => { if (result && !result.ok && appState.currentView === 'dashboard') renderDashboard(); }).catch((err) => console.warn('[Vérification de sauvegarde]', err)), 9000);
+  }
   // Sauvegarde cloud automatique (opt-in) : n'écoute que les changements de données et ne charge le SDK
   // Firebase que si elle a été activée ET qu'il y a quelque chose à envoyer.
   initCloudAutoBackup();
@@ -820,6 +892,7 @@ async function onUnlocked() {
     initSettingsModule();
     initSearchModule();
     wireGlobalChrome();
+    initEasyHome({ navigateTo });
 
     appState.theme = await getSetting('theme', 'auto');
     applyTheme(appState.theme);
@@ -827,6 +900,7 @@ async function onUnlocked() {
     applyPrivacy(appState.privacyHidden);
     await applyOptionalModuleVisibility();
     await applyUiMode();
+    await applyEasyHome();
 
     lockScreenApi = initLockScreen({ onUnlock: onUnlocked });
   } catch (err) {

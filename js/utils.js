@@ -6,6 +6,7 @@
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour un timer dans debounce().
 import { t as tr, getLanguage } from './i18n.js';
 import { icon as svgIcon } from './icons.js';
+import { appState } from './state.js';
 
 export function uuid() {
   return crypto.randomUUID();
@@ -347,6 +348,12 @@ export function openModal(bodyHtml, { title = '', onClose = null } = {}) {
     - typeToConfirm : texte affiché en clair que l'utilisateur doit recopier (réinitialisation complète).
     Le PIN est vérifié avec le même blocage anti-brute-force que l'écran de verrouillage. */
 export async function confirmDialog(message, { title, confirmText, cancelText, danger = false, requirePin = false, typeToConfirm = null } = {}) {
+  // Un aidant n'a pas le droit de supprimer, vider ni réinitialiser (db.js) : on le lui dit tout de suite au lieu de lui
+  // demander un code PIN qu'il n'a pas.
+  if ((requirePin || typeToConfirm) && appState.role === 'helper') {
+    showToast(tr('Action réservée au propriétaire.'));
+    return false;
+  }
   title = title ?? tr('Confirmation');
   confirmText = confirmText ?? tr('Confirmer');
   // Pas de tr('Annuler') ici : ce mot français sert déjà de clé pour le bouton "Annuler" des toasts

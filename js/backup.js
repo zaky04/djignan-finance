@@ -9,6 +9,7 @@ import { getEnrichedTransactions, guessCategoryId } from './ledger.js';
 import { ASSET_CLASSES, ENTRY_TYPE_LABELS } from './modules/investments.js';
 import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast, safeNumber, compressImageBlob, intlLocale } from './utils.js';
 import { notifyDataChanged } from './state.js';
+import { computeIntegrity, checkIntegrity } from './backup-integrity.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
 // plusieurs fonctions — même piège documenté dans dashboard.js/transactions.js/debts.js/tools.js/
 // reports-extras.js/search.js.
@@ -165,16 +166,28 @@ export async function optimizeStoredReceipts(onProgress = () => {}) {
 }
 
 /* ---------- Export / import JSON en clair ---------- */
+/** Le fichier ne correspond plus à son empreinte (backup-integrity.js) : abîmé, tronqué ou modifié. L'appelant peut demander
+    confirmation à l'utilisateur puis réessayer avec `ignoreIntegrity: true` (jamais en silence). */
+export class BackupIntegrityError extends Error {
+  constructor() {
+    super(tr("Ce fichier a été modifié ou abîmé depuis son export : son contenu ne correspond plus à son empreinte."));
+    this.name = 'BackupIntegrityError';
+  }
+}
+
 export async function exportJsonBackup() {
   const data = await exportAllData();
   await serializeReceiptsForExport(data);
+  data.integrity = await computeIntegrity(data.stores); // APRÈS la sérialisation des photos : c'est le contenu du fichier
   downloadFile(`djignan-backup-${todayISO()}.json`, JSON.stringify(data, null, 2), 'application/json');
   await markBackupDone();
 }
 
-export async function importJsonBackup(file, { merge = false } = {}) {
+export async function importJsonBackup(file, { merge = false, ignoreIntegrity = false } = {}) {
   const text = await readFileAsText(file);
   const data = JSON.parse(text);
+  // Avant deserializeReceiptsForImport, qui transforme les photos : l'empreinte porte sur le contenu tel qu'exporté.
+  if (!ignoreIntegrity && (await checkIntegrity(data)) === 'mismatch') throw new BackupIntegrityError();
   await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
   notifyDataChanged('all');
@@ -187,6 +200,7 @@ export async function importJsonBackup(file, { merge = false } = {}) {
 export async function buildEncryptedPayload(passphrase) {
   const data = await exportAllData();
   await serializeReceiptsForExport(data);
+  data.integrity = await computeIntegrity(data.stores); // vérifiée après déchiffrement (exportEncryptedBackup, importEncryptedBackup)
   const json = JSON.stringify(data);
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -215,14 +229,26 @@ export async function decryptPayload(payload, passphrase) {
 
 export async function exportEncryptedBackup(passphrase) {
   const payload = await buildEncryptedPayload(passphrase);
+  // Relecture immédiate : une sauvegarde qu'on ne saurait pas rouvrir ne vaut rien. Déchiffre avec le même mot de passe et
+  // recompare l'empreinte AVANT de proposer le fichier — mieux vaut une erreur maintenant qu'une surprise le jour de la restauration.
+  // Au-delà de ~30 Mo de texte chiffré la relecture doublerait la mémoire utilisée (risque de saturer un téléphone) : on s'en passe, le
+  // chiffrement AES-GCM étant déjà authentifié. En dessous, c'est un contrôle gratuit.
+  const SELF_CHECK_MAX_CHARS = 40 * 1024 * 1024; // ≈ 30 Mo en clair une fois encodé en base64
+  let reopened;
+  const checkable = payload.ciphertext.length < SELF_CHECK_MAX_CHARS;
+  if (checkable) { try { reopened = await decryptPayload(payload, passphrase); } catch { reopened = null; } }
+  if (checkable && (!reopened || (await checkIntegrity(reopened)) !== 'ok')) {
+    throw new Error(tr("La sauvegarde chiffrée n'a pas pu être relue : ne l'utilisez pas. Réessayez, et si le problème persiste, exportez en JSON non chiffré."));
+  }
   downloadFile(`djignan-backup-chiffre-${todayISO()}.json`, JSON.stringify(payload), 'application/json');
   await markBackupDone();
 }
 
-export async function importEncryptedBackup(file, passphrase, { merge = false } = {}) {
+export async function importEncryptedBackup(file, passphrase, { merge = false, ignoreIntegrity = false } = {}) {
   const text = await readFileAsText(file);
   const payload = JSON.parse(text);
   const data = await decryptPayload(payload, passphrase);
+  if (!ignoreIntegrity && (await checkIntegrity(data)) === 'mismatch') throw new BackupIntegrityError();
   await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
   notifyDataChanged('all');
@@ -629,7 +655,12 @@ function showBackupReminderModal(urgent = false) {
       e.preventDefault();
       const fd = new FormData(e.target);
       if (fd.get('passphrase') !== fd.get('passphraseConfirm')) { showToast(tr('Les mots de passe ne correspondent pas.')); return; }
-      await exportEncryptedBackup(fd.get('passphrase'));
+      try {
+        await exportEncryptedBackup(fd.get('passphrase'));
+      } catch (err) { // relecture de contrôle échouée : on le dit, le fichier n'a pas été proposé
+        showToast(err.message || tr('Erreur lors de la sauvegarde chiffrée.'), { duration: 9000 });
+        return;
+      }
       showToast(tr('Sauvegarde chiffrée exportée.'));
       close();
     });

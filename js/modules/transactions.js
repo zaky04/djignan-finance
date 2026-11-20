@@ -756,6 +756,8 @@ function txRowHtml(t) {
   // Badge « Exceptionnelle » : dépense hors suivi mensuel (voir ledger.js, markExceptionalTransactions).
   const badges = [
     ...(t.isExceptional ? [`<span class="badge badge-accent">${escapeHtml(tr('Exceptionnelle'))}</span>`] : []),
+    // Saisie par l'aidant (code aidant, db.js) : le propriétaire la repère dans la liste.
+    ...(t.enteredBy === 'helper' ? [`<span class="badge">${escapeHtml(tr('Saisi par l\'aidant'))}</span>`] : []),
     ...(t.tags || []).map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`),
   ];
   const tagsHtml = badges.length ? `<div class="tx-tags">${badges.join('')}</div>` : '';

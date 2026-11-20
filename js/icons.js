@@ -79,6 +79,11 @@ export const ICON_PATHS = {
   bolt: '<path d="M13 3 5.5 13.5H11L10 21l8.5-11H13V3Z"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
   star: '<path d="M12 3.8l2.5 5.2 5.7.8-4.1 4 1 5.7-5.1-2.7-5.1 2.7 1-5.7-4.1-4 5.7-.8L12 3.8Z"/>',
+
+  // ---------- Écran d'accueil facile et lecture vocale (easy-home.js, speech-out.js) ----------
+  speaker: '<path d="M4 9.5v5h3.5l4.5 4v-13l-4.5 4H4Z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  arrowDown: '<path d="M12 4v14M6 12l6 6 6-6"/>',
+  arrowUp: '<path d="M12 20V6M6 12l6-6 6 6"/>',
 };
 
 /** <svg> d'une icône du jeu (inconnue : étiquette). Trait en `currentColor`, pas d'aplat. */

@@ -193,29 +193,83 @@ export async function dbGetAllByIndex(store, indexName, query) {
 }
 
 export async function dbPut(store, value) {
+  await checkHelperWrite(store, value, 'put');
   const db = await openDatabase();
   await reqToPromise(tx(db, store, 'readwrite').objectStore(store).put(value));
   return value;
 }
 
+/* ---------- Rôle d'accès (propriétaire / aidant) ----------
+   Un « aidant » (un proche qui tient le cahier d'un parent) déverrouille l'appli avec son propre code : il voit tout et peut
+   AJOUTER des opérations, mais jamais supprimer, vider, restaurer ni importer. Ce garde est ici, au plus bas, pour couvrir
+   tous les écrans d'un coup ; l'interface masque en plus ce qui lui est fermé (Paramètres, confirmations de suppression).
+   Limite assumée : toutes les données sont locales, donc quelqu'un qui maîtrise les outils de développement du navigateur
+   peut le contourner — c'est une protection contre l'accident et l'usage ordinaire, comme le code PIN, pas un coffre-fort.
+   Le rôle vaut « propriétaire » tant que rien ne le change : démarrage, tests et tout le code existant restent inchangés. */
+let accessRole = 'owner';
+export function setAccessRole(role) { accessRole = role === 'helper' ? 'helper' : 'owner'; }
+export function getAccessRole() { return accessRole; }
+export class HelperRestrictedError extends Error {
+  constructor() { super('Action réservée au propriétaire.'); this.name = 'HelperRestrictedError'; }
+}
+function assertOwner() { if (accessRole === 'helper') throw new HelperRestrictedError(); }
+
+/** Réglages que l'aidant ne peut pas réécrire : des données du propriétaire rangées dans la table des réglages. */
+const HELPER_BLOCKED_SETTINGS = new Set(['groupProjects', 'baseCurrency', 'userProfile']);
+
+/** Règle d'écriture de l'aidant, appliquée à chaque `add`/`put` (dbAdd, dbPut, dbWriteBatch). Il peut CRÉER n'importe quel nouvel
+    enregistrement, mais pas ÉCRASER l'existant :
+      - transactions : créer, et modifier celles qu'il a lui-même saisies (la marque `enteredBy` est posée à la création et conservée) ;
+      - journal d'audit : libre ; réglages : libres sauf ceux listés ci-dessus ;
+      - toute autre table : un enregistrement qui existe déjà (portefeuille, dette, budget, objectif, taux…) est réservé au propriétaire.
+    C'est ce qui ferme « Annuler la dette », la modification d'un montant, l'archivage, etc., sans écran par écran. Sans effet pour le propriétaire. */
+async function checkHelperWrite(store, value, kind) {
+  if (accessRole !== 'helper' || !value) return;
+  if (store === STORES.TRANSACTIONS) {
+    if (kind === 'put') {
+      const existing = await dbGet(store, value.id);
+      if (existing && existing.enteredBy !== 'helper') throw new HelperRestrictedError();
+    }
+    value.enteredBy = 'helper'; // nouvelle saisie, ou modification d'une saisie à lui : la marque reste
+    return;
+  }
+  if (store === STORES.AUDIT_LOG) return;
+  if (store === STORES.SETTINGS) {
+    if (HELPER_BLOCKED_SETTINGS.has(value.key)) throw new HelperRestrictedError();
+    return;
+  }
+  if (kind === 'put') {
+    const key = value[STORE_KEY_PATH[store] || 'id'];
+    if (key !== undefined && await dbGet(store, key)) throw new HelperRestrictedError();
+  }
+}
+
 export async function dbAdd(store, value) {
+  await checkHelperWrite(store, value, 'add'); // marque aussi ce que l'aidant saisit : le propriétaire le retrouve (bilan de visite, audit)
   const db = await openDatabase();
   await reqToPromise(tx(db, store, 'readwrite').objectStore(store).add(value));
   return value;
 }
 
 export async function dbDelete(store, id) {
+  if (accessRole === 'helper') {
+    // Seule exception : l'aidant peut annuler ce QU'IL VIENT de saisir (toast « Annuler »). Rien d'autre.
+    const own = store === STORES.TRANSACTIONS && (await dbGet(store, id))?.enteredBy === 'helper';
+    if (!own) throw new HelperRestrictedError();
+  }
   const db = await openDatabase();
   await reqToPromise(tx(db, store, 'readwrite').objectStore(store).delete(id));
 }
 
 export async function dbClear(store) {
+  assertOwner();
   const db = await openDatabase();
   await reqToPromise(tx(db, store, 'readwrite').objectStore(store).clear());
 }
 
 export async function dbBulkPut(store, values) {
   if (!values || !values.length) return;
+  assertOwner(); // écrasement en masse (import CSV, données de démonstration) : réservé au propriétaire
   const db = await openDatabase();
   const t = tx(db, store, 'readwrite');
   const os = t.objectStore(store);
@@ -241,6 +295,11 @@ export async function dbBulkPut(store, values) {
     groupe d'écritures qui doivent réussir ou échouer ensemble. */
 export async function dbWriteBatch(operations) {
   if (!operations || !operations.length) return;
+  if (accessRole === 'helper') {
+    if (operations.some((op) => op.type === 'delete')) throw new HelperRestrictedError();
+    // Vérifié AVANT toute écriture : le lot est atomique, donc un seul refus annule tout (rien n'est à moitié écrit).
+    for (const op of operations) await checkHelperWrite(op.store, op.value, op.type);
+  }
   const storeNames = [...new Set(operations.map((op) => op.store))];
   const db = await openDatabase();
   const t = tx(db, storeNames, 'readwrite');
@@ -267,6 +326,7 @@ export async function logAudit({ entityType, entityId, action, before = null, af
     before,
     after,
     note,
+    ...(accessRole === 'helper' ? { actor: 'helper' } : {}), // qui a agi : seulement noté pour l'aidant
   });
 }
 
@@ -299,6 +359,12 @@ const DEVICE_LOCAL_SETTING_KEYS = new Set([
   'cloudAutoBackupFailures', 'cloudAutoBackupLastError', 'cloudAutoBackupBlocked',
   // Rappels planifiés Android (native-reminders.js) : identifiants propres à CET appareil.
   'nativeRemindersEnabled', 'nativeReminderIds',
+  // Code « aidant » (auth.js) : même nature que le PIN — jamais exporté, jamais importable depuis un fichier forgé.
+  'helperPinHash', 'helperPinSalt', 'helperPinIterations', 'helperPinLength',
+  // Journal des codes ratés et date de la dernière visite du propriétaire (auth.js) : propres à CET appareil.
+  'pinFailureLog', 'lastUnlockAt',
+  // Résultat de la dernière vérification de sauvegarde (backup-verify.js) et SMS en attente de validation (sms-queue.js).
+  'backupVerification', 'smsInbox',
 ]);
 
 export async function exportAllData() {
@@ -363,7 +429,10 @@ function rowMatchesRequiredFields(store, row) {
     chaque store était vidé puis rempli séparément : une ligne sans identifiant (fichier corrompu ou
     forgé) faisait échouer l'import en plein milieu, après avoir déjà effacé des stores entiers, et
     laissait l'appareil avec des données à moitié anciennes, à moitié nouvelles. */
-export async function importAllData(data, { merge = false } = {}) {
+export async function importAllData(data, { merge = false, dryRun = false } = {}) {
+  // `dryRun` : valide tout le fichier (mêmes règles que l'import réel) sans rien écrire — sert à VÉRIFIER qu'une sauvegarde
+  // est restaurable (backup-verify.js). Renvoie le nombre de lignes par store.
+  if (!dryRun) assertOwner();
   if (!data || typeof data !== 'object' || !data.stores || typeof data.stores !== 'object') throw new Error('Fichier de sauvegarde invalide.');
   const plan = [];
   for (const store of Object.values(STORES)) {
@@ -395,6 +464,7 @@ export async function importAllData(data, { merge = false } = {}) {
     if (!cleaned.every((row) => rowMatchesRequiredFields(store, row))) throw new Error('Fichier de sauvegarde invalide.');
     plan.push({ store, rows: cleaned });
   }
+  if (dryRun) return Object.fromEntries(plan.map((p) => [p.store, p.rows.length]));
   if (!plan.length) return;
   // Mode « fusionner » : les projets collectifs (un seul réglage contenant toute la liste) sont réunis par identifiant au
   // lieu d'être remplacés en bloc par ceux de la sauvegarde — sinon importer une sauvegarde effaçait les projets locaux.

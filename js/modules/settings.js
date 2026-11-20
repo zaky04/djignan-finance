@@ -5,7 +5,8 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbWriteBatch, getSetting, setSetting, wipeAllData } from '../db.js';
-import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric } from '../auth.js';
+import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric, isHelperConfigured, setupHelperPin, removeHelperPin, getPinLength } from '../auth.js';
+import { verifyBackup, getLastBackupVerification } from '../backup-verify.js';
 import {
   exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup,
   analyzeTransactionsCsv, importDjignanCsvRows, importGenericCsvRows, exportTransactionsCsv,
@@ -16,9 +17,11 @@ import { isNotificationSupported, getNotificationPermission, requestNotification
 import { renderCloudBackupSection } from '../firebase-sync.js';
 import { isStandalone, isIOS, isSafari, isAndroid, hasDeferredPrompt, triggerInstall, resetInstallPromptSnooze } from '../install-prompt.js';
 import { DASHBOARD_PANEL_DEFAULTS, BUDGET_ALERT_THRESHOLD_DEFAULTS } from './dashboard.js';
-import { escapeHtml, formatDate, CURRENCIES, openModal, confirmDialog, confirmReplaceAllData, showToast } from '../utils.js';
-import { notifyDataChanged } from '../state.js';
+import { escapeHtml, formatDate, localISODate, CURRENCIES, openModal, confirmDialog, confirmReplaceAllData, showToast } from '../utils.js';
+import { notifyDataChanged, appState } from '../state.js';
 import { getUiMode, setUiMode } from '../ui-mode.js';
+import { isEasyHomeEnabled, setEasyHome } from '../easy-home.js';
+import { isSpeechSupported, speak, primeSpeech } from '../speech-out.js';
 import { isNativeReminderSupported, enableNativeReminders, disableNativeReminders } from '../native-reminders.js';
 import { t, getLanguage, setLanguage } from '../i18n.js';
 
@@ -177,9 +180,11 @@ async function renderSecuritySection(container) {
     const fd = new FormData(e.target);
     if (fd.get('newPin') !== fd.get('newPinConfirm')) { showToast(t('Les nouveaux codes ne correspondent pas.')); return; }
     try {
-      await changePin(fd.get('oldPin'), fd.get('newPin'));
+      const { helperRemoved } = await changePin(fd.get('oldPin'), fd.get('newPin'));
       showToast(t('Code PIN modifié.'));
+      if (helperRemoved) showToast(t("Le code aidant a été retiré (il doit avoir le même nombre de chiffres que votre code). Redéfinissez-en un si besoin."), { duration: 8000 });
       e.target.reset();
+      renderHelperSection(document.getElementById('settings-helper'));
     } catch (err) {
       showToast(err.message || t('Erreur lors du changement de PIN.'));
     }
@@ -301,6 +306,20 @@ export async function changeBaseCurrency(newCurrency) {
   return { oldCurrency, newCurrency, unconfirmed: [...used] };
 }
 
+/** Importe un fichier ; s'il ne correspond plus à son empreinte (modifié ou abîmé depuis l'export), le dit et demande avant de
+    continuer. Renvoie false si l'utilisateur a renoncé. Toute autre erreur est relancée à l'appelant. */
+async function runImportWithIntegrityCheck(run) {
+  try {
+    await run(false);
+  } catch (err) {
+    if (err?.name !== 'BackupIntegrityError') throw err;
+    const go = await confirmDialog(`${err.message} ${t('Importer quand même ?')}`, { danger: true, confirmText: t('Importer quand même') });
+    if (!go) return false;
+    await run(true);
+  }
+  return true;
+}
+
 async function renderBackupSection(container) {
   const lastBackupAt = await getSetting('lastBackupAt');
   const backupSnoozedUntil = await getSetting('backupSnoozedUntil');
@@ -406,8 +425,8 @@ async function renderBackupSection(container) {
       const merge = await confirmDialog(t('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du fichier.'), { confirmText: t('Fusionner'), cancelText: t('Remplacer tout') });
       if (!merge && !(await confirmReplaceAllData())) return;
       try {
-        await importJsonBackup(file, { merge });
-        showToast(t('Import réussi.'));
+        const done = await runImportWithIntegrityCheck((ignoreIntegrity) => importJsonBackup(file, { merge, ignoreIntegrity }));
+        if (done) showToast(t('Import réussi.'));
       } catch (err) { showToast(t('Erreur : {message}', { message: err.message || t('fichier invalide.') })); }
     }).click();
   });
@@ -415,8 +434,12 @@ async function renderBackupSection(container) {
   container.querySelector('#export-encrypted-btn').addEventListener('click', async () => {
     const p1 = await promptPassphrase(t('Mot de passe de chiffrement'));
     if (!p1) return;
-    await exportEncryptedBackup(p1);
-    showToast(t('Sauvegarde chiffrée exportée.'));
+    try {
+      await exportEncryptedBackup(p1);
+      showToast(t('Sauvegarde chiffrée exportée.'));
+    } catch (err) { // relecture de contrôle échouée (backup.js) : le fichier n'est pas proposé
+      showToast(err.message || t('Erreur lors de la sauvegarde chiffrée.'), { duration: 9000 });
+    }
     renderBackupSection(container);
   });
 
@@ -427,8 +450,8 @@ async function renderBackupSection(container) {
       const merge = await confirmDialog(t('Fusionner avec les données existantes ?'), { confirmText: t('Fusionner'), cancelText: t('Remplacer tout') });
       if (!merge && !(await confirmReplaceAllData())) return;
       try {
-        await importEncryptedBackup(file, p, { merge });
-        showToast(t('Import réussi.'));
+        const done = await runImportWithIntegrityCheck((ignoreIntegrity) => importEncryptedBackup(file, p, { merge, ignoreIntegrity }));
+        if (done) showToast(t('Import réussi.'));
       } catch (err) { showToast(t('Erreur : {message}', { message: err.message || t('fichier invalide.') })); }
     }).click();
   });
@@ -753,6 +776,111 @@ async function renderUiModeSection(container) {
   });
 }
 
+/** Code aidant (auth.js, db.js) : un proche tient le cahier sans pouvoir rien supprimer ni régler. */
+async function renderHelperSection(container) {
+  if (!container) return;
+  const configured = await isHelperConfigured();
+  const length = await getPinLength();
+  container.innerHTML = `
+    <div class="panel mb-16">
+      <div class="panel-header"><h3>${t('Code aidant')}</h3></div>
+      <p class="fs-13 c-muted mb-12">${t("Pour qu'un proche tienne votre cahier à votre place : il ouvre l'appli avec son propre code, voit tout et peut ajouter des opérations, mais ne peut rien supprimer, restaurer ni réinitialiser, ni toucher aux réglages. Ce qu'il saisit vous est signalé à votre prochaine visite.")}</p>
+      <p class="fs-12 c-muted mb-12">${t("C'est une protection contre les erreurs et l'usage ordinaire, pas un coffre-fort : toutes les données restent sur cet appareil.")}</p>
+      <p class="fs-14 mb-12"><strong>${configured ? t('Un code aidant est défini.') : t("Aucun code aidant n'est défini.")}</strong></p>
+      <form id="helper-form">
+        <div class="form-row"><label for="helper-code">${t('Code aidant ({n} chiffres)', { n: length })}</label>
+          <input type="password" id="helper-code" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="${length}" autocomplete="off" required></div>
+        <div class="form-row"><label for="helper-code2">${t('Confirmer le code aidant')}</label>
+          <input type="password" id="helper-code2" name="code2" inputmode="numeric" pattern="[0-9]*" maxlength="${length}" autocomplete="off" required></div>
+        <div class="form-row"><label for="helper-owner-pin">${t('Votre code PIN (pour autoriser)')}</label>
+          <input type="password" id="helper-owner-pin" name="ownerPin" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" required></div>
+        <button type="submit" class="btn btn-primary">${configured ? t('Changer le code aidant') : t('Définir le code aidant')}</button>
+        ${configured ? `<button type="button" class="btn btn-ghost" id="helper-remove-btn">${t('Retirer le code aidant')}</button>` : ''}
+      </form>
+    </div>`;
+  container.querySelector('#helper-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    if (fd.get('code') !== fd.get('code2')) { showToast(t('Les codes ne correspondent pas.')); return; }
+    try {
+      await setupHelperPin(String(fd.get('code')), String(fd.get('ownerPin')));
+      showToast(t('Code aidant enregistré.'));
+      renderHelperSection(container);
+    } catch (err) {
+      showToast(err.message || t('Erreur lors de la définition du code aidant.'));
+    }
+  });
+  container.querySelector('#helper-remove-btn')?.addEventListener('click', async () => {
+    if (!(await confirmDialog(t("Retirer le code aidant ? Votre proche ne pourra plus ouvrir l'appli."), { danger: true, requirePin: true, confirmText: t('Retirer') }))) return;
+    await removeHelperPin();
+    showToast(t('Code aidant retiré.'));
+    renderHelperSection(container);
+  });
+}
+
+/** Vérification de la sauvegarde (backup-verify.js) : à la demande, et automatique une fois par mois. */
+async function renderBackupCheckSection(container) {
+  if (!container) return;
+  const last = await getLastBackupVerification();
+  const when = last ? formatDate(localISODate(new Date(last.at))) : '';
+  const status = !last
+    ? `<p class="fs-14 mb-12">${t("Votre sauvegarde n'a pas encore été vérifiée.")}</p>`
+    : last.ok
+      ? `<p class="fs-14 mb-12">${t('Vérifiée le {date} : {rows} lignes relues sans écart, la restauration serait acceptée.', { date: when, rows: last.rows })}</p>`
+      : `<p class="fs-14 c-neg mb-12"><strong>${t('Vérifiée le {date} : problème trouvé.', { date: when })}</strong></p>
+         <ul class="fs-13 mb-12">${(last.issues || []).map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul>`;
+  container.innerHTML = `
+    <div class="panel mb-16">
+      <div class="panel-header"><h3>${t('Vérifier ma sauvegarde')}</h3></div>
+      <p class="fs-13 c-muted mb-12">${t("Simule une sauvegarde puis sa restauration, sans rien modifier, et compare avec vos données : nombre de lignes de chaque table et total des transactions. Fait aussi automatiquement une fois par mois.")}</p>
+      ${status}
+      <button type="button" class="btn btn-primary" id="backup-verify-btn">${t('Vérifier maintenant')}</button>
+    </div>`;
+  container.querySelector('#backup-verify-btn').addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    e.currentTarget.textContent = t('Vérification en cours…');
+    const result = await verifyBackup();
+    showToast(result.ok ? t('Sauvegarde vérifiée : aucun écart.') : t('Problème trouvé : voir le détail dans Paramètres.'), { duration: 6000 });
+    renderBackupCheckSection(container);
+  });
+}
+
+/** Accueil facile (gros boutons, images) et lecture à voix haute — voir easy-home.js et speech-out.js. */
+async function renderEasyHomeSection(container) {
+  const [easyOn, speakOn] = await Promise.all([isEasyHomeEnabled(), getSetting('speakConfirmations', false)]);
+  const speechOk = isSpeechSupported();
+  container.innerHTML = `
+    <div class="panel mb-16">
+      <div class="panel-header"><h3>${t('Accueil facile et voix')}</h3></div>
+      <p class="fs-13 c-muted mb-12">${t("Pour qui lit peu : un accueil à quatre grosses touches avec des images, une saisie guidée sans clavier, et l'appli qui lit à voix haute.")}</p>
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer;" class="fs-14">
+        <input type="checkbox" id="easy-home-toggle" ${easyOn ? 'checked' : ''}>
+        ${escapeHtml(t('Accueil facile (gros boutons et images)'))}
+      </label>
+      <label style="display:flex;align-items:center;gap:10px;padding:8px 0;cursor:${speechOk ? 'pointer' : 'default'};" class="fs-14">
+        <input type="checkbox" id="speak-confirmations-toggle" ${speakOn && speechOk ? 'checked' : ''} ${speechOk ? '' : 'disabled'}>
+        ${escapeHtml(t("Lire à voix haute le solde après chaque enregistrement"))}
+      </label>
+      ${speechOk
+        ? `<button type="button" class="btn btn-ghost mt-8" id="speech-test-btn">${t('Tester la voix')}</button>
+           <p class="fs-12 c-muted mt-8">${t("La voix vient de votre téléphone ou ordinateur. Si vous n'entendez rien, vérifiez le volume et qu'une voix est installée dans les réglages du système.")}</p>`
+        : `<p class="fs-12 c-muted mt-8">${t("La lecture à voix haute n'est pas disponible sur cet appareil.")}</p>`}
+    </div>`;
+  container.querySelector('#easy-home-toggle').addEventListener('change', async (e) => {
+    await setEasyHome(e.target.checked);
+    showToast(e.target.checked ? t('Accueil facile activé.') : t('Accueil facile désactivé.'));
+  });
+  container.querySelector('#speak-confirmations-toggle').addEventListener('change', async (e) => {
+    await setSetting('speakConfirmations', e.target.checked);
+    showToast(t('Réglage enregistré.'));
+  });
+  container.querySelector('#speech-test-btn')?.addEventListener('click', async () => {
+    primeSpeech();
+    const spoken = await speak(t("Bonjour. Ceci est un essai de la voix de l'application."));
+    if (!spoken) showToast(t("Aucune voix n'est installée sur cet appareil : le texte reste affiché."));
+  });
+}
+
 async function renderDashboardConfigSection(container) {
   const panels = { ...DASHBOARD_PANEL_DEFAULTS, ...(await getSetting('dashboardPanels', {})) };
 
@@ -796,10 +924,21 @@ function renderDeveloperSection(container) {
 export async function renderSettings() {
   const container = document.getElementById('settings-content');
   if (!container) return;
-  container.innerHTML = '<div id="settings-profile"></div><div id="settings-uimode"></div><div id="settings-security"></div><div id="settings-notifications"></div><div id="settings-native-reminders"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-language"></div><div id="settings-currency"></div><div id="settings-backup"></div><div id="settings-cloud-backup"></div><div id="settings-developer"></div>';
+  // Un aidant (code aidant, auth.js) n'a accès à aucun réglage : on le lui explique au lieu de lui montrer des boutons refusés.
+  if (appState.role === 'helper') {
+    container.innerHTML = `
+      <div class="panel">
+        <div class="panel-header"><h3>${t('Réglages réservés au propriétaire')}</h3></div>
+        <p class="fs-14">${t("Vous êtes connecté avec le code aidant : vous pouvez consulter vos comptes et ajouter des opérations. Les réglages, les sauvegardes et les suppressions sont réservés au propriétaire.")}</p>
+      </div>`;
+    return;
+  }
+  container.innerHTML = '<div id="settings-profile"></div><div id="settings-uimode"></div><div id="settings-easy"></div><div id="settings-security"></div><div id="settings-helper"></div><div id="settings-notifications"></div><div id="settings-native-reminders"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-language"></div><div id="settings-currency"></div><div id="settings-backup-check"></div><div id="settings-backup"></div><div id="settings-cloud-backup"></div><div id="settings-developer"></div>';
   await renderProfileSection(document.getElementById('settings-profile'));
   await renderUiModeSection(document.getElementById('settings-uimode'));
+  await renderEasyHomeSection(document.getElementById('settings-easy'));
   await renderSecuritySection(document.getElementById('settings-security'));
+  await renderHelperSection(document.getElementById('settings-helper'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
   await renderNativeRemindersSection(document.getElementById('settings-native-reminders'));
   await renderInstallSection(document.getElementById('settings-install'));
@@ -809,6 +948,7 @@ export async function renderSettings() {
   await renderLanguageSection(document.getElementById('settings-language'));
   await renderCurrencySection(document.getElementById('settings-currency'));
   await renderBackupSection(document.getElementById('settings-backup'));
+  await renderBackupCheckSection(document.getElementById('settings-backup-check'));
   await renderCloudBackupSection(document.getElementById('settings-cloud-backup'));
   renderDeveloperSection(document.getElementById('settings-developer'));
 }

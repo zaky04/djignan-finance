@@ -20,7 +20,7 @@
 <script type="module">
 window.__GEOFINANCE_TEST_DB_NAME__ = 'geofinance-features-test-db';
 
-const { STORES, dbAdd, wipeAllData, setSetting } = await import('../js/db.js');
+const { STORES, dbAdd, dbGetAll, wipeAllData, setSetting } = await import('../js/db.js');
 const { parseMobileMoneyMessage: sms, parseMobileMoneyMessages, parseAmountToken, currencyMatchesWallet } = await import('../js/mobile-money-parser.js');
 const { parseSpokenEntry: say } = await import('../js/voice-input.js');
 const { buildPersonStatement, buildReminderMessage, whatsappUrl, smsUrl, normalizeName, summarizePeople } = await import('../js/modules/person-ledger.js');
@@ -456,6 +456,350 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   setAutoMasking(false);
   eq('discret : retour au mode visible, texte rendu à l\'identique', [document.querySelectorAll('.auto-mask').length, document.getElementById('p1').textContent, document.getElementById('late').textContent], [0, 'Reste 55 500 F CFA ce mois-ci, soit 44 % de moins.', 'Solde 1 234 567 F CFA']);
   app.remove();
+}
+
+// ---------- Accueil facile et lecture à voix haute ----------
+{
+  const { keypadPress, addToAmount, quickAmounts, openEasyEntry, renderEasyHome, applyEasyHome } = await import('../js/easy-home.js');
+  const { pickVoice, splitSentences, spokenAmount, buildBalanceSpeech, buildSavedSpeech, buildConfirmSpeech } = await import('../js/speech-out.js');
+
+  // Pavé numérique
+  eq('pavé : 5 puis 000 = 5000', keypadPress(keypadPress('', '5'), '000'), '5000');
+  eq('pavé : pas de zéro en tête', [keypadPress('', '0'), keypadPress('', '000'), keypadPress('', '007')], ['', '', '7']);
+  eq('pavé : 105 puis 0', keypadPress('105', '0'), '1050');
+  eq('pavé : effacer le dernier chiffre / tout effacer', [keypadPress('1234', 'back'), keypadPress('1234', 'clear'), keypadPress('', 'back')], ['123', '', '']);
+  eq('pavé : le point est ignoré sans décimales (FCFA)', keypadPress('12', '.'), '12');
+  eq('pavé : décimales (EUR) « 12. » → « 12.5 », 2 chiffres au plus', [keypadPress('', '.', { allowDecimal: true }), keypadPress('12.', '5', { allowDecimal: true }), keypadPress('0.5', '25', { allowDecimal: true }), keypadPress('12.5', '.', { allowDecimal: true })], ['0.', '12.5', '0.5', '12.5']);
+  eq('pavé : 10 chiffres au plus', keypadPress('9999999999', '1'), '9999999999');
+  eq('pavé : touche inconnue sans effet', keypadPress('42', 'x'), '42');
+  eq('billets : 500 + 500 + 5000', addToAmount(addToAmount(addToAmount('', 500), 500), 5000), '6000');
+  eq('billets : dépassement refusé', addToAmount('9999999999', 100), '9999999999');
+  eq('billets : décimales sans dérive (0,1 + 0,2)', addToAmount('0.1', 0.2), '0.3');
+  eq('billets FCFA sans centimes, EUR avec petites coupures', [quickAmounts('XOF').includes(5000), quickAmounts('XOF').includes(5), quickAmounts('EUR').includes(50), quickAmounts('EUR').includes(5000)], [true, false, true, false]);
+
+  // Voix : sélection et découpage (purs)
+  const voices = [
+    { name: 'canada', lang: 'fr-CA', localService: true }, { name: 'online', lang: 'fr_FR', localService: false },
+    { name: 'local', lang: 'fr-FR', localService: true }, { name: 'anglais', lang: 'en-US', localService: true },
+  ];
+  eq('voix : même région et installée sur l\'appareil d\'abord', pickVoice(voices, 'fr-FR').name, 'local');
+  eq('voix : région absente → même langue', pickVoice(voices, 'fr-BE').lang.startsWith('fr'), true);
+  eq('voix : aucune voix de cette langue → null (le système choisit)', [pickVoice(voices, 'wo-SN'), pickVoice([], 'fr-FR'), pickVoice(undefined, 'fr-FR')], [null, null, null]);
+  eq('phrases : découpage', splitSentences('Un. Deux. Trois'), ['Un.', 'Deux.', 'Trois']);
+  eq('phrases : texte vide', splitSentences('  '), []);
+
+  // Voix : textes lus (purs, en français)
+  eq('dit : 45 000 FCFA en toutes lettres', spokenAmount(45000, 'XOF'), 'quarante-cinq mille francs CFA');
+  eq('dit : montant négatif lu sans signe', spokenAmount(-2500, 'XOF'), 'deux mille cinq cents francs CFA');
+  eq('dit : arrondi comme l\'affichage (1 523,5 F CFA → 1 524)', spokenAmount(1523.5, 'XOF'), 'mille cinq cent vingt-quatre francs CFA');
+  eq('dit : un solde converti à 4 décimales n\'est pas lu « et cent centimes »', spokenAmount(1523.9967, 'EUR'), 'mille cinq cent vingt-quatre euros');
+  eq('phrases : découpage sans lookbehind (Safari ancien), ponctuation conservée', splitSentences("C'est noté ! Il reste cent francs. Merci"), ["C'est noté !", 'Il reste cent francs.', 'Merci']);
+  const snap = buildBalanceSpeech({ liquid: 120000, safeToSpend: 45000, receivables: 10000, debts: 0, currency: 'XOF' });
+  ok('solde : liquidités, reste à dépenser et créances dits', snap.includes('cent vingt mille francs CFA') && snap.includes('quarante-cinq mille francs CFA') && snap.includes('On vous doit dix mille francs CFA'), snap);
+  ok('solde : « vous devez » absent quand aucune dette', !buildBalanceSpeech({ liquid: 1000, safeToSpend: 0, receivables: 0, debts: 0, currency: 'XOF' }).includes('Vous devez'));
+  ok('solde : négatif signalé par « Attention »', buildBalanceSpeech({ liquid: -3000, safeToSpend: null, receivables: 0, debts: 0, currency: 'XOF' }).startsWith('Attention'));
+  ok('solde : rien en caisse', buildBalanceSpeech({ liquid: 0, safeToSpend: null, receivables: 0, debts: 0, currency: 'XOF' }).includes('rien dans vos portefeuilles'));
+  ok('solde : sans reste à vivre calculé, rien n\'est inventé', !buildBalanceSpeech({ liquid: 5000, safeToSpend: null, receivables: 0, debts: 0, currency: 'XOF' }).includes('Après vos dépenses'));
+  eq('confirmation de dépense', buildSavedSpeech({ type: 'expense', amount: 2500, currency: 'XOF', categoryName: 'Transport', walletName: 'Orange Money', balance: 41500 }),
+    "C'est noté : dépense de deux mille cinq cents francs CFA, Transport. Il vous reste quarante et un mille cinq cents francs CFA sur Orange Money.");
+  eq('confirmation de recette', buildSavedSpeech({ type: 'income', amount: 10000, currency: 'XOF', walletName: 'Wave', balance: 15000 }),
+    "C'est noté : vous avez reçu dix mille francs CFA. Vous avez maintenant quinze mille francs CFA sur Wave.");
+  ok('confirmation : solde devenu négatif signalé', buildSavedSpeech({ type: 'expense', amount: 9000, currency: 'XOF', walletName: 'Wave', balance: -500 }).includes('Attention : Wave est en négatif, il manque cinq cents francs CFA'));
+  eq('récapitulatif avant enregistrement', buildConfirmSpeech({ type: 'expense', amount: 1500, currency: 'XOF', categoryName: 'Transport', walletName: 'Wave' }),
+    'Dépense de mille cinq cents francs CFA, Transport, sur Wave. Pour enregistrer, touchez le bouton vert.');
+
+  // Intégration : saisie guidée de bout en bout, puis accueil
+  await wipeAllData();
+  await setSetting('baseCurrency', 'XOF');
+  await dbAdd(STORES.WALLETS, { id: 'w-e1', name: 'Orange Money', type: 'mobile_money', currency: 'XOF', initialBalance: 100000, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.CATEGORIES, { id: 'c-e1', name: 'Transport', type: 'expense', parentId: null, createdAt: '2026-01-01T00:00:00.000Z' });
+  const modalRoot = Object.assign(document.createElement('div'), { id: 'modal-root' });
+  const toastBox = Object.assign(document.createElement('div'), { id: 'toast-container' });
+  const easyHost = Object.assign(document.createElement('div'), { id: 'easy-home' });
+  document.body.append(modalRoot, toastBox, easyHost);
+  const press = (sel) => modalRoot.querySelector(sel).click();
+
+  await openEasyEntry('expense');
+  ok('saisie guidée : un seul portefeuille → on commence par le montant', !!modalRoot.querySelector('#easy-amount-num') && !modalRoot.querySelector('[data-wallet]'));
+  ok('saisie guidée : « Suivant » inactif tant que le montant est nul', modalRoot.querySelector('#easy-next').disabled);
+  press('[data-key="5"]'); press('[data-key="000"]'); press('[data-add="500"]');
+  ok('saisie guidée : montant 5 500 affiché', /5\D*500/.test(modalRoot.querySelector('#easy-amount-num').textContent), modalRoot.querySelector('#easy-amount-num').textContent);
+  ok('saisie guidée : montant écrit en lettres', modalRoot.querySelector('#easy-amount-words').textContent === 'cinq mille cinq cents francs CFA');
+  press('#easy-next');
+  ok('saisie guidée : étape catégorie avec images', !!modalRoot.querySelector('[data-cat="c-e1"] svg') && !!modalRoot.querySelector('[data-cat=""]'));
+  press('[data-cat="c-e1"]');
+  ok('saisie guidée : récapitulatif', modalRoot.querySelector('.easy-summary-words').textContent === 'cinq mille cinq cents francs CFA');
+  press('#easy-save');
+  await new Promise((r) => setTimeout(r, 400));
+  const savedTx = await dbGetAll(STORES.TRANSACTIONS);
+  eq('saisie guidée : une dépense de 5 500 enregistrée sur le bon portefeuille', savedTx.map((x) => [x.type, x.amount, x.walletId, x.categoryId]), [['expense', 5500, 'w-e1', 'c-e1']]);
+  ok('saisie guidée : fenêtre fermée et toast « Enregistré »', !modalRoot.querySelector('.modal-backdrop') && toastBox.textContent.includes('Enregistré'));
+
+  await dbAdd(STORES.WALLETS, { id: 'w-e2', name: 'Wave', type: 'mobile_money', currency: 'XOF', initialBalance: 0, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.WALLETS, { id: 'w-e3', name: 'Épargne', type: 'savings', currency: 'XOF', initialBalance: 0, archived: false, usage: 'savings', createdAt: '2026-01-01T00:00:00.000Z' });
+  await openEasyEntry('income');
+  const walletButtons = [...modalRoot.querySelectorAll('[data-wallet]')].map((b) => b.dataset.wallet);
+  eq('saisie guidée : deux portefeuilles courants proposés (pas l\'épargne), le plus utilisé d\'abord', walletButtons, ['w-e1', 'w-e2']);
+  press('[data-wallet="w-e2"]');
+  ok('saisie guidée : après le portefeuille, le montant', !!modalRoot.querySelector('#easy-amount-num'));
+  press('.modal-close');
+  ok('saisie guidée : fermer sans enregistrer ne crée rien', (await dbGetAll(STORES.TRANSACTIONS)).length === 1);
+
+  await setSetting('easyHome', true);
+  await applyEasyHome();
+  await renderEasyHome();
+  eq('accueil facile : panneau visible et attribut posé', [easyHost.hidden, document.body.dataset.easyHome], [false, 'on']);
+  eq('accueil facile : quatre grosses touches', [...easyHost.querySelectorAll('[data-easy]')].map((b) => b.dataset.easy), ['income', 'expense', 'owed', 'owe']);
+  ok('accueil facile : solde 94 500 (100 000 − 5 500)', /94\D*500/.test(easyHost.querySelector('.easy-balance-value').textContent), easyHost.querySelector('.easy-balance-value').textContent);
+  ok('accueil facile : dernière opération affichée', easyHost.querySelector('.easy-recent-title')?.textContent === 'Transport');
+  await setSetting('easyHome', false);
+  await applyEasyHome();
+  eq('accueil facile désactivé : panneau caché', [easyHost.hidden, document.body.dataset.easyHome], [true, 'off']);
+  modalRoot.remove(); toastBox.remove(); easyHost.remove();
+}
+
+// ---------- Lot 2 : sauvegarde vérifiée (empreinte, relecture, vérification à blanc) ----------
+{
+  const integ = await import('../js/backup-integrity.js');
+  const { verifyBackup, getLastBackupVerification, maybeRunMonthlyBackupCheck, getBackupVerificationAlert } = await import('../js/backup-verify.js');
+  const { buildEncryptedPayload, decryptPayload, importJsonBackup, BackupIntegrityError } = await import('../js/backup.js');
+  const { dbDelete, dbGetAll: getAll, exportAllData } = await import('../js/db.js');
+
+  eq('SHA-256 de « abc » (vecteur de référence)', await integ.sha256Hex('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  const sample = { exportedAt: 'x', version: 5, stores: { transactions: [{ id: 't1', amount: 12.5 }, { id: 't2', amount: 7.5 }], wallets: [{ id: 'w1' }] } };
+  sample.integrity = await integ.computeIntegrity(sample.stores);
+  eq('empreinte : fichier intact', await integ.checkIntegrity(sample), 'ok');
+  eq('empreinte : indépendante de la mise en forme du fichier (espaces, retours)', await integ.checkIntegrity(JSON.parse(JSON.stringify(sample, null, 2))), 'ok');
+  const tampered = JSON.parse(JSON.stringify(sample));
+  tampered.stores.transactions[0].amount = 1250;
+  eq('empreinte : un montant modifié à la main est repéré', await integ.checkIntegrity(tampered), 'mismatch');
+  const truncated = JSON.parse(JSON.stringify(sample));
+  truncated.stores.transactions.pop();
+  eq('empreinte : une ligne en moins est repérée', await integ.checkIntegrity(truncated), 'mismatch');
+  eq('empreinte : ancienne sauvegarde sans empreinte → « missing », jamais bloquée', [await integ.checkIntegrity({ stores: {} }), await integ.checkIntegrity(null), await integ.checkIntegrity({ stores: {}, integrity: { algo: 'SHA-3', checksum: 'x' } })], ['missing', 'missing', 'missing']);
+  const fp = integ.fingerprintStores(sample.stores);
+  eq('signature : lignes par table et total des transactions en centimes', fp, { transactions: { rows: 2, amountCents: 2000 }, wallets: { rows: 1 } });
+  eq('signature : réglages ignorés', Object.keys(integ.fingerprintStores({ settings: [{}], wallets: [{}] }, { skip: ['settings'] })), ['wallets']);
+  eq('signature : aucune différence entre deux signatures identiques', integ.diffFingerprints(fp, fp), []);
+  eq('signature : une table qui perd une ligne et un total qui bouge sont signalés', integ.diffFingerprints(fp, { transactions: { rows: 2, amountCents: 1999 }, wallets: { rows: 0 } }, { wallets: 'Portefeuilles' }), ['transactions : 20.00 → 19.99', 'Portefeuilles : 1 → 0']);
+
+  await wipeAllData();
+  await dbAdd(STORES.WALLETS, { id: 'w-v1', name: 'Caisse', currency: 'XOF', initialBalance: 5000, createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-v1', walletId: 'w-v1', type: 'expense', amount: 1200.5, date: '2026-10-01', categoryId: null, note: 'pain', createdAt: '2026-10-01T10:00:00.000Z' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-v2', walletId: 'w-v1', type: 'income', amount: 3000, date: '2026-10-02', categoryId: null, note: '', createdAt: '2026-10-02T10:00:00.000Z' });
+  const good = await verifyBackup({ now: 1700000000000 });
+  ok('vérification : base saine → aucun écart, restauration acceptée', good.ok && good.issues.length === 0 && good.rows >= 3, JSON.stringify(good));
+  eq('vérification : résultat mémorisé (propre à l\'appareil)', (await getLastBackupVerification()).at, 1700000000000);
+  eq('vérification : pas d\'alerte tableau de bord quand tout va bien', await getBackupVerificationAlert(), null);
+  eq('vérification mensuelle : rien à faire moins de 30 jours après', await maybeRunMonthlyBackupCheck(1700000000000 + 10 * 864e5), null);
+  ok('vérification mensuelle : relancée après 30 jours', (await maybeRunMonthlyBackupCheck(1700000000000 + 31 * 864e5))?.ok === true);
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-bad', walletId: 'w-v1', type: 'expense', amount: 'douze', date: '2026-10-03' }); // montant non numérique : l'import le refuserait
+  const bad = await verifyBackup();
+  ok('vérification : une ligne que l\'import refuserait est détectée', !bad.ok && bad.issues.some((i) => i.includes('restauration serait refusée')), JSON.stringify(bad.issues));
+  ok('vérification : le problème reste signalé sur le tableau de bord', (await getBackupVerificationAlert())?.includes('problème'));
+  const failedAt = (await getLastBackupVerification()).at;
+  ok('vérification mensuelle : un échec n\'est pas revérifié avant le lendemain, puis l\'est (pas après 30 jours)',
+    (await maybeRunMonthlyBackupCheck(failedAt + 2 * 3600e3)) === null && (await maybeRunMonthlyBackupCheck(failedAt + 26 * 3600e3)) !== null);
+  await dbDelete(STORES.TRANSACTIONS, 'tx-bad');
+  ok('vérification : relancée après correction → de nouveau saine, alerte disparue', (await verifyBackup()).ok && (await getBackupVerificationAlert()) === null);
+  ok('réglages propres à l\'appareil absents de l\'export (backupVerification, smsInbox…)', !(await exportAllData()).stores[STORES.SETTINGS].some((r) => ['backupVerification', 'smsInbox', 'pinFailureLog', 'lastUnlockAt', 'helperPinHash'].includes(r.key)));
+
+  const payload = await buildEncryptedPayload('mot-de-passe-test');
+  const reopened = await decryptPayload(payload, 'mot-de-passe-test');
+  eq('export chiffré : relu avec le bon mot de passe, empreinte correcte', await integ.checkIntegrity(reopened), 'ok');
+  let wrongPassword = null;
+  try { await decryptPayload(payload, 'autre'); } catch (e) { wrongPassword = e.message; }
+  ok('export chiffré : mauvais mot de passe refusé', !!wrongPassword);
+
+  const fileOf = (obj) => new File([JSON.stringify(obj)], 'b.json', { type: 'application/json' });
+  const full = await exportAllData();
+  full.integrity = await integ.computeIntegrity(full.stores);
+  const forged = JSON.parse(JSON.stringify(full));
+  forged.stores[STORES.TRANSACTIONS][0].amount += 1;
+  let integrityError = null;
+  try { await importJsonBackup(fileOf(forged), { merge: true }); } catch (e) { integrityError = e; }
+  ok('import : un fichier modifié est refusé avec BackupIntegrityError', integrityError instanceof BackupIntegrityError, integrityError && integrityError.name);
+  const amountsAfterRefusal = (await getAll(STORES.TRANSACTIONS)).map((x) => x.amount).sort();
+  eq('import : rien n\'a été écrit après le refus', amountsAfterRefusal, [1200.5, 3000]);
+  await importJsonBackup(fileOf(forged), { merge: true, ignoreIntegrity: true });
+  ok('import : accepté quand l\'utilisateur confirme (ignoreIntegrity)', (await getAll(STORES.TRANSACTIONS)).some((x) => x.amount === 1201.5));
+  await importJsonBackup(fileOf({ stores: full.stores }), { merge: true });
+  ok('import : ancienne sauvegarde sans empreinte acceptée comme avant', true);
+}
+
+// ---------- Lot 3 : code aidant, rôles, journal des codes ratés ----------
+{
+  const auth = await import('../js/auth.js');
+  const dbm = await import('../js/db.js');
+  const { appState } = await import('../js/state.js');
+  const { confirmDialog } = await import('../js/utils.js');
+  const get = dbm.getSetting;
+  const getAll = dbGetAll;
+  const dbDelete = dbm.dbDelete;
+
+  await wipeAllData();
+  await auth.setupPin('123456');
+  eq('accès : le code du propriétaire ouvre en « propriétaire »', await auth.verifyAccessCode('123456'), 'owner');
+  eq('accès : sans code aidant, un autre code est refusé', await auth.verifyAccessCode('654321'), null);
+  eq('accès : un code faux compte une tentative et entre dans le journal', [await get('failedAttempts'), (await get('pinFailureLog')).length], [1, 1]);
+  eq('accès : le bon code remet le compteur à zéro', [await auth.verifyAccessCode('123456'), await get('failedAttempts')], ['owner', 0]);
+
+  let err1 = null; try { await auth.setupHelperPin('654321', '000000'); } catch (e) { err1 = e.message; }
+  ok('code aidant : refusé si le code du propriétaire est faux', !!err1);
+  let err2 = null; try { await auth.setupHelperPin('1234', '123456'); } catch (e) { err2 = e.message; }
+  ok('code aidant : refusé s\'il n\'a pas le même nombre de chiffres', !!err2 && err2.includes('6'), err2);
+  let err3 = null; try { await auth.setupHelperPin('123456', '123456'); } catch (e) { err3 = e.message; }
+  ok('code aidant : refusé s\'il est identique à celui du propriétaire', !!err3, err3);
+  await auth.setupHelperPin('654321', '123456');
+  eq('code aidant : défini', await auth.isHelperConfigured(), true);
+  eq('accès : le code aidant ouvre en « aidant », celui du propriétaire en « propriétaire »', [await auth.verifyAccessCode('654321'), await auth.verifyAccessCode('123456')], ['helper', 'owner']);
+  ok('code aidant : jamais en clair en base (sel + hachage seulement)', !JSON.stringify(await dbGetAll(STORES.SETTINGS)).includes('654321'));
+  const afterChange = await auth.changePin('123456', '1234');
+  eq('changer le code propriétaire à 4 chiffres retire le code aidant de 6 chiffres', [afterChange.helperRemoved, await auth.isHelperConfigured()], [true, false]);
+  await auth.changePin('1234', '123456');
+  await auth.setupHelperPin('654321', '123456');
+  await auth.removeHelperPin();
+  eq('code aidant : retiré', await auth.isHelperConfigured(), false);
+
+  // Journal des codes ratés
+  await setSetting('lastUnlockAt', 1000);
+  await setSetting('pinFailureLog', [500, 1500, 2500]);
+  eq('rapport de visite : 2 codes ratés depuis la dernière visite, le dernier à 2500', await auth.consumeUnlockReport(3000), { since: 1000, failures: 2, lastFailureAt: 2500 });
+  eq('rapport de visite : une fois consulté, plus rien à signaler', (await auth.consumeUnlockReport(4000)).failures, 0);
+  await setSetting('lastUnlockAt', 0);
+  eq('rapport de visite : première visite, rien à comparer', await auth.consumeUnlockReport(5000), { since: 0, failures: 0, lastFailureAt: null });
+  await setSetting('pinFailureLog', Array.from({ length: 40 }, (_, i) => i + 6000));
+  await auth.verifyAccessCode('999999');
+  eq('journal : limité aux 30 derniers codes ratés', (await get('pinFailureLog')).length, 30);
+  // Coquille du propriétaire juste avant sa réussite : pas une intrusion. Un vrai échec ancien (> 1 min) reste compté.
+  await setSetting('lastUnlockAt', Date.now() - 300000);
+  await setSetting('pinFailureLog', [Date.now() - 120000]);
+  await auth.verifyAccessCode('999999');
+  await auth.verifyAccessCode('123456');
+  eq('rapport de visite : la faute de frappe suivie du bon code n\'est pas comptée, l\'échec ancien oui', (await auth.consumeUnlockReport(Date.now() + 1)).failures, 1);
+
+  // Garde d'accès « aidant » (db.js)
+  await wipeAllData();
+  await dbAdd(STORES.WALLETS, { id: 'w-h1', name: 'Caisse', currency: 'XOF', initialBalance: 0, createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-owner', walletId: 'w-h1', type: 'income', amount: 100, date: '2026-10-01', createdAt: '2026-10-01T00:00:00.000Z' });
+  const rejects = async (fn) => { try { await fn(); return false; } catch (e) { return e.name === 'HelperRestrictedError'; } };
+  dbm.setAccessRole('helper');
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-helper', walletId: 'w-h1', type: 'expense', amount: 40, date: '2026-10-02', createdAt: '2026-10-02T00:00:00.000Z' });
+  await dbm.logAudit({ entityType: 'transaction', entityId: 'tx-helper', action: 'create' });
+  eq('aidant : ce qu\'il saisit est marqué', (await getAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-helper').enteredBy, 'helper');
+  eq('aidant : le journal d\'audit note qui a agi', (await getAll(STORES.AUDIT_LOG)).some((x) => x.actor === 'helper'), true);
+  eq('aidant : ne peut pas supprimer une opération du propriétaire', await rejects(() => dbDelete(STORES.TRANSACTIONS, 'tx-owner')), true);
+  eq('aidant : ne peut pas supprimer un portefeuille', await rejects(() => dbDelete(STORES.WALLETS, 'w-h1')), true);
+  eq('aidant : ne peut rien vider, tout effacer, ni supprimer en lot', [await rejects(() => dbm.dbClear(STORES.TRANSACTIONS)), await rejects(() => wipeAllData()), await rejects(() => dbm.dbWriteBatch([{ store: STORES.TRANSACTIONS, type: 'delete', value: 'tx-owner' }]))], [true, true, true]);
+  eq('aidant : ne peut pas importer ou restaurer', await rejects(() => dbm.importAllData({ stores: { [STORES.WALLETS]: [] } })), true);
+  ok('aidant : peut en revanche vérifier une sauvegarde (validation à blanc, rien n\'est écrit)', !!(await dbm.importAllData({ stores: { [STORES.WALLETS]: [] } }, { dryRun: true })));
+  await dbm.dbWriteBatch([{ store: STORES.TRANSACTIONS, type: 'add', value: { id: 'tx-helper-b', walletId: 'w-h1', type: 'expense', amount: 5, date: '2026-10-03' } }]);
+  eq('aidant : une écriture groupée est marquée aussi', (await getAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-helper-b').enteredBy, 'helper');
+  // Écrasement (dbPut / lots « put ») : créer oui, réécrire l'existant du propriétaire non
+  await dbm.dbPut(STORES.TRANSACTIONS, { id: 'tx-helper-c', walletId: 'w-h1', type: 'expense', amount: 9, date: '2026-10-04', createdAt: '2026-10-04T00:00:00.000Z' });
+  eq('aidant : une transaction créée par dbPut (formulaire de saisie express) est marquée aussi', (await getAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-helper-c').enteredBy, 'helper');
+  await dbm.dbPut(STORES.TRANSACTIONS, { id: 'tx-helper-c', walletId: 'w-h1', type: 'expense', amount: 12, date: '2026-10-04', createdAt: '2026-10-04T00:00:00.000Z' });
+  eq('aidant : peut corriger sa propre saisie, la marque est conservée', (await getAll(STORES.TRANSACTIONS)).filter((x) => x.id === 'tx-helper-c').map((x) => [x.amount, x.enteredBy]), [[12, 'helper']]);
+  eq('aidant : ne peut pas réécrire une opération du propriétaire (montant, rapprochement…)', await rejects(() => dbm.dbPut(STORES.TRANSACTIONS, { id: 'tx-owner', walletId: 'w-h1', type: 'income', amount: 1, date: '2026-10-01' })), true);
+  eq('aidant : ne peut pas réécrire un portefeuille existant (solde initial, archivage)', await rejects(() => dbm.dbPut(STORES.WALLETS, { id: 'w-h1', name: 'Caisse', currency: 'XOF', initialBalance: 999 })), true);
+  dbm.setAccessRole('owner');
+  await dbAdd(STORES.DEBTS, { id: 'd-own', personName: 'Koffi', type: 'receivable', principal: 800, currency: 'XOF', startDate: '2026-10-01' });
+  dbm.setAccessRole('helper');
+  eq('aidant : « annuler une dette » (réécriture d\'une dette existante) est refusé', await rejects(() => dbm.dbPut(STORES.DEBTS, { id: 'd-own', personName: 'Koffi', type: 'receivable', principal: 0, currency: 'XOF', startDate: '2026-10-01' })), true);
+  eq('aidant : un lot qui réécrit un enregistrement existant est refusé en entier (rien d\'écrit)', [await rejects(() => dbm.dbWriteBatch([
+    { store: STORES.TRANSACTIONS, type: 'add', value: { id: 'tx-never', walletId: 'w-h1', type: 'expense', amount: 1, date: '2026-10-05' } },
+    { store: STORES.DEBTS, type: 'put', value: { id: 'd-own', personName: 'Koffi', type: 'receivable', principal: 0, currency: 'XOF', startDate: '2026-10-01' } },
+  ])), (await getAll(STORES.TRANSACTIONS)).some((x) => x.id === 'tx-never')], [true, false]);
+  eq('aidant : peut créer une nouvelle dette', !!(await dbAdd(STORES.DEBTS, { id: 'd-new', personName: 'Ali', type: 'debt', principal: 100, currency: 'XOF', startDate: '2026-10-05' })), true);
+  eq('aidant : les projets collectifs (réglage du propriétaire) sont protégés, un réglage ordinaire non', [await rejects(() => setSetting('groupProjects', [])), await setSetting('privacyHidden', true).then(() => true)], [true, true]);
+  eq('aidant : pas d\'écrasement en masse (import CSV, données de démonstration)', await rejects(() => dbm.dbBulkPut(STORES.WALLETS, [{ id: 'w-x', name: 'X', currency: 'XOF' }])), true);
+  await dbDelete(STORES.TRANSACTIONS, 'tx-helper');
+  eq('aidant : peut annuler ce qu\'il vient de saisir', (await getAll(STORES.TRANSACTIONS)).some((x) => x.id === 'tx-helper'), false);
+  // Confirmation de suppression : refus immédiat (pas de demande de code PIN), avec un message
+  const toastBox2 = Object.assign(document.createElement('div'), { id: 'toast-container' });
+  document.body.append(toastBox2);
+  appState.role = 'helper';
+  eq('aidant : une confirmation de suppression est refusée tout de suite', await confirmDialog('Supprimer ?', { requirePin: true }), false);
+  ok('aidant : message « réservé au propriétaire »', toastBox2.textContent.includes('réservée au propriétaire'));
+  appState.role = 'owner';
+  toastBox2.remove();
+  dbm.setAccessRole('owner');
+  await dbDelete(STORES.TRANSACTIONS, 'tx-owner');
+  eq('propriétaire : peut supprimer', (await getAll(STORES.TRANSACTIONS)).some((x) => x.id === 'tx-owner'), false);
+  await wipeAllData();
+}
+
+// ---------- Lot 4 : file d'attente des SMS Mobile Money ----------
+{
+  const q = await import('../js/sms-queue.js');
+  const { openSmsImportModal } = await import('../js/modules/sms-import.js');
+  const SMS_A = 'Vous avez reçu 10 000 FCFA de Awa Ndiaye. Nouveau solde: 30 000 FCFA. Ref: 8839201';
+  const SMS_B = 'Vous avez envoyé 5 000F à Moussa Diop (+221771234567). Frais: 100F. Nouveau solde: 12 400F. ID: TX8841923';
+  const t0 = 1700000000000;
+  await wipeAllData();
+  const first = await q.queueSharedSms(SMS_A, t0);
+  const again = await q.queueSharedSms(`  ${SMS_A}  \r\n`, t0 + 1000);
+  eq('file : un même SMS partagé deux fois n\'est gardé qu\'une fois', [again.id === first.id, (await q.getSmsInbox(t0 + 2000)).length], [true, 1]);
+  eq('file : texte vide ignoré', [await q.queueSharedSms('   ', t0), await q.queueSharedSms(null, t0)], [null, null]);
+  await q.queueSharedSms(SMS_B, t0 + 3000);
+  const listed = await q.getSmsInbox(t0 + 4000);
+  eq('file : deux SMS en attente, du plus ancien au plus récent', listed.map((e) => e.text.slice(0, 14)), ['Vous avez reçu', 'Vous avez envo']);
+  eq('file : le texte d\'import les sépare par une ligne vide, et l\'analyseur en retrouve deux', parseMobileMoneyMessages(q.smsInboxText(listed)).messages.map((m) => m.amount), [10000, 5000]);
+  eq('file : la validation ne retire que les SMS présents dans le texte validé', [await q.removeImportedFromInbox(`autre texte ${SMS_A} fin`, t0 + 5000), (await q.getSmsInbox(t0 + 5000)).map((e) => e.text === SMS_B)], [1, [true]]);
+  eq('file : un SMS vieux de plus de 30 jours disparaît', (await q.getSmsInbox(t0 + 3000 + 31 * 864e5)).length, 0);
+  for (let i = 0; i < 60; i++) await q.queueSharedSms(`SMS numéro ${i} de 100 FCFA`, t0 + 10000 + i);
+  const capped = await q.getSmsInbox(t0 + 20000);
+  eq('file : 50 SMS au plus, les plus récents gardés', [capped.length, capped[capped.length - 1].text], [50, 'SMS numéro 59 de 100 FCFA']);
+  await q.clearSmsInbox();
+  eq('file : vidée', (await q.getSmsInbox(t0 + 20000)).length, 0);
+
+  // Formats plausibles mais INVENTÉS (aucun corpus d'opérateur) : vérifient la robustesse de l'analyse, pas la couverture réelle.
+  const w = sms('Vous avez reçu 10.000F de Awa Koné. Votre solde Wave est de 25.000F.', { today });
+  eq('SMS inventé (style Wave) : reçu 10.000F', [w.direction, w.amount, w.balance], ['in', 10000, 25000]);
+  const o = sms('Vous avez envoye 2500 FCFA a 0707070707. Frais: 0 FCFA. Nouveau solde: 7500 FCFA.', { today });
+  eq('SMS inventé (style Orange) : envoi 2500, solde 7500', [o.direction, o.amount, o.balance], ['out', 2500, 7500]);
+  const m = sms('Depot de 20000 FCFA effectue avec succes. Solde: 35000 FCFA', { today });
+  eq('SMS inventé (style MTN) : dépôt 20000', [m.kind, m.direction, m.amount], ['deposit', 'in', 20000]);
+
+  // Parcours réel : fenêtre d'import préremplie par la file, puis validation
+  await wipeAllData();
+  await dbAdd(STORES.WALLETS, { id: 'w-q1', name: 'Orange Money', type: 'mobile_money', currency: 'XOF', initialBalance: 50000, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  await q.queueSharedSms(SMS_A, Date.now());
+  await q.queueSharedSms(SMS_B, Date.now());
+  const modalRoot3 = Object.assign(document.createElement('div'), { id: 'modal-root' });
+  const toastBox3 = Object.assign(document.createElement('div'), { id: 'toast-container' });
+  document.body.append(modalRoot3, toastBox3);
+  await openSmsImportModal();
+  ok('fenêtre d\'import : préremplie avec les SMS en attente', modalRoot3.querySelector('#sms-text').value.includes('Awa Ndiaye') && modalRoot3.querySelector('#sms-text').value.includes('Moussa Diop'));
+  ok('fenêtre d\'import : annonce 2 SMS en attente, avec « Ignorer »', modalRoot3.textContent.includes('2 SMS en attente') && !!modalRoot3.querySelector('#sms-ignore-btn'));
+  eq('fenêtre d\'import : deux opérations proposées', modalRoot3.querySelectorAll('[data-sms-index]').length, 2);
+  modalRoot3.querySelector('#sms-import-btn').click();
+  await new Promise((r) => setTimeout(r, 600));
+  eq('import validé : les deux transactions existent', (await dbGetAll(STORES.TRANSACTIONS)).map((x) => x.amount).sort((a, b) => a - b), [100, 5000, 10000]);
+  eq('import validé : la file d\'attente est vidée', (await q.getSmsInbox()).length, 0);
+  await q.queueSharedSms('Vous avez reçu 3 000 FCFA de Koffi. Nouveau solde: 40 000 FCFA. Ref: 7000001');
+  await openSmsImportModal();
+  modalRoot3.querySelector('#sms-ignore-btn').click();
+  await new Promise((r) => setTimeout(r, 200));
+  eq('« Ignorer » : file vidée, aucune transaction ajoutée', [(await q.getSmsInbox()).length, (await dbGetAll(STORES.TRANSACTIONS)).length], [0, 3]);
+  await q.queueSharedSms('Vous avez reçu 4 000 FCFA de Ibrahim. Ref: 7000002');
+  await openSmsImportModal();
+  modalRoot3.querySelectorAll('.modal-close').forEach((b) => b.click());
+  eq('fermer sans importer : le SMS reste en attente', (await q.getSmsInbox()).length, 1);
+  await q.clearSmsInbox();
+  // Import partiel : le SMS décoché ne doit PAS quitter la file
+  await q.queueSharedSms('Vous avez reçu 2 000 FCFA de Zoé. Ref: 9000001');
+  await q.queueSharedSms('Vous avez reçu 3 000 FCFA de Yao. Ref: 9000002');
+  await openSmsImportModal();
+  const firstCheck = modalRoot3.querySelector('[data-sms-check]');
+  firstCheck.checked = false;
+  firstCheck.dispatchEvent(new Event('change', { bubbles: true }));
+  modalRoot3.querySelector('#sms-import-btn').click();
+  await new Promise((r) => setTimeout(r, 600));
+  eq('import partiel : le SMS décoché reste en attente, l\'autre est parti', (await q.getSmsInbox()).map((e) => e.text.includes('Zoé')), [true]);
+  ok('import partiel : seule la transaction cochée est créée', (await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.amount === 3000) && !(await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.amount === 2000));
+  modalRoot3.remove(); toastBox3.remove();
+  await wipeAllData();
 }
 
 // ---------- Rendu ----------

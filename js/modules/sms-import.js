@@ -15,6 +15,7 @@ import { uuid, formatCurrency, formatDate, escapeHtml, todayISO, openModal, show
 import { notifyDataChanged } from '../state.js';
 import { parseMobileMoneyMessages, currencyMatchesWallet } from '../mobile-money-parser.js';
 import { t } from '../i18n.js';
+import { getSmsInbox, smsInboxText, removeFromInboxWhere, clearSmsInbox } from '../sms-queue.js';
 
 /** Libellé de la transaction, construit à partir du message analysé (traduit à la création). */
 export function buildSmsNote(msg) {
@@ -64,18 +65,22 @@ function pickDefaultWallet(wallets, messages) {
 }
 
 export async function openSmsImportModal({ text = '' } = {}) {
-  const [allWallets, categories, existingTx] = await Promise.all([
-    dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.TRANSACTIONS),
+  const [allWallets, categories, existingTx, inbox] = await Promise.all([
+    dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.TRANSACTIONS), getSmsInbox(),
   ]);
+  // SMS partagés vers l'appli et gardés en attente (sms-queue.js) : ils sont proposés d'office, à valider ou à ignorer.
+  const initialText = text || smsInboxText(inbox);
   const wallets = allWallets.filter(isDailyWallet);
   const existingRefs = new Set(existingTx.map((x) => x.externalRef).filter(Boolean));
   const existingKeys = new Set(existingTx.map((x) => `${x.walletId}|${x.date}|${x.type}|${x.amount}`));
 
   const modal = openModal(`
     <p style="margin:0 0 10px;" class="fs-13 c-muted">${t("Collez ici un ou plusieurs SMS de confirmation (Orange Money, Wave, MTN MoMo, Moov…). Séparez-les par une ligne vide. Rien ne quitte votre appareil, et rien n'est enregistré sans votre validation.")}</p>
+    ${inbox.length ? `<p class="fs-13 mb-8"><strong>${escapeHtml(t('{count} SMS en attente de validation.', { count: inbox.length }))}</strong></p>` : ''}
     <textarea id="sms-text" rows="5" style="width:100%;" placeholder="${escapeHtml(t('Ex : Vous avez envoyé 5 000 F à Moussa… Nouveau solde : 12 400 F'))}"></textarea>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px;">
       <button type="button" class="btn btn-ghost" id="sms-paste-btn">${t('Coller depuis le presse-papiers')}</button>
+      ${inbox.length ? `<button type="button" class="btn btn-ghost" id="sms-ignore-btn">${escapeHtml(t('Ignorer ces SMS'))}</button>` : ''}
     </div>
     <div id="sms-summary" class="fs-13 c-muted mb-8"></div>
     <div id="sms-results"></div>
@@ -232,6 +237,13 @@ export async function openSmsImportModal({ text = '' } = {}) {
     }
   });
 
+  el('#sms-ignore-btn')?.addEventListener('click', async () => {
+    await clearSmsInbox();
+    modal.close();
+    notifyDataChanged('settings'); // le rappel du tableau de bord disparaît
+    showToast(t('SMS en attente ignorés.'));
+  });
+
   walletSelect.addEventListener('change', () => { applyDefaultsForWallet(); renderRows(); });
 
   resultsEl.addEventListener('change', async (e) => {
@@ -302,13 +314,21 @@ export async function openSmsImportModal({ text = '' } = {}) {
     for (const record of audits) {
       await logAudit({ entityType: 'transaction', entityId: record.id, action: 'create', after: record, note: t('Import SMS Mobile Money') });
     }
+    // Seuls les SMS réglés quittent la file d'attente : tous leurs messages importés ou déjà connus (« Déjà importé »). Un SMS que
+    // l'utilisateur a décoché, ou refusé pour sa devise, reste proposé la fois suivante.
+    const keyOf = (m) => `${m.reference || ''}|${m.amount}|${m.date || ''}|${m.direction}`;
+    const resolved = new Set(rows.filter((r) => (r.include && !r.issue) || r.duplicate === 'ref').map((r) => keyOf(r.msg)));
+    await removeFromInboxWhere((entry) => {
+      const messages = parseMobileMoneyMessages(entry.text).messages;
+      return messages.length > 0 && messages.every((m) => resolved.has(keyOf(m)));
+    });
     modal.close();
     showToast(t('{count} transaction(s) importée(s).', { count: audits.length }));
     notifyDataChanged('transactions');
   });
 
-  if (text) {
-    textArea.value = text;
+  if (initialText) {
+    textArea.value = initialText;
     await analyze();
   }
 }

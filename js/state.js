@@ -31,6 +31,7 @@ export const appState = {
   theme: 'auto',
   baseCurrency: 'EUR',
   unlocked: false,
+  role: 'owner', // 'owner' | 'helper' — posé au déverrouillage (app.js), voir le garde d'accès de db.js
 };
 
 /** À appeler après toute écriture en base pour que les vues concernées se rafraîchissent. */
