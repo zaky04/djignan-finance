@@ -4113,6 +4113,32 @@ Tests : `features.test.html` 344 → **363** ; `ledger.test.html` 175/175.
    base64 de la sauvegarde chiffrée. **Pistes suivantes, non faites** : photos envoyées une seule fois à part (le plus gros gain), chiffrer les octets plutôt que du texte (≈ −33 %, change le format).
    Tests : `features.test.html` 363 → **370**.
 
+### 21 novembre 2026 (suite 2) — Photos du cloud à part, et bouton Retour partout (`CACHE_VERSION` `v181`, non commité au moment d'écrire)
+
+**Photos de la sauvegarde cloud envoyées une seule fois** (`js/cloud-photos.js`, nouveau ; `backup.js` `photoHash`/`buildEncryptedPayload(…, { collectPhotos })` ; `firebase-sync.js`) :
+- la sauvegarde chiffrée des DONNÉES ne contient plus aucune photo, seulement `receiptHash` (SHA-256 des octets d'origine, 32 car. hex) sur chaque transaction + `photosExternal: true` ;
+- chaque photo est réduite (profil de sauvegarde), chiffrée AES-GCM (clé PBKDF2 du même mot de passe, sel propre aux photos, témoin chiffré dans l'index) et envoyée sous `p_<empreinte>_<n>` ;
+  index `photoIndex` = photos déjà parties : une sauvegarde ne transfère que les NOUVELLES. Tout dans la sous-collection `chunks` existante → **aucune règle Firestore à modifier** ;
+- envoi des photos AVANT la bascule du pointeur (une coupure laisse l'ancienne sauvegarde intacte, l'index garde ce qui est parti) ; suppression des photos plus référencées APRÈS la bascule
+  (désactivée si la dernière restauration a laissé des photos de côté : réglage local `cloudPhotoPruneBlocked`) ;
+- restauration : données d'abord, puis photos (6 à la fois) ; une photo absente ou abîmée est comptée (`{ missingPhotos }`, message à l'utilisateur), jamais bloquante ; les anciennes
+  sauvegardes cloud (photos dans le payload) se restaurent toujours ; une application ancienne qui lirait une sauvegarde récente perdrait les photos (mettre à jour d'abord) ;
+- changement de mot de passe : les photos repartent sous la nouvelle clé, l'ancienne copie est supprimée — **défaut trouvé par les tests et corrigé** : la copie neuve portait le même identifiant
+  que l'ancienne et était supprimée avec elle ;
+- la confirmation « sauvegarde volumineuse » du cloud ne compte plus que la part « données » (`estimateBackupSize().dataBytes`).
+- Tests : 21 nouveaux, sur un stockage en mémoire (envoi incrémental, reprise après erreur et après coupure, plusieurs morceaux, mauvais mot de passe, photo absente/abîmée, suppression, changement de
+  mot de passe, données sans photo / fichier avec photos). **Jamais essayé contre un vrai Firebase** (pas de connexion dans l'environnement de test) : à confirmer avec une vraie sauvegarde/restauration.
+- Limites : l'index tient dans un document Firestore (~25 000 photos) ; une photo n'est jamais renvoyée même si la qualité de sauvegarde change ; l'index n'est réécrit que toutes les 25 photos, une coupure
+  réseau franche peut donc en faire renvoyer jusqu'à 25.
+
+**Bouton Retour** (`js/back-navigation.js`, `app.js`, flèche `#topbar-back`) : l'application ne touchait jamais à l'historique du navigateur — le retour du téléphone QUITTAIT l'application (ou ne faisait
+rien) et chaque écran ouvert depuis « Plus » était une impasse. Maintenant : une entrée d'historique « top » toujours présente (piège) ; un retour ferme la fenêtre la plus récente, sinon revient à l'écran
+précédent (pile de 30), sinon à l'accueil ; sur l'accueil (ou l'écran de verrouillage/démarrage) un premier retour affiche « Appuyez encore sur Retour pour quitter », un second dans les 2,5 s quitte.
+Flèche de retour dans la barre du haut sur tous les écrans sauf l'accueil. L'assistant de configuration a un bouton « Retour » à chaque étape (avant : aucune étape ne se revoyait). Les 49 fenêtres
+(`openModal`) ont toutes un titre donc une croix (vérifié par analyse). Tests : 12 sur le contrôleur ; parcours réel (retour du navigateur, fenêtre, flèche, 13 écrans, accueil).
+**Pas testé** : le vrai bouton Retour d'un téléphone (simulé par `history.back()`), l'APK/EXE (WebView), les écrans de démarrage (langue, restauration, création du PIN) qui n'ont pas de retour interne
+(le retour du téléphone y avertit seulement).
+
 **Vérifié sans rien à corriger** : intervalles et écouteurs globaux enregistrés une seule fois, aucun `eval`/`document.write`, précache complet, pas de rendu de liste non borné (Transactions filtre par mois).
 **Reste à surveiller à long terme** : la base grossit surtout avec les photos (~150-400 Ko chacune, l'estimation est dans Paramètres) ; la sauvegarde cloud chiffrée d'un très gros historique avec photos
 reste lourde (découpée en morceaux, voir §6 du 18 octobre) ; sur un téléphone d'entrée de gamme les temps mesurés ici sont à multiplier (non mesuré).

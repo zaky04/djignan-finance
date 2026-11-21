@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v179';
+const CACHE_VERSION = 'v181';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 // Nom volontairement SANS le préfixe "geofinance-" : le nettoyage de l'activate ci-dessous
 // supprime tout cache "geofinance-*" différent de CACHE_NAME à chaque déploiement (mécanisme de
@@ -48,6 +48,8 @@ const APP_SHELL = [
   './js/backup-integrity.js',
   './js/backup-verify.js',
   './js/sms-queue.js',
+  './js/cloud-photos.js',
+  './js/back-navigation.js',
   './js/native-reminders.js',
   './js/recurrence.js',
   './js/loan-schedule.js',

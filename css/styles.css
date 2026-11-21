@@ -276,6 +276,9 @@ body[data-privacy="visible"] #privacy-toggle .icon-eye-closed { display: none; }
    d'action hors de l'écran sur les titres longs ("Dettes & créances"...). */
 .page-title { font-size: 19px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+/* Flèche de retour (visible hors de l'accueil) : collée au titre, qui prend la place restante. */
+.topbar-back { flex-shrink: 0; margin: 0 6px 0 -6px; }
+.topbar .page-title { flex: 1; }
 
 .demo-mode-banner { padding: 12px 28px 0; max-width: 1280px; width: 100%; margin: 0 auto; }
 .demo-mode-banner .alert { flex-wrap: wrap; }

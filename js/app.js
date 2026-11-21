@@ -9,10 +9,11 @@ import './app-mode.js'; // en tout premier : pose .is-app avant le moindre rendu
 import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAULT_CATEGORIES, setAccessRole, maintainAuditLog } from './db.js';
 import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigured, consumeUnlockReport } from './auth.js';
 import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
+import { createBackController } from './back-navigation.js';
 import { setAutoMasking } from './privacy.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES, intlLocale, currentMonthKey, todayISO } from './utils.js';
 import { checkWeeklyBackupReminder, importEncryptedBackup } from './backup.js';
-import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, warmUpGoogleSignIn, initCloudAutoBackup } from './firebase-sync.js';
+import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, restoreDoneMessage, warmUpGoogleSignIn, initCloudAutoBackup } from './firebase-sync.js';
 import { seedDemoData, clearDemoData } from './demo-data.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
@@ -140,9 +141,45 @@ async function checkAutoLock() {
   }
 }
 
-function navigateTo(view) {
+/* ---------- Bouton Retour (téléphone, geste, flèche de la barre du haut) — voir back-navigation.js ---------- */
+const backController = createBackController({
+  currentView: () => appState.currentView,
+  goToView: (view) => navigateTo(view, { fromBack: true }),
+  closeTopModal: () => {
+    const root = document.getElementById('modal-root');
+    const top = root && [...root.children].filter((el) => el.classList.contains('modal-backdrop')).pop();
+    if (!top) return false;
+    const closeBtn = top.querySelector('.modal-close');
+    if (closeBtn) closeBtn.click(); else top.click(); // sans croix : un clic sur le fond (fermeture standard des fenêtres)
+    return true;
+  },
+  isAppVisible: () => { const appEl = document.getElementById('app'); return !!appEl && !appEl.hidden; },
+  onExitWarning: () => showToast(t('Appuyez encore sur Retour pour quitter.')),
+});
+let backTrapped = false;
+/** Garde toujours une entrée d'historique « au-dessus » de la base : un retour la consomme au lieu de quitter l'application. */
+function armBackTrap() {
+  if (backTrapped) return;
+  window.history.pushState({ djignan: 'top' }, '');
+  backTrapped = true;
+}
+function initBackNavigation() {
+  window.history.replaceState({ djignan: 'base' }, '');
+  armBackTrap();
+  window.addEventListener('popstate', () => {
+    backTrapped = false; // le retour vient de consommer l'entrée « top »
+    if (backController.handleBack()) armBackTrap(); // géré : on reste dans l'application, piège réarmé
+  });
+  document.addEventListener('djignan:modal-open', armBackTrap); // ex. après un « quitter » refusé, puis une fenêtre qui s'ouvre
+  document.getElementById('topbar-back')?.addEventListener('click', () => { backController.handleBack(); });
+}
+
+function navigateTo(view, { fromBack = false } = {}) {
   if (!VIEW_RENDERERS[view]) return;
+  if (!fromBack) { backController.visit(appState.currentView, view); armBackTrap(); }
   appState.currentView = view;
+  const backBtn = document.getElementById('topbar-back');
+  if (backBtn) backBtn.hidden = !backController.canGoBack();
 
   document.querySelectorAll('.view').forEach((el) => {
     const active = el.dataset.view === view;
@@ -575,6 +612,16 @@ async function maybeShowOnboarding() {
     const body = modal.el.querySelector('.modal-body');
     body.innerHTML = `<p style="margin:0 0 12px;text-transform:uppercase;letter-spacing:.04em;" class="fs-11 c-faint">${t('Étape {n} / {total}', { n: index + 1, total: steps.length })}</p><div id="ob-step-content"></div>`;
     await step.render(body.querySelector('#ob-step-content'), { next });
+    // « Retour » à l'étape précédente (avant : aucune étape ne pouvait être revue, une mauvaise devise restait choisie).
+    if (index > 0) {
+      const back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'btn btn-ghost btn-block mt-8';
+      back.id = 'ob-back';
+      back.textContent = t('Retour');
+      back.addEventListener('click', async () => { index = Math.max(0, index - 1); await renderStep(); });
+      body.appendChild(back);
+    }
   }
   async function next() {
     index++;
@@ -778,8 +825,9 @@ function showRestoreScreenIfNeeded() {
         submitBtn.disabled = true;
         errorEl.hidden = true;
         try {
-          await pullBackupFromCloud(passphrase, { merge: false });
+          const restored = await pullBackupFromCloud(passphrase, { merge: false });
           await setSetting('cloudBackupWasSignedIn', true);
+          if (restored?.missingPhotos) showToast(restoreDoneMessage(restored), { duration: 9000 });
           finish();
         } catch (err) {
           errorEl.textContent = err.message || t('Restauration impossible.');
@@ -919,6 +967,7 @@ async function onUnlocked({ role = 'owner' } = {}) {
     initSettingsModule();
     initSearchModule();
     wireGlobalChrome();
+    initBackNavigation();
     initEasyHome({ navigateTo });
 
     appState.theme = await getSetting('theme', 'auto');

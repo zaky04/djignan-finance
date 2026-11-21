@@ -20,8 +20,9 @@
    ========================================================================== */
 
 import { firebaseConfig, isFirebaseConfigured, googleClientId, googleDesktopClientId, googleAndroidClientId } from './firebase-config.js';
-import { buildEncryptedPayload, decryptPayload, deserializeReceiptsForImport, markBackupDone, estimateBackupSize, formatBytes } from './backup.js';
-import { importAllData, getSetting, setSetting } from './db.js';
+import { buildEncryptedPayload, decryptPayload, deserializeReceiptsForImport, markBackupDone, estimateBackupSize, formatBytes, BACKUP_SIZE_CRITICAL_BYTES } from './backup.js';
+import { uploadPhotos, downloadPhotos, pruneUnreferencedPhotos } from './cloud-photos.js';
+import { STORES, importAllData, getSetting, setSetting } from './db.js';
 import { openModal, showToast, confirmDialog, confirmReplaceAllData, formatDate, escapeHtml } from './utils.js';
 import { notifyDataChanged, bus, EVENTS } from './state.js';
 import { t } from './i18n.js';
@@ -420,6 +421,28 @@ function withTimeout(promise, ms = NETWORK_STEP_TIMEOUT_MS) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+/** Stockage des photos (cloud-photos.js) sur Firestore : même sous-collection `chunks` que les morceaux de la sauvegarde — les règles de
+    sécurité déjà en place (chaque utilisateur n'accède qu'à ses propres documents) les couvrent, rien à modifier dans la console. Les
+    identifiants (`p_<empreinte>_<n>`, `photoIndex`) ne peuvent pas se confondre avec ceux des morceaux (`<génération>_<n>`). */
+function firestorePhotoStore(firestoreMod, chunksRef) {
+  return {
+    async get(id) {
+      const snap = await withTimeout(firestoreMod.getDoc(firestoreMod.doc(chunksRef, id)), 30000);
+      return snap.exists() ? snap.data() : null;
+    },
+    async set(id, data) {
+      await withTimeout(firestoreMod.setDoc(firestoreMod.doc(chunksRef, id), data));
+    },
+    async deleteMany(ids) {
+      for (let i = 0; i < ids.length; i += 400) {
+        const batch = firestoreMod.writeBatch(firebaseDb);
+        for (const id of ids.slice(i, i + 400)) batch.delete(firestoreMod.doc(chunksRef, id));
+        await withTimeout(batch.commit());
+      }
+    },
+  };
+}
+
 // Un seul envoi à la fois : la sauvegarde automatique (ci-dessous) et le bouton manuel peuvent se
 // déclencher en même temps ; deux envois entrelacés écriraient les mêmes morceaux en parallèle.
 let pushQueue = Promise.resolve();
@@ -443,12 +466,24 @@ async function pushBackupToCloudNow(passphrase, onProgress) {
   const user = firebaseAuth.currentUser;
   if (!user) throw new Error(t('Non connecté.'));
   onProgress(t('Chiffrement des données…'));
-  const payloadStr = JSON.stringify(await buildEncryptedPayload(passphrase));
+  // Les photos ne sont PAS dans la sauvegarde des données : chacune est envoyée une seule fois à part (cloud-photos.js).
+  const photos = new Map();
+  const payloadStr = JSON.stringify(await buildEncryptedPayload(passphrase, { collectPhotos: photos }));
   const chunks = [];
   for (let i = 0; i < payloadStr.length; i += CHUNK_SIZE) chunks.push(payloadStr.slice(i, i + CHUNK_SIZE));
 
   const chunksRef = firestoreMod.collection(firebaseDb, 'backups', user.uid, 'chunks');
   const backupDocRef = firestoreMod.doc(firebaseDb, 'backups', user.uid);
+  const photoStore = firestorePhotoStore(firestoreMod, chunksRef);
+
+  // Phase 0 : les photos pas encore dans le cloud, AVANT de basculer la sauvegarde — une coupure ici laisse l'ancienne sauvegarde
+  // intacte, et le prochain essai reprend sans renvoyer les photos déjà parties (l'index est tenu à jour au fil de l'envoi).
+  if (photos.size) {
+    await uploadPhotos({
+      store: photoStore, passphrase, photos,
+      onProgress: ({ done, total }) => { if (total) onProgress(t('Envoi des photos… {done}/{total}', { done, total })); },
+    });
+  }
   // Chaque envoi écrit ses morceaux sous une NOUVELLE « génération » (identifiants distincts des précédents) :
   // l'ancienne sauvegarde reste intacte tant que le pointeur du document parent ne bascule pas. Avec des
   // identifiants numériques réutilisés (0, 1, 2…), un envoi interrompu au 2e lot avait déjà écrasé les premiers
@@ -520,6 +555,17 @@ async function pushBackupToCloudNow(passphrase, onProgress) {
     }
   } catch (err) {
     console.warn('Nettoyage des anciens morceaux cloud impossible :', err);
+  }
+
+  // Phase 4 : photos que cette sauvegarde ne référence plus (transaction supprimée). Après la bascule, jamais avant, et jamais si la
+  // dernière restauration sur cet appareil a laissé des photos de côté (leurs transactions n'ont alors plus de photo ici : les
+  // supprimer du cloud les perdrait pour toujours). Sans conséquence si ça échoue.
+  try {
+    if (!(await getSetting('cloudPhotoPruneBlocked', false))) {
+      await pruneUnreferencedPhotos({ store: photoStore, referenced: new Set(photos.keys()) });
+    }
+  } catch (err) {
+    console.warn('Nettoyage des photos cloud impossible :', err);
   }
 
   await markBackupDone();
@@ -612,7 +658,28 @@ function showCloudBackupReminderModal(urgent = false) {
   });
 }
 
-export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
+/** Sauvegarde « photos à part » : remet chaque photo sur sa transaction (récupération + déchiffrement). Renvoie le nombre de photos
+    introuvables ou illisibles — la restauration continue sans elles, jamais bloquée par une photo. */
+async function restoreExternalPhotos(data, firestoreMod, user, passphrase, onProgress) {
+  const rows = data.stores?.[STORES.TRANSACTIONS] || [];
+  const wanted = [...new Set(rows.map((r) => r.receiptHash).filter((h) => typeof h === 'string' && /^[0-9a-f]{32}$/.test(h)))];
+  const chunksRef = firestoreMod.collection(firebaseDb, 'backups', user.uid, 'chunks');
+  const { blobs, missing } = await downloadPhotos({
+    store: firestorePhotoStore(firestoreMod, chunksRef), passphrase, hashes: wanted,
+    onProgress: ({ done, total }) => { if (total) onProgress(t('Récupération des photos… {done}/{total}', { done, total })); },
+  });
+  for (const r of rows) {
+    if (r.receiptHash === undefined) continue;
+    const blob = blobs.get(r.receiptHash);
+    if (blob) r.receiptBlob = blob;
+    delete r.receiptHash;
+  }
+  delete data.photosExternal;
+  return missing.length;
+}
+
+/** Renvoie { missingPhotos } : photos du cloud qui n'ont pas pu être récupérées (0 dans le cas normal). */
+export async function pullBackupFromCloud(passphrase, { merge = false, onProgress = () => {} } = {}) {
   const { firestoreMod } = await ensureFirebase();
   const user = firebaseAuth.currentUser;
   if (!user) throw new Error(t('Non connecté.'));
@@ -626,6 +693,11 @@ export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
   const payloadStr = chunkDocs.map((d) => d.data().data).join('');
   const payload = JSON.parse(payloadStr);
   const data = await decryptPayload(payload, passphrase);
+  // Sauvegardes récentes : photos à part (data.photosExternal). Anciennes : photos dans le payload, reprises ci-dessous comme avant.
+  let missingPhotos = 0;
+  if (data.photosExternal) missingPhotos = await restoreExternalPhotos(data, firestoreMod, user, passphrase, onProgress);
+  // Des photos laissées de côté : cet appareil ne doit pas les faire supprimer du cloud à sa prochaine sauvegarde (voir phase 4 de l'envoi).
+  await setSetting('cloudPhotoPruneBlocked', missingPhotos > 0);
   await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
   if (merge) {
@@ -656,6 +728,15 @@ export async function pullBackupFromCloud(passphrase, { merge = false } = {}) {
     await markAutoBackupClean();
     await setSetting('cloudAutoBackupBlocked', null);
   }
+  return { missingPhotos };
+}
+
+/** Message à afficher après une restauration cloud (les trois endroits qui la déclenchent). */
+export function restoreDoneMessage(result) {
+  const n = result?.missingPhotos || 0;
+  return n > 0
+    ? t('Données restaurées depuis le cloud. {count} photo(s) de justificatifs n\'ont pas pu être récupérées : réessayez la restauration avec une bonne connexion.', { count: n })
+    : t('Données restaurées depuis le cloud.');
 }
 
 /* ---------- Vérification de fraîcheur au démarrage ----------
@@ -748,8 +829,8 @@ function showCloudStalenessModal(cloudUpdatedAt) {
     const merge = await confirmDialog(t('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.'), { confirmText: t('Fusionner'), cancelText: t('Remplacer tout') });
     if (!merge && !(await confirmReplaceAllData())) return;
     try {
-      await pullBackupFromCloud(p, { merge });
-      showToast(t('Données restaurées depuis le cloud.'));
+      const restored = await pullBackupFromCloud(p, { merge });
+      showToast(restoreDoneMessage(restored), { duration: restored?.missingPhotos ? 9000 : undefined });
     } catch (err) {
       showToast(t('Erreur : {message}', { message: err.message || t('restauration impossible.') }));
     }
@@ -762,7 +843,8 @@ function showCloudStalenessModal(cloudUpdatedAt) {
 async function confirmLargeBackup() {
   try {
     const est = await estimateBackupSize();
-    if (est.level !== 'critical') return true;
+    // Cloud : les photos partent à part et une seule fois ; seule la partie « données » pèse à chaque envoi.
+    if (!(est.dataBytes >= BACKUP_SIZE_CRITICAL_BYTES)) return true;
     return await confirmDialog(
       t("La sauvegarde pèse environ {size} : l'envoi peut être très long, voire échouer sur un téléphone. Astuce : « Réduire les photos » dans Paramètres l'allège nettement. Envoyer quand même ?", { size: formatBytes(est.estimatedBytes) }),
       { confirmText: t('Envoyer quand même') },
@@ -1120,8 +1202,8 @@ export async function renderCloudBackupSection(container) {
     const merge = await confirmDialog(t('Fusionner avec les données existantes ? "Annuler" remplacera entièrement les données actuelles par celles du cloud.'), { confirmText: t('Fusionner'), cancelText: t('Remplacer tout') });
     if (!merge && !(await confirmReplaceAllData())) return;
     try {
-      await pullBackupFromCloud(p, { merge });
-      showToast(t('Données restaurées depuis le cloud.'));
+      const restored = await pullBackupFromCloud(p, { merge });
+      showToast(restoreDoneMessage(restored), { duration: restored?.missingPhotos ? 9000 : undefined });
     } catch (err) {
       showToast(t('Erreur : {message}', { message: err.message || t('restauration impossible.') }));
     }

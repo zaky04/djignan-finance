@@ -15,7 +15,7 @@ import { computeIntegrity, checkIntegrity } from './backup-integrity.js';
 // reports-extras.js/search.js.
 import { t as tr, applyStaticTranslations } from './i18n.js';
 
-function bufToBase64(buf) {
+export function bufToBase64(buf) {
   const bytes = new Uint8Array(buf);
   // Par blocs : une concaténation octet par octet sur plusieurs dizaines de Mo est lente et
   // gourmande en mémoire (jusqu'à figer l'onglet sur mobile). Résultat strictement identique.
@@ -25,14 +25,14 @@ function bufToBase64(buf) {
   }
   return btoa(parts.join(''));
 }
-function base64ToBuf(b64) {
+export function base64ToBuf(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes.buffer;
 }
 
-async function deriveAesKey(passphrase, saltBuf) {
+export async function deriveAesKey(passphrase, saltBuf) {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
@@ -84,6 +84,28 @@ async function serializeReceiptsForExport(data) {
     }
   }
 }
+/** Identifiant d'une photo = empreinte SHA-256 de ses octets d'origine (32 caractères hexadécimaux). Deux transactions qui partagent la
+    même photo n'en envoient qu'une ; une photo déjà envoyée au cloud est reconnue d'une sauvegarde à l'autre, sans la renvoyer. */
+export async function photoHash(blob) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()));
+  return Array.from(digest.slice(0, 16), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Variante « photos à part » (sauvegarde cloud, cloud-photos.js) : la copie exportée ne contient AUCUNE photo, seulement
+    `receiptHash` sur chaque transaction concernée ; les photos d'origine sont rangées dans `collected` (empreinte → Blob) pour être
+    envoyées une seule fois chacune. `data.photosExternal` (dans la partie chiffrée, donc authentifié) le signale à la restauration. */
+async function externalizeReceipts(data, collected) {
+  for (const t of data.stores?.[STORES.TRANSACTIONS] || []) {
+    if (!(t.receiptBlob instanceof Blob)) continue;
+    const hash = await photoHash(t.receiptBlob);
+    if (!collected.has(hash)) collected.set(hash, t.receiptBlob);
+    t.receiptHash = hash;
+    t.receiptOptimized = true; // la photo envoyée est réduite (voir cloud-photos.js) : rien à re-réduire à la restauration
+    delete t.receiptBlob;
+  }
+  data.photosExternal = true;
+}
+
 export async function deserializeReceiptsForImport(data) {
   for (const t of data.stores?.[STORES.TRANSACTIONS] || []) {
     // Un fichier de sauvegarde n'est pas une entrée fiable : un « receiptBlob » qui n'est pas un vrai Blob
@@ -151,7 +173,8 @@ export async function estimateBackupSize() {
   const otherBytes = JSON.stringify(data).length;
   const estimatedBytes = Math.round(otherBytes * 1.34 + photoSentBytes * 1.78);
   const level = estimatedBytes >= BACKUP_SIZE_CRITICAL_BYTES ? 'critical' : estimatedBytes >= BACKUP_SIZE_WARN_BYTES ? 'warn' : 'ok';
-  return { photoCount, photoStoredBytes, optimizableCount, estimatedBytes, level, light };
+  // `dataBytes` : la sauvegarde cloud ne contient plus les photos (envoyées à part, une seule fois) — seule cette part compte à chaque envoi.
+  return { photoCount, photoStoredBytes, optimizableCount, estimatedBytes, level, light, dataBytes: Math.round(otherBytes * 1.34) };
 }
 
 /** Réduit une fois pour toutes les photos de justificatifs déjà stockées (plus de ~250 Ko).
@@ -214,9 +237,11 @@ export async function importJsonBackup(file, { merge = false, ignoreIntegrity = 
    buildEncryptedPayload()/decryptPayload() portent tout le cœur cryptographique, indépendamment
    de la destination (fichier téléchargé ici, document Firestore dans firebase-sync.js) : le même
    chiffrement, testé une seule fois, sert aux deux. */
-export async function buildEncryptedPayload(passphrase) {
+export async function buildEncryptedPayload(passphrase, { collectPhotos = null } = {}) {
   const data = await exportAllData();
-  await serializeReceiptsForExport(data);
+  // Fichier : photos dans le fichier. Cloud : photos à part (`collectPhotos` = Map à remplir, voir externalizeReceipts).
+  if (collectPhotos) await externalizeReceipts(data, collectPhotos);
+  else await serializeReceiptsForExport(data);
   data.integrity = await computeIntegrity(data.stores); // vérifiée après déchiffrement (exportEncryptedBackup, importEncryptedBackup)
   const json = JSON.stringify(data);
   const salt = crypto.getRandomValues(new Uint8Array(16));

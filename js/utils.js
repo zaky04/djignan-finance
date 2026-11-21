@@ -327,6 +327,8 @@ export function openModal(bodyHtml, { title = '', onClose = null } = {}) {
       <div class="modal-body">${bodyHtml}</div>
     </div>`;
   root.appendChild(wrap);
+  // Prévient app.js (bouton Retour du téléphone, back-navigation.js) : une fenêtre vient de s'ouvrir, le retour doit la fermer.
+  document.dispatchEvent(new Event('djignan:modal-open'));
 
   let closed = false;
   function close() {

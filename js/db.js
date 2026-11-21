@@ -497,7 +497,7 @@ const DEVICE_LOCAL_SETTING_KEYS = new Set([
   // Résultat de la dernière vérification de sauvegarde (backup-verify.js) et SMS en attente de validation (sms-queue.js).
   'backupVerification', 'smsInbox',
   // Entretien du journal d'audit (maintainAuditLog) : « déjà compacté » vaut pour la base de CET appareil, pas pour celle d'une sauvegarde importée.
-  'auditCompacted',
+  'auditCompacted', 'cloudPhotoPruneBlocked',
 ]);
 
 export async function exportAllData() {
