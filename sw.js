@@ -4,7 +4,7 @@
    en arrière-plan (stale-while-revalidate) pour un fonctionnement 100% hors-ligne.
    ========================================================================== */
 
-const CACHE_VERSION = 'v182';
+const CACHE_VERSION = 'v183';
 const CACHE_NAME = `geofinance-${CACHE_VERSION}`;
 // Nom volontairement SANS le préfixe "geofinance-" : le nettoyage de l'activate ci-dessous
 // supprime tout cache "geofinance-*" différent de CACHE_NAME à chaque déploiement (mécanisme de
@@ -128,15 +128,23 @@ self.addEventListener('install', (event) => {
 
 /* ---------- Activate : purge des anciens caches ---------- */
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((key) => key.startsWith('geofinance-') && key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
-      )
-    ).then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    const oldCaches = keys.filter((key) => key.startsWith('geofinance-') && key !== CACHE_NAME);
+    await Promise.all(oldCaches.map((key) => caches.delete(key)));
+    await self.clients.claim();
+    // Mise à jour d'une version déjà installée (pas la toute première installation) : les pages ouvertes tournent encore sur l'ancienne
+    // version — sans ça, l'utilisateur ne voyait la nouvelle qu'après avoir fermé puis rouvert l'application, et croyait donc ne jamais
+    // recevoir les mises à jour. Une page cachée (appli en arrière-plan, téléphone verrouillé) est rechargée tout de suite sans gêner
+    // personne ; une page visible est prévenue (bandeau « Recharger », js/sw-register.js) pour ne pas effacer une saisie en cours.
+    if (!oldCaches.length) return;
+    const clients = await self.clients.matchAll({ type: 'window' });
+    await Promise.all(clients.map((client) => {
+      if (client.visibilityState === 'hidden' && typeof client.navigate === 'function') return client.navigate(client.url).catch(() => {});
+      client.postMessage({ type: 'NEW_VERSION', version: CACHE_VERSION });
+      return null;
+    }));
+  })());
 });
 
 /* ---------- Partage entrant (Web Share Target, manifest.json) ----------

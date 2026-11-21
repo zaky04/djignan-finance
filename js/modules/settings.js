@@ -638,15 +638,25 @@ async function renderUpdateSection(container) {
       // sw.js active toute nouvelle version dès son installation (self.skipWaiting()
       // inconditionnel) puis prend le contrôle de la page ouverte : "controllerchange"
       // est donc le signal fiable qu'une nouvelle version vient d'être installée.
+      // Avant : 4 secondes d'attente seulement. Or une nouvelle version se télécharge en entier avant de s'installer (une centaine de
+      // fichiers) : sur une connexion moyenne c'est plus long, et l'écran affichait à tort « Vous utilisez déjà la dernière version »
+      // pendant que la mise à jour se faisait en coulisses. On regarde maintenant si une installation démarre, et on l'attend (2 min).
       const updated = await new Promise((resolve) => {
         const onControllerChange = () => resolve(true);
         navigator.serviceWorker.addEventListener('controllerchange', onControllerChange, { once: true });
-        reg.update().catch(() => {});
-        setTimeout(() => {
-          navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
-          resolve(false);
-        }, 4000);
+        const giveUp = (ms, value) => setTimeout(() => { navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange); resolve(value); }, ms);
+        reg.update().then(() => {
+          if (reg.installing || reg.waiting) {
+            statusEl.innerHTML = `<span class="badge">${t('Téléchargement de la nouvelle version…')}</span>`;
+            giveUp(120000, 'slow'); // installation en cours : controllerchange la terminera
+          } else giveUp(0, false); // rien de nouveau sur le serveur
+        }).catch(() => giveUp(0, false));
       });
+      if (updated === 'slow') {
+        statusEl.innerHTML = `<span class="badge badge-warn">${t('Téléchargement encore en cours')}</span>`;
+        showToast(t("La nouvelle version se télécharge encore : gardez l'application ouverte, puis touchez « Recharger » quand le bandeau apparaît."), { duration: 8000 });
+        return;
+      }
 
       if (updated) {
         statusEl.innerHTML = `<span class="badge badge-pos">${t('Nouvelle version installée')}</span>`;

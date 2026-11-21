@@ -2178,6 +2178,9 @@ const EN = {
   'Attention : dépenses prévues au-dessus de votre argent': 'Warning: planned spending is above your money',
   "Créez d'abord un portefeuille (menu Plus, puis Portefeuilles).": 'Create a wallet first (More menu, then Wallets).',
   'Que voulez-vous noter ?': 'What do you want to record?',
+  'Téléchargement de la nouvelle version…': 'Downloading the new version…',
+  'Téléchargement encore en cours': 'Still downloading',
+  "La nouvelle version se télécharge encore : gardez l'application ouverte, puis touchez « Recharger » quand le bandeau apparaît.": 'The new version is still downloading: keep the app open, then tap "Reload" when the banner appears.',
   /* Assistant (ai-assistant.js, ai-assistant-ui.js) */
   'Ce mois-ci vous avez reçu {income} et dépensé {expenses}.': 'This month you received {income} and spent {expenses}.',
   'Vous dépensez {pct} % de plus que le mois dernier.': 'You are spending {pct}% more than last month.',

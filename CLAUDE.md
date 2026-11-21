@@ -4158,6 +4158,18 @@ Piste 12 de §7. Choisi par l'auteur : **les deux modes, au choix dans Paramètr
 - **Jamais essayé contre le vrai service Anthropic** (pas de clé ni de réseau dans l'environnement de test) : à confirmer avec une vraie clé ; la CSP et l'en-tête d'accès navigateur sont les points à surveiller.
 - Pas fait : un bouton « assistant » dans l'accueil facile, des questions sur une autre période que le mois en cours, la conversation à plusieurs tours (chaque question est indépendante).
 
+### 21 novembre 2026 (suite 4) — « Je ne vois pas les mises à jour » : mises à jour des appareils (`CACHE_VERSION` `v183`, non commité au moment d'écrire)
+
+Constat : le site servait bien v182 (vérifié par `curl`), mais ordinateur, tablette et iPhone affichaient l'ancienne version. Causes, toutes côté appareil :
+1. **Une page ouverte garde l'ancienne version** : le nouveau Service Worker s'installe et s'active en arrière-plan, mais rien ne rechargeait la page ni ne prévenait — il fallait fermer complètement puis rouvrir.
+2. **Le bouton « Vérifier les mises à jour » n'attendait que 4 s** : la nouvelle version télécharge ~85 fichiers avant de s'installer ; l'écran affichait à tort « Vous utilisez déjà la dernière version » pendant que ça se faisait.
+3. Aucune recherche de mise à jour pour une appli laissée ouverte (ordinateur, tablette) ou en arrière-plan (iPhone).
+Corrigé : `sw.js` (activation) recharge les pages **en arrière-plan** et **prévient** les pages visibles ; `js/sw-register.js` affiche le bandeau « Une nouvelle version est prête · Recharger » (jamais de rechargement
+d'office pendant la saisie), cherche une mise à jour à l'ouverture, au retour sur l'appli et toutes les 30 min (espacées de 10 min) ; le bouton des Paramètres attend maintenant l'installation (2 min) et dit « Téléchargement
+de la nouvelle version… ». Vérifié par simulation du Service Worker sous Node (première installation intacte ; mise à jour : ancien cache supprimé, page cachée rechargée, page visible prévenue ; cache du partage entrant
+conservé) et par le bandeau dans le navigateur. **Non testé sur un vrai appareil** (le navigateur de test refuse les Service Workers) ; l'ancienne version installée n'a pas ce bandeau : la première mise à jour vers
+v183 demande encore une fermeture complète puis une réouverture (le `sw.js` neuf, lui, recharge déjà les pages en arrière-plan).
+
 **Vérifié sans rien à corriger** : intervalles et écouteurs globaux enregistrés une seule fois, aucun `eval`/`document.write`, précache complet, pas de rendu de liste non borné (Transactions filtre par mois).
 **Reste à surveiller à long terme** : la base grossit surtout avec les photos (~150-400 Ko chacune, l'estimation est dans Paramètres) ; la sauvegarde cloud chiffrée d'un très gros historique avec photos
 reste lourde (découpée en morceaux, voir §6 du 18 octobre) ; sur un téléphone d'entrée de gamme les temps mesurés ici sont à multiplier (non mesuré).
