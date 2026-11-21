@@ -23,6 +23,7 @@ import { openSmsImportModal } from './sms-import.js';
 // silencieusement à l'intérieur de cette fonction (t('Sans catégorie') appellerait alors la
 // transaction comme une fonction au lieu de traduire, TypeError immédiat).
 import { t as tr } from '../i18n.js';
+import { renderAssistantPanel } from '../ai-assistant-ui.js';
 import { icon as svgIcon, knownCategoryLook } from '../icons.js';
 
 export const DASHBOARD_PANEL_DEFAULTS = { watchCategories: true, upcomingBills: true, charts: true, recentTransactions: true, safeToSpend: true, netWorth: true, debtsBalance: true, favorites: true, forecast: true, recap: true };
@@ -520,6 +521,7 @@ export async function renderDashboard() {
   }
 
   renderAlerts(budgetVsActual, thresholds, unconfirmedRates, currency, staleRates);
+  renderAssistantPanel().catch((err) => console.warn('[Assistant]', err)); // panneau « Mon bilan » (masqué si l'assistant est désactivé)
   // Sauvegarde cloud automatique en pause ou en échec : à voir ICI, pas seulement dans Paramètres.
   getCloudAutoBackupAlert().then((message) => {
     const stack = document.getElementById('dashboard-alerts');

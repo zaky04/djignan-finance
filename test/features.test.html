@@ -684,6 +684,82 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   eq('cache : un réglage modifié (devise de base) invalide aussi la lecture', (await computeNetWorth()).currency, 'EUR');
 }
 
+// ---------- Assistant : extrait de chiffres, bilan local, appel à l'IA ----------
+{
+  const ai = await import('../js/ai-assistant.js');
+  const i18n = await import('../js/i18n.js');
+  const dbm = await import('../js/db.js');
+  const input = {
+    level: 'anonymous', monthKey: '2026-11', currency: 'XOF',
+    summary: { income: 300000, expenses: 180000, netSavings: 120000 }, previousSummary: { income: 280000, expenses: 150000 },
+    categories: [{ label: 'Alimentation', value: 90000 }, { label: 'Chez Awa la coiffeuse', value: 40000 }, { label: 'Tontine du quartier', value: 20000 }, { label: 'Transport', value: 30000 }],
+    budgets: [{ label: 'Alimentation', budget: 80000, actual: 90000 }, { label: 'Mon projet secret', budget: 50000, actual: 45000 }],
+    safeToSpend: 55000, upcomingBillsTotal: 25000,
+    composition: { liquid: 400000, savings: 120000, blocked: 0, invested: 200000, receivables: 30000, debts: 10000 },
+    wallets: [{ name: 'Orange Money de Koffi', balance: 150000, currency: 'XOF' }],
+  };
+  const anon = ai.buildSnapshot(input);
+  const flat = JSON.stringify(anon);
+  eq('assistant (anonyme) : les catégories créées par l\'utilisateur sont regroupées, celles d\'origine gardées', [anon.expenses_by_category.map((c) => c.name), anon.expenses_by_category.find((c) => c.name === 'Other categories').amount], [['Alimentation', 'Other categories', 'Transport'], 60000]);
+  eq('assistant (anonyme) : aucun nom de portefeuille, de personne ou de libellé personnel dans ce qui part', [flat.includes('Awa'), flat.includes('Koffi'), flat.includes('secret'), flat.includes('Orange'), 'wallets' in anon], [false, false, false, false, false]);
+  eq('assistant (anonyme) : les budgets suivent la même règle de noms', anon.budgets.map((b) => [b.name, b.limit, b.spent]), [['Alimentation', 80000, 90000], ['Other categories', 50000, 45000]]);
+  const labels = ai.buildSnapshot({ ...input, level: 'labels' });
+  eq('assistant (noms) : les libellés et les portefeuilles sont envoyés, jamais autre chose', [labels.expenses_by_category.some((c) => c.name === 'Chez Awa la coiffeuse'), labels.wallets, Object.keys(labels).sort().join()], [true, [{ name: 'Orange Money de Koffi', balance: 150000, currency: 'XOF' }], 'balances,budgets,currency,data_level,expenses,expenses_by_category,income,month,net_saving,previous_month,safe_to_spend_this_month,upcoming_bills_total,wallets']);
+  eq('assistant : l\'extrait ne contient ni note, ni étiquette, ni nom de personne (clés exactes)', Object.keys(anon).sort().join(), 'balances,budgets,currency,data_level,expenses,expenses_by_category,income,month,net_saving,previous_month,safe_to_spend_this_month,upcoming_bills_total');
+  eq('assistant : le niveau inconnu retombe sur « anonyme »', ai.buildSnapshot({ ...input, level: 'tout' }).data_level, 'anonymous');
+
+  // Bilan local, français puis anglais
+  const fmt = (n) => `${n} F`;
+  const fr = ai.buildLocalReport(anon, (k, p) => i18n.t(k, p), fmt);
+  eq('assistant (local) : le bilan dit les entrées, les dépenses, la hausse, la plus grosse dépense, le budget dépassé et le reste à dépenser',
+    [fr[0], fr[1].includes('20 %'), fr.some((l) => l.includes('Alimentation (90000 F)')), fr.some((l) => l.includes('« Alimentation » est dépassé de 10000 F')), fr.some((l) => l.includes('55000 F')), fr.some((l) => l.includes('On vous doit 30000 F'))],
+    ['Ce mois-ci vous avez reçu 300000 F et dépensé 180000 F.', true, true, true, true, true]);
+  eq('assistant (local) : mois vide → une seule phrase d\'invitation', ai.buildLocalReport(ai.buildSnapshot({ ...input, summary: { income: 0, expenses: 0, netSavings: 0 }, categories: [], budgets: [] }), (k, p) => i18n.t(k, p), fmt).length, 1);
+  const calm = ai.buildLocalReport(ai.buildSnapshot({ ...input, previousSummary: { income: 0, expenses: 175000 } }), (k, p) => i18n.t(k, p), fmt);
+  eq('assistant (local) : dépenses proches du mois dernier → « stables »', calm[1], 'Vos dépenses sont stables par rapport au mois dernier.');
+
+  // Prêt à envoyer ? mode, clé et consentement pour LE niveau choisi
+  eq('assistant : on n\'envoie que si mode en ligne + clé + consentement pour ce niveau', [
+    ai.cloudReadiness({ mode: 'local', level: 'anonymous', consent: 'anonymous', apiKey: 'k' }).reason, ai.cloudReadiness({ mode: 'cloud', level: 'anonymous', consent: 'anonymous', apiKey: '' }).reason,
+    ai.cloudReadiness({ mode: 'cloud', level: 'labels', consent: 'anonymous', apiKey: 'k' }).reason, ai.cloudReadiness({ mode: 'cloud', level: 'anonymous', consent: null, apiKey: 'k' }).reason,
+    ai.cloudReadiness({ mode: 'cloud', level: 'labels', consent: 'labels', apiKey: 'k' }).ok], ['mode', 'key', 'consent', 'consent', true]);
+
+  // Requête : en-têtes, modèle, pas de clé dans la requête, question bornée
+  const req = ai.buildAiRequest({ snapshot: anon, question: 'x'.repeat(500), language: 'en', model: 'claude-sonnet-5-5' });
+  eq('assistant : la requête vise l\'API Anthropic, sans clé, avec le modèle choisi et une question bornée à 300 caractères', [req.url, req.body.model, JSON.stringify(req.headers).includes('x-api-key'), req.body.messages[0].content.endsWith('x'.repeat(300)), req.body.messages[0].content.includes('x'.repeat(301)), req.body.system.endsWith('Answer in English.')], ['https://api.anthropic.com/v1/messages', 'claude-sonnet-5-5', false, true, false, true]);
+
+  // Appel simulé : succès, erreurs lisibles, clé jamais affichée
+  const T = (k, p) => i18n.t(k, p);
+  let seen = null;
+  const okFetch = async (url, init) => { seen = { url, init }; return { ok: true, status: 200, json: async () => ({ content: [{ type: 'text', text: 'Vous avez bien géré.' }, { type: 'tool_use' }] }) }; };
+  const answer = await ai.askAssistant({ apiKey: 'sk-ant-SECRET1234', snapshot: anon, question: 'Résume', language: 'fr', model: 'claude-haiku-5-5', t: T, fetchImpl: okFetch });
+  eq('assistant : réponse lue, clé envoyée seulement en en-tête', [answer, seen.init.headers['x-api-key'], seen.init.body.includes('SECRET'), seen.init.headers['anthropic-dangerous-direct-browser-access']], ['Vous avez bien géré.', 'sk-ant-SECRET1234', false, 'true']);
+  const failWith = async (fetchImpl) => { try { await ai.askAssistant({ apiKey: 'sk-ant-SECRET1234', snapshot: anon, t: T, fetchImpl }); return 'aucune erreur'; } catch (e) { return e.message; } };
+  const msgs = [await failWith(async () => ({ ok: false, status: 401, text: async () => 'bad key sk-ant-SECRET1234' })), await failWith(async () => ({ ok: false, status: 429 })), await failWith(async () => ({ ok: false, status: 529 })), await failWith(async () => { throw new TypeError('Failed to fetch'); }), await failWith(async () => ({ ok: true, json: async () => ({ content: [] }) }))];
+  eq('assistant : erreurs en mots simples, jamais le texte brut du service', msgs.map((m) => m.includes('SECRET')), [false, false, false, false, false]);
+  eq('assistant : clé refusée / trop de demandes / service indisponible / pas de réseau / réponse vide', msgs, [
+    'La clé API est refusée. Vérifiez-la dans Paramètres, section Assistant.', 'Trop de demandes en peu de temps. Réessayez dans une minute.', "Le service d'IA est momentanément indisponible. Réessayez plus tard.",
+    'Pas de connexion à Internet, ou service injoignable.', "Le service n'a rien répondu. Reformulez votre question."]);
+  let noKey = 'aucune erreur'; try { await ai.askAssistant({ apiKey: '', snapshot: anon, t: T, fetchImpl: okFetch }); } catch (e) { noKey = e.message; }
+  eq('assistant : sans clé, aucun appel', [noKey.includes('Aucune clé API'), await (async () => { let called = false; try { await ai.askAssistant({ apiKey: '', snapshot: anon, t: T, fetchImpl: async () => { called = true; } }); } catch { /* attendu */ } return called; })()], [true, false]);
+  const timedOut = await (async () => { try { await ai.askAssistant({ apiKey: 'k', snapshot: anon, t: T, timeoutMs: 30, fetchImpl: (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(Object.assign(new Error('x'), { name: 'AbortError' })))) }); return 'aucune erreur'; } catch (e) { return e.message; } })();
+  eq('assistant : pas de réponse à temps → message clair (temporisation)', timedOut, "Le service n'a pas répondu à temps. Réessayez.");
+
+  // Réglages : par défaut tout est éteint, la clé et le consentement ne sortent pas dans une sauvegarde
+  await wipeAllData();
+  const def = await ai.getAiSettings();
+  eq('assistant : par défaut désactivé, niveau anonyme, aucun consentement, aucune clé', [def.mode, def.level, def.consent, def.apiKey], ['off', 'anonymous', null, '']);
+  await dbm.setSetting('aiApiKey', 'sk-ant-SECRET1234'); await dbm.setSetting('aiConsent', 'anonymous'); await dbm.setSetting('aiMode', 'cloud');
+  const exported = JSON.stringify(await dbm.exportAllData());
+  eq('assistant : la clé API et le consentement ne sont JAMAIS dans une sauvegarde', [exported.includes('SECRET'), exported.includes('aiApiKey'), exported.includes('aiConsent'), exported.includes('aiMode')], [false, false, false, true]);
+  await dbm.importAllData({ stores: { settings: [{ key: 'aiApiKey', value: 'pirate' }, { key: 'aiConsent', value: 'labels' }] } }, { merge: true });
+  const kept = await ai.getAiSettings();
+  eq('assistant : un fichier importé ne peut ni poser la clé ni donner le consentement', [kept.apiKey, kept.consent], ['sk-ant-SECRET1234', 'anonymous']);
+  await dbm.setSetting('aiMode', 'n\'importe quoi');
+  eq('assistant : un mode inconnu retombe sur « désactivé »', (await ai.getAiSettings()).mode, 'off');
+  await wipeAllData();
+}
+
 // ---------- Bouton Retour : fenêtres, écrans, accueil, quitter ----------
 {
   const { createBackController } = await import('../js/back-navigation.js');

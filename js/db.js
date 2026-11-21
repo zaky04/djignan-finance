@@ -498,6 +498,8 @@ const DEVICE_LOCAL_SETTING_KEYS = new Set([
   'backupVerification', 'smsInbox',
   // Entretien du journal d'audit (maintainAuditLog) : « déjà compacté » vaut pour la base de CET appareil, pas pour celle d'une sauvegarde importée.
   'auditCompacted', 'cloudPhotoPruneBlocked',
+  // Assistant IA (ai-assistant.js) : clé API personnelle et consentement, propres à CET appareil, jamais exportés ni importables.
+  'aiApiKey', 'aiConsent',
 ]);
 
 export async function exportAllData() {

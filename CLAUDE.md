@@ -4139,6 +4139,25 @@ Flèche de retour dans la barre du haut sur tous les écrans sauf l'accueil. L'a
 **Pas testé** : le vrai bouton Retour d'un téléphone (simulé par `history.back()`), l'APK/EXE (WebView), les écrans de démarrage (langue, restauration, création du PIN) qui n'ont pas de retour interne
 (le retour du téléphone y avertit seulement).
 
+### 21 novembre 2026 (suite 3) — Assistant : bilan en mots simples + IA en ligne optionnelle (`CACHE_VERSION` `v182`, non commité au moment d'écrire)
+
+Piste 12 de §7. Choisi par l'auteur : **les deux modes, au choix dans Paramètres → Assistant** (`aiMode` : `off` par défaut / `local` / `cloud`), et **les deux niveaux de données au choix** (`aiDataLevel` : `anonymous` par défaut / `labels`).
+- `js/ai-assistant.js` (logique pure, testée sans réseau) et `js/ai-assistant-ui.js` (réglages, panneau « Mon bilan » du tableau de bord `#dash-assistant`, fenêtre).
+- **Mode local** : `buildLocalReport` rédige un bilan en phrases courtes (entrées/dépenses, hausse ou baisse d'au moins 10 % sur le mois dernier, plus grosse dépense, budgets dépassés, reste à dépenser,
+  créances/dettes), lisible à voix haute (`speech-out.js`). Aucun réseau, aucun consentement nécessaire.
+- **Mode en ligne** : questions libres à l'API Anthropic (`https://api.anthropic.com/v1/messages`, ajoutée au `connect-src` de la CSP d'`index.html`), avec la **clé personnelle** de l'utilisateur
+  (`aiApiKey`), modèle au choix (`claude-haiku-5-5` par défaut, `claude-sonnet-5-5`). En-tête `anthropic-dangerous-direct-browser-access` (appel depuis le navigateur). Pas de serveur intermédiaire :
+  **adresse figée** (un serveur à soi exigerait de modifier la CSP). Aucun texte brut du service n'est affiché (il pourrait contenir la clé) : erreurs traduites en mots simples.
+- **Ce qui part** (`buildSnapshot`, extrait de chiffres montré tel quel avant tout accord, et à tout moment via « Voir ce qui est envoyé ») : totaux du mois et du précédent, dépenses par catégorie, budgets, reste à
+  dépenser, factures à venir, soldes globaux. `anonymous` : seuls les noms des catégories D'ORIGINE sont gardés, les autres sont regroupées sous « Other categories » ; ni portefeuilles ni personnes.
+  `labels` : + noms de toutes les catégories et portefeuilles avec solde. **Jamais** : notes, étiquettes, noms de personnes (dettes, créances, partages, tontines), justificatifs, liste d'opérations.
+- **Consentement** (`aiConsent`) lié au niveau : changer de niveau le rend caduc ; il se retire d'un clic. La clé et le consentement sont **propres à l'appareil** (`DEVICE_LOCAL_SETTING_KEYS`) : jamais exportés,
+  jamais importables depuis un fichier (testé). L'aidant n'envoie jamais rien (retombe sur le mode local).
+- Tests : 20 nouveaux (`features.test.html`, 363 → 420 avec les photos/retour) : niveaux de données, regroupement des noms, clés exactes de l'extrait, bilan FR, requête, appel simulé, erreurs, temporisation,
+  réglages par défaut, clé hors sauvegarde. Parcours réel en français et en anglais avec un faux service (requête exacte, réponse affichée, accord lié au niveau).
+- **Jamais essayé contre le vrai service Anthropic** (pas de clé ni de réseau dans l'environnement de test) : à confirmer avec une vraie clé ; la CSP et l'en-tête d'accès navigateur sont les points à surveiller.
+- Pas fait : un bouton « assistant » dans l'accueil facile, des questions sur une autre période que le mois en cours, la conversation à plusieurs tours (chaque question est indépendante).
+
 **Vérifié sans rien à corriger** : intervalles et écouteurs globaux enregistrés une seule fois, aucun `eval`/`document.write`, précache complet, pas de rendu de liste non borné (Transactions filtre par mois).
 **Reste à surveiller à long terme** : la base grossit surtout avec les photos (~150-400 Ko chacune, l'estimation est dans Paramètres) ; la sauvegarde cloud chiffrée d'un très gros historique avec photos
 reste lourde (découpée en morceaux, voir §6 du 18 octobre) ; sur un téléphone d'entrée de gamme les temps mesurés ici sont à multiplier (non mesuré).

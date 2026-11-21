@@ -5,6 +5,7 @@
    ========================================================================== */
 
 import { STORES, dbGetAll, dbWriteBatch, getSetting, setSetting, wipeAllData } from '../db.js';
+import { renderAssistantSettings } from '../ai-assistant-ui.js';
 import { changePin, isBiometricAvailable, isBiometricConfigured, registerBiometric, removeBiometric, isHelperConfigured, setupHelperPin, removeHelperPin, getPinLength } from '../auth.js';
 import { verifyBackup, getLastBackupVerification } from '../backup-verify.js';
 import {
@@ -944,10 +945,11 @@ export async function renderSettings() {
       </div>`;
     return;
   }
-  container.innerHTML = '<div id="settings-profile"></div><div id="settings-uimode"></div><div id="settings-easy"></div><div id="settings-security"></div><div id="settings-helper"></div><div id="settings-notifications"></div><div id="settings-native-reminders"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-language"></div><div id="settings-currency"></div><div id="settings-backup-check"></div><div id="settings-backup"></div><div id="settings-cloud-backup"></div><div id="settings-developer"></div>';
+  container.innerHTML = '<div id="settings-profile"></div><div id="settings-uimode"></div><div id="settings-easy"></div><div id="settings-assistant"></div><div id="settings-security"></div><div id="settings-helper"></div><div id="settings-notifications"></div><div id="settings-native-reminders"></div><div id="settings-install"></div><div id="settings-update"></div><div id="settings-dashboard"></div><div id="settings-features"></div><div id="settings-language"></div><div id="settings-currency"></div><div id="settings-backup-check"></div><div id="settings-backup"></div><div id="settings-cloud-backup"></div><div id="settings-developer"></div>';
   await renderProfileSection(document.getElementById('settings-profile'));
   await renderUiModeSection(document.getElementById('settings-uimode'));
   await renderEasyHomeSection(document.getElementById('settings-easy'));
+  await renderAssistantSettings(document.getElementById('settings-assistant'));
   await renderSecuritySection(document.getElementById('settings-security'));
   await renderHelperSection(document.getElementById('settings-helper'));
   await renderNotificationsSection(document.getElementById('settings-notifications'));
