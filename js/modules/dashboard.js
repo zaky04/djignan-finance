@@ -4,7 +4,7 @@
 
 import { formatCurrency, formatDate, formatMonthLabel, formatPercent, escapeHtml, currentMonthKey, monthKeyOffset, percentage, budgetProgressClass } from '../utils.js';
 import { openSafeToSpendDetail } from './safe-to-spend-detail.js';
-import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeSafeToSpend, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates, computeBudgetSuggestions } from '../ledger.js';
+import { computeNetWorth, computeNetWorthHistory, computeNetWorthComposition, computeMonthSummary, computeExpensesByCategory, computeBudgetVsActual, computeMonthlyBudgetSummary, computeSafeToSpend, computeEndOfMonthForecast, getEnrichedTransactions, getUnconfirmedRates, getStaleRates, computeBudgetSuggestions } from '../ledger.js';
 import { renderExpensesByCategoryChart, renderBudgetVsActualChart, renderMultiTrendChart } from '../charts.js';
 import { loadCashflowForecast } from '../forecast.js';
 import { loadMonthlyRecap, recapHighlights, shareRecapImage } from '../monthly-recap.js';
@@ -51,10 +51,22 @@ function setAmount(el, value, currency) {
   el.textContent = formatCurrency(value, currency);
 }
 
-function renderAlerts(budgetRows, thresholds, unconfirmedRates, currency) {
+function renderAlerts(budgetRows, thresholds, unconfirmedRates, currency, staleRates = []) {
   const stack = document.getElementById('dashboard-alerts');
   if (!stack) return;
   stack.innerHTML = '';
+
+  // Taux confirmé mais ancien : l'épargne en devise est convertie avec un cours qui a pu bouger depuis (voir getStaleRates, ledger.js).
+  if (staleRates.length) {
+    const div = document.createElement('div');
+    div.className = 'alert alert-warn';
+    const oldest = Math.max(...staleRates.map((r) => r.days));
+    div.textContent = tr('Taux de change ancien pour {codes} (le plus ancien date de {months} mois) — le patrimoine net converti peut s\'écarter de la réalité. À actualiser dans Portefeuilles.', {
+      codes: staleRates.map((r) => r.code).join(', '),
+      months: Math.max(1, Math.round(oldest / 30)),
+    });
+    stack.appendChild(div);
+  }
 
   if (unconfirmedRates.length) {
     const div = document.createElement('div');
@@ -393,7 +405,7 @@ export async function renderDashboard() {
   const positionEl = document.getElementById('panel-position-dash');
   if (positionEl) positionEl.hidden = !panels.netWorth && !panels.debtsBalance;
 
-  const [summary, prevSummary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, forecast, recentTx, netWorth, composition, unconfirmedRates] = await Promise.all([
+  const [summary, prevSummary, expensesByCategory, netWorthHistory, budgetVsActual, monthlyBudget, forecast, recentTx, netWorth, composition, unconfirmedRates, staleRates] = await Promise.all([
     computeMonthSummary(monthKey),
     computeMonthSummary(monthKeyOffset(monthKey, -1)),
     computeExpensesByCategory(monthKey),
@@ -405,6 +417,7 @@ export async function renderDashboard() {
     computeNetWorth(),
     computeNetWorthComposition(),
     getUnconfirmedRates(),
+    getStaleRates(),
   ]);
   const currency = summary.currency;
 
@@ -506,7 +519,7 @@ export async function renderDashboard() {
     renderBudgetVsActualChart('chart-budget-vs-actual', budgetVsActual, currency);
   }
 
-  renderAlerts(budgetVsActual, thresholds, unconfirmedRates, currency);
+  renderAlerts(budgetVsActual, thresholds, unconfirmedRates, currency, staleRates);
   // Sauvegarde cloud automatique en pause ou en échec : à voir ICI, pas seulement dans Paramètres.
   getCloudAutoBackupAlert().then((message) => {
     const stack = document.getElementById('dashboard-alerts');

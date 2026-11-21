@@ -646,12 +646,160 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   ok('import : ancienne sauvegarde sans empreinte acceptée comme avant', true);
 }
 
+// ---------- Import CSV : champs entre guillemets contenant des sauts de ligne ----------
+{
+  const { splitCsvRecords, analyzeTransactionsCsv } = await import('../js/backup.js');
+  eq('CSV : découpage simple, lignes vides ignorées, CRLF accepté', splitCsvRecords('a;b\r\n\r\nc;d\n'), ['a;b', 'c;d']);
+  eq('CSV : un saut de ligne entre guillemets reste dans le champ', splitCsvRecords('x;"ligne1\nligne2";y\nz;w'), ['x;"ligne1\nligne2";y', 'z;w']);
+  eq('CSV : guillemet doublé à l\'intérieur d\'un champ', splitCsvRecords('a;"dit ""oui""\nfin";b'), ['a;"dit ""oui""\nfin";b']);
+  eq('CSV : guillemet jamais refermé → repli ligne par ligne, rien n\'est avalé', splitCsvRecords('a;5" tuyau;b\nc;d;e\nf;g;h'), ['a;5" tuyau;b', 'c;d;e', 'f;g;h']);
+  const header = 'Date;Type;Portefeuille;Vers portefeuille;Catégorie;Montant;Devise;Note;Pointée';
+  const csv = `${header}\n2026-10-01;expense;Caisse;;Courses;1200;XOF;"ligne1\nligne2";Non\n2026-10-02;expense;Caisse;;Courses;300;XOF;simple;Non`;
+  const an = await analyzeTransactionsCsv(new File([csv], 'x.csv'));
+  eq('CSV : une note sur deux lignes donne UNE ligne, intacte', [an.format, an.rows.length, an.rows[0][7], an.rows[1][7]], ['djignan', 2, 'ligne1\nligne2', 'simple']);
+}
+
+// ---------- Cache de lecture du moteur de calcul : jamais de chiffre périmé ----------
+{
+  const { computeNetWorth } = await import('../js/ledger.js');
+  const dbm = await import('../js/db.js');
+  await wipeAllData();
+  await dbm.setSetting('baseCurrency', 'XOF');
+  await dbAdd(STORES.WALLETS, { id: 'w-c1', name: 'Caisse', type: 'cash', currency: 'XOF', initialBalance: 1000, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  const nw = async () => (await computeNetWorth()).total;
+  const v0 = dbm.getDataVersion();
+  eq('cache : patrimoine initial', await nw(), 1000);
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-c1', walletId: 'w-c1', type: 'expense', amount: 300, date: '2026-10-01', createdAt: '2026-10-01T00:00:00.000Z' });
+  eq('cache : une écriture est vue tout de suite (pas de lecture périmée)', [await nw(), dbm.getDataVersion() > v0], [700, true]);
+  await dbm.dbPut(STORES.TRANSACTIONS, { id: 'tx-c1', walletId: 'w-c1', type: 'expense', amount: 100, date: '2026-10-01', createdAt: '2026-10-01T00:00:00.000Z' });
+  eq('cache : une modification aussi', await nw(), 900);
+  await dbm.dbDelete(STORES.TRANSACTIONS, 'tx-c1');
+  eq('cache : et une suppression', await nw(), 1000);
+  // Lecture lancée pendant une écriture : le résultat suivant doit refléter l'écriture terminée
+  const [, ] = await Promise.all([nw(), dbm.dbWriteBatch([{ store: STORES.TRANSACTIONS, type: 'add', value: { id: 'tx-c2', walletId: 'w-c1', type: 'income', amount: 50, date: '2026-10-02', createdAt: '2026-10-02T00:00:00.000Z' } }])]);
+  eq('cache : après une lecture concurrente d\'une écriture groupée', await nw(), 1050);
+  await dbm.importAllData({ stores: { [STORES.TRANSACTIONS]: [] } }, { merge: false });
+  eq('cache : après un import qui remplace les données', await nw(), 1000);
+  await dbm.setSetting('baseCurrency', 'EUR');
+  eq('cache : un réglage modifié (devise de base) invalide aussi la lecture', (await computeNetWorth()).currency, 'EUR');
+}
+
+// ---------- Sauvegarde : photos allégées dans la copie, jamais dans la base ----------
+{
+  const bk = await import('../js/backup.js');
+  const dbm = await import('../js/db.js');
+  // Image « photographique » : dégradé + bruit (se compresse comme une vraie photo, pas comme un aplat)
+  const makePhoto = (w, h, q) => new Promise((resolve) => {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d'); const img = g.createImageData(w, h); let s = 7;
+    for (let i = 0; i < img.data.length; i += 4) { s = (s * 1103515245 + 12345) & 0x7fffffff; const n = (s >> 16) & 63; const x = (i / 4) % w, y = Math.floor(i / 4 / w);
+      img.data[i] = (x * 255 / w + n) & 255; img.data[i + 1] = (y * 255 / h + n) & 255; img.data[i + 2] = ((x + y) * 127 / (w + h) + n) & 255; img.data[i + 3] = 255; }
+    g.putImageData(img, 0, 0); c.toBlob(resolve, 'image/jpeg', q);
+  });
+  const dims = async (dataUrl) => { const im = new Image(); im.src = dataUrl; await im.decode(); return Math.max(im.naturalWidth, im.naturalHeight); };
+  const big = await makePhoto(2000, 1500, 0.92);
+  const mid = await makePhoto(900, 700, 0.85);
+  await wipeAllData();
+  await dbAdd(STORES.WALLETS, { id: 'w-p1', name: 'Caisse', type: 'cash', currency: 'XOF', initialBalance: 0, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-big', walletId: 'w-p1', type: 'expense', amount: 1, date: '2026-10-01', receiptBlob: big, createdAt: '2026-10-01T00:00:00.000Z' });
+  await dbAdd(STORES.TRANSACTIONS, { id: 'tx-mid', walletId: 'w-p1', type: 'expense', amount: 2, date: '2026-10-02', receiptBlob: mid, createdAt: '2026-10-02T00:00:00.000Z' });
+  const exportPhotos = async () => {
+    const clear = await bk.decryptPayload(await bk.buildEncryptedPayload('x'), 'x');
+    const rows = Object.fromEntries(clear.stores.transactions.map((t) => [t.id, t.receiptDataUrl]));
+    return { big: rows['tx-big'], mid: rows['tx-mid'] };
+  };
+  eq('photos de sauvegarde : allégées par défaut', await bk.isLightBackupPhotos(), true);
+  const light = await exportPhotos();
+  await dbm.setSetting('backupLightPhotos', false);
+  eq('photos de sauvegarde : le réglage peut être désactivé', await bk.isLightBackupPhotos(), false);
+  const normal = await exportPhotos();
+  ok('photos de sauvegarde : la copie allégée est nettement plus petite (grande photo)', light.big.length < normal.big.length * 0.8, `${light.big.length} vs ${normal.big.length}`);
+  ok('photos de sauvegarde : une photo moyenne (sous 250 Ko après réduction) est aussi allégée, pas en mode standard', light.mid.length < normal.mid.length * 0.9, `${light.mid.length} vs ${normal.mid.length}`);
+  eq('photos de sauvegarde : 1 200 px au plus en allégé, 1 600 px au plus en standard', [await dims(light.big), await dims(normal.big)], [1200, 1600]);
+  const stored = (await dbGetAll(STORES.TRANSACTIONS)).find((t) => t.id === 'tx-big');
+  eq('photos de sauvegarde : la photo gardée sur l\'appareil n\'est pas modifiée', [stored.receiptBlob.size, stored.receiptBlob.size === big.size], [big.size, true]);
+  const est = await bk.estimateBackupSize();
+  await dbm.setSetting('backupLightPhotos', true);
+  const estLight = await bk.estimateBackupSize();
+  ok('photos de sauvegarde : l\'estimation de taille suit le réglage', estLight.light === true && est.light === false && estLight.estimatedBytes < est.estimatedBytes, `${estLight.estimatedBytes} vs ${est.estimatedBytes}`);
+  await wipeAllData();
+}
+
+// ---------- Taux de change anciens : alerte seulement quand elle est justifiée ----------
+{
+  const { getStaleRates } = await import('../js/ledger.js');
+  const dbm = await import('../js/db.js');
+  await wipeAllData();
+  await dbm.setSetting('baseCurrency', 'XOF');
+  const mkW = (id, currency, archived = false) => ({ id, name: id, type: 'cash', currency, initialBalance: 0, archived, usage: 'current', createdAt: '2025-01-01T00:00:00.000Z' });
+  await dbm.dbBulkPut(STORES.WALLETS, [mkW('w-xof', 'XOF'), mkW('w-usd', 'USD'), mkW('w-eur', 'EUR'), mkW('w-gbp', 'GBP'), mkW('w-cad', 'CAD'), mkW('w-chf', 'CHF'), mkW('w-old', 'JPY', true)]);
+  await dbm.dbBulkPut(STORES.EXCHANGE_RATES, [
+    { code: 'USD', rateToBase: 600, confirmed: true }, { code: 'EUR', rateToBase: 655.957, confirmed: true }, { code: 'GBP', rateToBase: 760, confirmed: true },
+    { code: 'CAD', rateToBase: 430, confirmed: false }, { code: 'CHF', rateToBase: 650, confirmed: true }, { code: 'JPY', rateToBase: 4, confirmed: true },
+  ]);
+  await dbm.dbBulkPut(STORES.EXCHANGE_RATE_HISTORY, [
+    { id: 'h1', code: 'USD', date: '2026-01-10', rateToBase: 600 },   // 315 jours : ancien
+    { id: 'h2', code: 'EUR', date: '2024-01-10', rateToBase: 655.957 }, // très ancien mais parité fixe : exempté
+    { id: 'h3', code: 'GBP', date: '2026-11-01', rateToBase: 760 },   // 20 jours : récent
+    { id: 'h4', code: 'CAD', date: '2025-01-01', rateToBase: 430 },   // non confirmé : signalé ailleurs
+    { id: 'h5', code: 'JPY', date: '2024-01-01', rateToBase: 4 },     // portefeuille archivé : plus utilisé
+    // CHF : aucune date → âge inconnu, pas d'alerte sur une supposition
+  ]);
+  const stale = await getStaleRates(120, '2026-11-21');
+  eq('taux anciens : seul USD (315 j) est signalé', stale.map((r) => [r.code, r.days]), [['USD', 315]]);
+  await dbm.dbPut(STORES.EXCHANGE_RATE_HISTORY, { id: 'h6', code: 'USD', date: '2026-11-15', rateToBase: 610 });
+  eq('taux anciens : une mise à jour récente (dernière date de l\'historique) retire l\'alerte', await getStaleRates(120, '2026-11-21'), []);
+  await dbm.dbPut(STORES.DEBTS, { id: 'd-gbp', personName: 'X', type: 'debt', principal: 1, currency: 'GBP', startDate: '2026-01-01', status: 'active' });
+  eq('taux anciens : le seuil se compte en jours (GBP, 20 j : non à 120, oui à 10)', [(await getStaleRates(120, '2026-11-21')).length, (await getStaleRates(10, '2026-11-21')).map((r) => r.code).sort()], [0, ['GBP']]);
+  await dbm.dbPut(STORES.EXCHANGE_RATES, { code: 'XOF', rateToBase: 1 / 655.957, confirmed: true });
+  await dbm.dbPut(STORES.EXCHANGE_RATE_HISTORY, { id: 'h7', code: 'XOF', date: '2020-01-01', rateToBase: 1 / 655.957 });
+  await dbm.setSetting('baseCurrency', 'EUR');
+  eq('taux anciens : base EUR, un taux CFA ne vieillit pas non plus (USD, lui, oui)', (await getStaleRates(1, '2026-11-21')).map((r) => r.code).sort(), ['GBP', 'USD']);
+  await wipeAllData();
+}
+
+// ---------- Journal d'audit : pas de photo recopiée, plafond de lignes ----------
+{
+  const dbm = await import('../js/db.js');
+  await wipeAllData();
+  const photo = new Blob([new Uint8Array(2000)], { type: 'image/jpeg' });
+  await dbm.logAudit({ entityType: 'transaction', entityId: 't1', action: 'update', before: { id: 't1', amount: 5, receiptBlob: photo }, after: { id: 't1', amount: 6, receiptBlob: photo } });
+  const row = (await dbGetAll(STORES.AUDIT_LOG))[0];
+  eq('audit : la photo n\'est pas recopiée dans le journal (marqueur à la place)', [row.before.receiptBlob, row.after.receiptBlob, row.after.amount], ['[fichier]', '[fichier]', 6]);
+  const original = { id: 't2', receiptBlob: photo };
+  await dbm.logAudit({ entityType: 'transaction', entityId: 't2', action: 'create', after: original });
+  eq('audit : l\'enregistrement d\'origine n\'est pas modifié (la photo reste sur la transaction)', original.receiptBlob instanceof Blob, true);
+  // Anciennes entrées (créées avant ce correctif) : nettoyées une seule fois
+  await dbm.dbPut(STORES.AUDIT_LOG, { id: 'old-1', timestamp: '2020-01-01T00:00:00.000Z', entityType: 'transaction', entityId: 'x', action: 'create', before: null, after: { id: 'x', receiptBlob: photo }, note: '' });
+  const r1 = await dbm.maintainAuditLog();
+  const old = (await dbGetAll(STORES.AUDIT_LOG)).find((x) => x.id === 'old-1');
+  eq('audit : une ancienne entrée avec photo est compactée, une seule fois', [r1.compacted, old.after.receiptBlob, (await dbm.getSetting('auditCompacted'))], [1, '[fichier]', true]);
+  eq('audit : le second passage ne refait rien', (await dbm.maintainAuditLog()).compacted, 0);
+  // Plafond : les plus anciennes lignes partent, les plus récentes restent
+  const many = Array.from({ length: 3400 }, (_, i) => ({ id: 'bulk-' + String(i).padStart(5, '0'), timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(), entityType: 'transaction', entityId: 'e' + i, action: 'create', before: null, after: null, note: '' }));
+  await dbm.dbBulkPut(STORES.AUDIT_LOG, many);
+  const before = (await dbGetAll(STORES.AUDIT_LOG)).length;
+  const r2 = await dbm.maintainAuditLog();
+  const left = await dbGetAll(STORES.AUDIT_LOG);
+  const stamps = left.map((x) => x.timestamp).sort();
+  eq('audit : au-delà du plafond + marge, les plus anciennes sont supprimées', [r2.pruned, left.length], [before - dbm.AUDIT_LOG_MAX_ROWS, dbm.AUDIT_LOG_MAX_ROWS]);
+  ok('audit : ce sont bien les plus anciennes qui sont parties (la plus récente reste)', left.some((x) => x.id === 'bulk-03399') && !left.some((x) => x.id === 'old-1') && stamps[0] > '2020-01-02');
+  eq('audit : sous le plafond + marge, rien n\'est supprimé', (await dbm.maintainAuditLog()).pruned, 0);
+  dbm.setAccessRole('helper');
+  eq('audit : sans effet pour l\'aidant', await dbm.maintainAuditLog(), { compacted: 0, pruned: 0 });
+  dbm.setAccessRole('owner');
+  await wipeAllData();
+}
+
 // ---------- Lot 3 : code aidant, rôles, journal des codes ratés ----------
 {
   const auth = await import('../js/auth.js');
   const dbm = await import('../js/db.js');
   const { appState } = await import('../js/state.js');
-  const { confirmDialog } = await import('../js/utils.js');
+  const { confirmDialog, formatDate } = await import('../js/utils.js');
+  // Un réglage de date d'un autre type (nombre, valeur absurde) ne doit jamais faire planter l'écran qui l'affiche
+  eq('formatDate : texte ISO, objet Date et horodatage numérique donnent la même date', [formatDate('2026-11-20'), formatDate(new Date(2026, 10, 20)), formatDate(new Date(2026, 10, 20).getTime())].every((x, _, a) => x === a[0] && x !== ''), true);
+  eq('formatDate : valeur illisible → chaîne vide, sans exception', [formatDate('pas une date'), formatDate({}), formatDate(NaN)], ['', '', '']);
   const get = dbm.getSetting;
   const getAll = dbGetAll;
   const dbDelete = dbm.dbDelete;

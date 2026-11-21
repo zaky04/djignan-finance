@@ -192,10 +192,22 @@ export async function dbGetAllByIndex(store, indexName, query) {
   return reqToPromise(idx.getAll(query));
 }
 
+/* ---------- Version des données (cache de lecture du moteur de calcul) ----------
+   Chaque écriture passant par ce fichier fait avancer ce compteur, juste AVANT et juste APRÈS. ledger.js s'en sert pour réutiliser
+   une même lecture complète de la base entre plusieurs calculs d'un même affichage (le tableau de bord en lance une dizaine,
+   chacun relisait toutes les transactions : ~100 ms l'un avec 5 ans d'historique, donc plusieurs secondes sur un téléphone modeste).
+   Un lecteur qui chevauche une écriture voit un compteur différent à la fin et ne garde donc rien de périmé. */
+let dataVersion = 0;
+export function getDataVersion() { return dataVersion; }
+async function writing(fn) {
+  dataVersion++;
+  try { return await fn(); } finally { dataVersion++; }
+}
+
 export async function dbPut(store, value) {
   await checkHelperWrite(store, value, 'put');
   const db = await openDatabase();
-  await reqToPromise(tx(db, store, 'readwrite').objectStore(store).put(value));
+  await writing(() => reqToPromise(tx(db, store, 'readwrite').objectStore(store).put(value)));
   return value;
 }
 
@@ -259,7 +271,7 @@ function isSettleOnlyChange(before, after) {
 export async function dbAdd(store, value) {
   await checkHelperWrite(store, value, 'add'); // marque aussi ce que l'aidant saisit : le propriétaire le retrouve (bilan de visite, audit)
   const db = await openDatabase();
-  await reqToPromise(tx(db, store, 'readwrite').objectStore(store).add(value));
+  await writing(() => reqToPromise(tx(db, store, 'readwrite').objectStore(store).add(value)));
   return value;
 }
 
@@ -270,13 +282,13 @@ export async function dbDelete(store, id) {
     if (!own) throw new HelperRestrictedError();
   }
   const db = await openDatabase();
-  await reqToPromise(tx(db, store, 'readwrite').objectStore(store).delete(id));
+  await writing(() => reqToPromise(tx(db, store, 'readwrite').objectStore(store).delete(id)));
 }
 
 export async function dbClear(store) {
   assertOwner();
   const db = await openDatabase();
-  await reqToPromise(tx(db, store, 'readwrite').objectStore(store).clear());
+  await writing(() => reqToPromise(tx(db, store, 'readwrite').objectStore(store).clear()));
 }
 
 export async function dbBulkPut(store, values) {
@@ -285,13 +297,15 @@ export async function dbBulkPut(store, values) {
   const db = await openDatabase();
   const t = tx(db, store, 'readwrite');
   const os = t.objectStore(store);
-  values.forEach((v) => os.put(v));
-  await new Promise((resolve, reject) => {
-    t.oncomplete = resolve;
-    t.onerror = () => reject(t.error);
-    // Sans onabort, une transaction abandonnée sans événement d'erreur (quota dépassé) laissait la promesse
-    // pendante pour toujours.
-    t.onabort = () => reject(t.error || new Error('Transaction abandonnée'));
+  await writing(async () => {
+    values.forEach((v) => os.put(v));
+    await new Promise((resolve, reject) => {
+      t.oncomplete = resolve;
+      t.onerror = () => reject(t.error);
+      // Sans onabort, une transaction abandonnée sans événement d'erreur (quota dépassé) laissait la promesse
+      // pendante pour toujours.
+      t.onabort = () => reject(t.error || new Error('Transaction abandonnée'));
+    });
   });
 }
 
@@ -315,19 +329,38 @@ export async function dbWriteBatch(operations) {
   const storeNames = [...new Set(operations.map((op) => op.store))];
   const db = await openDatabase();
   const t = tx(db, storeNames, 'readwrite');
-  for (const op of operations) {
-    const os = t.objectStore(op.store);
-    if (op.type === 'delete') os.delete(op.value);
-    else os[op.type](op.value);
-  }
-  await new Promise((resolve, reject) => {
-    t.oncomplete = resolve;
-    t.onerror = () => reject(t.error);
-    t.onabort = () => reject(t.error || new Error('Transaction abandonnée'));
+  await writing(async () => {
+    for (const op of operations) {
+      const os = t.objectStore(op.store);
+      if (op.type === 'delete') os.delete(op.value);
+      else os[op.type](op.value);
+    }
+    await new Promise((resolve, reject) => {
+      t.oncomplete = resolve;
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error || new Error('Transaction abandonnée'));
+    });
   });
 }
 
 /* ---------- Journal d'audit ---------- */
+
+/** Copie d'un enregistrement pour le journal, SANS ses fichiers binaires. Une transaction avec photo de justificatif (receiptBlob)
+    était recopiée telle quelle dans le journal à chaque création, modification ou suppression : la photo se retrouvait stockée
+    2 à 3 fois (mesuré : ~114 Mo utilisés pour ~51 Mo de photos). Le journal garde la trace de l'opération, pas de l'image.
+    Renvoie le MÊME objet quand il n'y a rien à retirer. */
+function auditSnapshot(record) {
+  if (!record || typeof record !== 'object') return record;
+  let out = record;
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof Blob !== 'undefined' && value instanceof Blob) {
+      if (out === record) out = { ...record };
+      out[key] = '[fichier]';
+    }
+  }
+  return out;
+}
+
 export async function logAudit({ entityType, entityId, action, before = null, after = null, note = '' }) {
   await dbAdd(STORES.AUDIT_LOG, {
     id: crypto.randomUUID(),
@@ -335,11 +368,97 @@ export async function logAudit({ entityType, entityId, action, before = null, af
     entityType,
     entityId,
     action,
-    before,
-    after,
+    before: auditSnapshot(before),
+    after: auditSnapshot(after),
     note,
     ...(accessRole === 'helper' ? { actor: 'helper' } : {}), // qui a agi : seulement noté pour l'aidant
   });
+}
+
+/** Nombre de lignes du journal au-delà duquel les plus anciennes sont supprimées. Le journal n'a pas de fin : sans plafond, 5 ans
+    d'usage ≈ 8 000 lignes recopiant chaque opération, et chaque sauvegarde (JSON, chiffrée, cloud) les embarquait toutes. L'écran
+    « Journal d'audit » n'affiche de toute façon que les 150 dernières. */
+export const AUDIT_LOG_MAX_ROWS = 3000;
+const AUDIT_LOG_PRUNE_SLACK = 300; // on ne nettoie qu'une fois ce surplus atteint, pas à chaque ouverture
+
+const AUDIT_BATCH = 150; // lignes traitées par transaction : courte, pour que l'écriture d'une opération de l'utilisateur ne patiente pas
+
+/** Une courte transaction sur le journal ; `work(store, done)` pose ses requêtes et appelle `done(valeur)` quand il a fini. */
+function auditTransaction(db, work) {
+  return writing(() => new Promise((resolve, reject) => {
+    const t = tx(db, STORES.AUDIT_LOG, 'readwrite');
+    let result;
+    work(t.objectStore(STORES.AUDIT_LOG), (value) => { result = value; }, reject);
+    t.oncomplete = () => resolve(result);
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error || new Error('Transaction abandonnée'));
+  }));
+}
+const yieldToUi = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** Entretien du journal d'audit, à lancer au repos après le déverrouillage du propriétaire : (1) supprime les plus anciennes lignes
+    au-delà du plafond ; (2) une seule fois, retire les photos déjà recopiées dans d'anciennes entrées. Sans effet pour l'aidant.
+    Renvoie { compacted, pruned }. */
+export async function maintainAuditLog() {
+  if (accessRole === 'helper') return { compacted: 0, pruned: 0 };
+  const db = await openDatabase();
+  // Tout se fait par petits lots, avec une pause entre chacun : avec 5 ans d'historique, une seule grosse transaction bloquait toute
+  // écriture dans le journal (donc l'enregistrement d'une opération) pendant plusieurs secondes — mesuré : 3,6 s d'attente.
+
+  // 1. Suppression des plus anciennes lignes au-delà du plafond, d'après l'index d'horodatage.
+  const total = await reqToPromise(tx(db, STORES.AUDIT_LOG, 'readonly').objectStore(STORES.AUDIT_LOG).count());
+  let pruned = 0;
+  if (total > AUDIT_LOG_MAX_ROWS + AUDIT_LOG_PRUNE_SLACK) {
+    const excess = total - AUDIT_LOG_MAX_ROWS;
+    while (pruned < excess) {
+      const wanted = Math.min(AUDIT_BATCH * 2, excess - pruned);
+      const removed = await auditTransaction(db, (store, done, fail) => {
+        let count = 0;
+        const req = store.index('byTimestamp').openKeyCursor();
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor || count >= wanted) { done(count); return; }
+          store.delete(cursor.primaryKey);
+          count++;
+          cursor.continue();
+        };
+        req.onerror = () => fail(req.error);
+      });
+      if (!removed) break;
+      pruned += removed;
+      await yieldToUi();
+    }
+  }
+
+  // 2. Une seule fois : retirer les photos déjà recopiées dans d'anciennes entrées (parcours par identifiant, lot après lot).
+  let compacted = 0;
+  if (!(await getSetting('auditCompacted', false))) {
+    let lastKey = null;
+    for (;;) {
+      const batch = await auditTransaction(db, (store, done, fail) => {
+        let count = 0, changed = 0, lastSeen = null;
+        const req = store.openCursor(lastKey === null ? null : IDBKeyRange.lowerBound(lastKey, true));
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) { done({ changed, lastSeen, finished: true }); return; }
+          lastSeen = cursor.primaryKey;
+          const row = cursor.value;
+          const before = auditSnapshot(row.before);
+          const after = auditSnapshot(row.after);
+          if (before !== row.before || after !== row.after) { cursor.update({ ...row, before, after }); changed++; }
+          if (++count >= AUDIT_BATCH) { done({ changed, lastSeen, finished: false }); return; }
+          cursor.continue();
+        };
+        req.onerror = () => fail(req.error);
+      });
+      compacted += batch.changed;
+      if (batch.finished || batch.lastSeen === null) break;
+      lastKey = batch.lastSeen;
+      await yieldToUi();
+    }
+    await setSetting('auditCompacted', true);
+  }
+  return { compacted, pruned };
 }
 
 /* ---------- Paramètres (clé/valeur) ---------- */
@@ -377,6 +496,8 @@ const DEVICE_LOCAL_SETTING_KEYS = new Set([
   'pinFailureLog', 'lastUnlockAt',
   // Résultat de la dernière vérification de sauvegarde (backup-verify.js) et SMS en attente de validation (sms-queue.js).
   'backupVerification', 'smsInbox',
+  // Entretien du journal d'audit (maintainAuditLog) : « déjà compacté » vaut pour la base de CET appareil, pas pour celle d'une sauvegarde importée.
+  'auditCompacted',
 ]);
 
 export async function exportAllData() {
@@ -502,19 +623,21 @@ export async function importAllData(data, { merge = false, dryRun = false } = {}
     t.onerror = () => reject(t.error);
     t.onabort = () => reject(t.error || new Error('Import annulé.'));
   });
-  try {
-    for (const { store, rows } of plan) {
-      const os = t.objectStore(store);
-      if (!merge) os.clear();
-      rows.forEach((row) => os.put(row));
-      if (store === STORES.SETTINGS) preservedSettings.forEach((row) => os.put(row));
+  await writing(async () => {
+    try {
+      for (const { store, rows } of plan) {
+        const os = t.objectStore(store);
+        if (!merge) os.clear();
+        rows.forEach((row) => os.put(row));
+        if (store === STORES.SETTINGS) preservedSettings.forEach((row) => os.put(row));
+      }
+    } catch (err) {
+      try { t.abort(); } catch { /* déjà terminée */ }
+      done.catch(() => {});
+      throw err;
     }
-  } catch (err) {
-    try { t.abort(); } catch { /* déjà terminée */ }
-    done.catch(() => {});
-    throw err;
-  }
-  await done;
+    await done;
+  });
 }
 
 export async function wipeAllData() {

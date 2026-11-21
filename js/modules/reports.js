@@ -34,6 +34,8 @@ function profileHeaderLines(profile) {
 
 let reportMonthKey = currentMonthKey();
 let reportYear = parseInt(currentMonthKey().slice(0, 4), 10);
+/** Remet les rapports sur le mois et l'année en cours (app.js, quand le mois change alors que l'application est restée ouverte). */
+export function resetReportsPeriod() { reportMonthKey = currentMonthKey(); reportYear = parseInt(currentMonthKey().slice(0, 4), 10); }
 
 // État des filtres de la section Graphiques — persiste entre les re-rendus de renderReports()
 // (navigation mois/année), même principe que reportMonthKey/reportYear ci-dessus.

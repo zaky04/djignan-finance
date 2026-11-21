@@ -107,7 +107,8 @@ export function formatDate(dateStr, options = { day: '2-digit', month: 'short', 
     const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
     d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(dateStr);
   } else {
-    d = dateStr;
+    // Date, ou horodatage numérique (un réglage importé d'une autre version peut avoir un autre type : ne jamais planter l'écran pour ça)
+    d = dateStr instanceof Date ? dateStr : new Date(dateStr);
   }
   if (isNaN(d.getTime())) return '';
   return new Intl.DateTimeFormat(intlLocale(), options).format(d);

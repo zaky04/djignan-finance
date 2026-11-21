@@ -332,8 +332,10 @@ async function renderBackupSection(container) {
   // Taille attendue de la sauvegarde (et des photos qui en font l'essentiel) : un souci d'estimation
   // ne doit jamais empêcher d'ouvrir cette section, d'où le try/catch.
   let sizeHtml = '';
+  let lightPhotos = true;
   try {
     const est = await estimateBackupSize();
+    lightPhotos = est.light;
     const badgeClass = est.level === 'critical' ? 'badge-neg' : est.level === 'warn' ? 'badge-warn' : 'badge-pos';
     const sizeAdvice = est.level === 'ok' ? '' : `<p style="font-size:12px;color:var(--${est.level === 'critical' ? 'neg' : 'text-muted'});margin:6px 0 0;">${
       est.level === 'critical'
@@ -367,6 +369,10 @@ async function renderBackupSection(container) {
       <p class="fs-13 c-muted mb-12">${t("Toutes vos données restent locales. Exportez régulièrement une copie (JSON complet ou CSV) pour éviter toute perte. Un rappel s'affiche automatiquement si aucune sauvegarde n'a été faite depuis 7 jours.")}</p>
       <div class="stat-row"><span class="stat-row-label">${t('Dernière sauvegarde')}</span><span>${lastBackupLabel}${snoozedLabel}</span></div>
       ${sizeHtml}
+      <label style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;cursor:pointer;" class="fs-14">
+        <input type="checkbox" id="backup-light-photos" ${lightPhotos ? 'checked' : ''} style="margin-top:3px;">
+        <span>${escapeHtml(t('Photos allégées dans les sauvegardes'))}<span class="fs-12 c-faint" style="display:block;">${escapeHtml(t("Les photos de justificatifs sont réduites dans la copie de sauvegarde (1 200 px) : environ 2 fois plus légère, tickets toujours lisibles. Vos photos sur cet appareil ne changent pas ; après une restauration, ce sont les versions allégées qui reviennent."))}</span></span>
+      </label>
       <div class="stat-row mt-6"><span class="stat-row-label">${t('Sauvegarde automatique hebdomadaire')}</span><span>${autoBackupHtml}</span></div>
       <p style="margin:6px 0 0;" class="fs-12 c-faint">${t("Si un dossier est choisi, Djignan y écrit un export JSON automatiquement à chaque rappel hebdomadaire, sans action de votre part.")}</p>
       <div style="display:flex;flex-wrap:wrap;gap:10px;" class="mt-12">
@@ -383,6 +389,11 @@ async function renderBackupSection(container) {
       <button type="button" class="btn btn-danger" id="wipe-data-btn">${t('Réinitialiser toutes les données')}</button>
     </div>`;
 
+  container.querySelector('#backup-light-photos')?.addEventListener('change', async (e) => {
+    await setSetting('backupLightPhotos', e.target.checked);
+    showToast(e.target.checked ? t('Photos allégées dans les sauvegardes.') : t('Photos en qualité standard dans les sauvegardes.'));
+    renderBackupSection(container); // la taille estimée change
+  });
   container.querySelector('#auto-backup-choose-btn')?.addEventListener('click', async () => {
     try {
       await chooseAutoBackupDirectory();

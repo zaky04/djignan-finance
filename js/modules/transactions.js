@@ -5,7 +5,7 @@
    rapprochement bancaire ("check-in").
    ========================================================================== */
 
-import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, dbWriteBatch, logAudit, getSetting, setSetting } from '../db.js';
+import { STORES, dbGet, dbGetAll, dbAdd, dbPut, dbDelete, dbWriteBatch, logAudit, getSetting, setSetting } from '../db.js';
 import { openSmsImportModal, initSmsImport } from './sms-import.js';
 import { isVoiceSupported, listenOnce, parseSpokenEntry } from '../voice-input.js';
 import { getTemplates, addTemplate, removeTemplate, computeFrequentSuggestions } from '../quick-templates.js';
@@ -114,6 +114,7 @@ export function openQuickAdd({ editTransaction = null, sharedReceiptBlob = null,
   let receiptRemoved = false;
 
   function showReceiptPreview(blob) {
+    if (receiptPreviewImg.src.startsWith('blob:')) URL.revokeObjectURL(receiptPreviewImg.src); // l'aperçu précédent n'est plus affiché
     receiptPreviewImg.src = URL.createObjectURL(blob);
     receiptPreviewWrap.hidden = false;
   }
@@ -734,6 +735,8 @@ function openReconciliationModal() {
    Liste des transactions (vue complète, filtrable)
    ========================================================================== */
 const filters = { monthKey: currentMonthKey(), walletId: '', categoryId: '', type: '', reconciled: '', tag: '', exceptional: '' };
+/** Remet l'écran sur le mois en cours (app.js, quand le mois change alors que l'application est restée ouverte). */
+export function resetTransactionsMonth() { filters.monthKey = currentMonthKey(); }
 let bulkMode = false;
 const selectedIds = new Set();
 let visibleIds = [];
@@ -1012,12 +1015,16 @@ export function initTransactionsModule() {
     if (!btn) return;
     const row = e.target.closest('[data-tx-id]');
     const txId = row?.dataset.txId;
-    const all = await dbGetAll(STORES.TRANSACTIONS);
-    const t = all.find((x) => x.id === txId);
+    // Une seule ligne : lecture par identifiant (relire toute la table, photos comprises, à chaque clic coûtait ~100 ms avec 5 ans d'historique).
+    const t = await dbGet(STORES.TRANSACTIONS, txId);
     if (!t) return;
 
     if (btn.dataset.action === 'view-receipt') {
-      if (t.receiptBlob) openModal(`<img src="${URL.createObjectURL(t.receiptBlob)}" alt="${tr('Justificatif')}" style="max-width:100%;border-radius:8px;display:block;">`, { title: tr('Justificatif') });
+      if (t.receiptBlob) {
+        const url = URL.createObjectURL(t.receiptBlob);
+        // Libère l'image en mémoire à la fermeture (sinon chaque justificatif consulté restait en mémoire jusqu'à la fermeture de l'application).
+        openModal(`<img src="${url}" alt="${tr('Justificatif')}" style="max-width:100%;border-radius:8px;display:block;">`, { title: tr('Justificatif'), onClose: () => URL.revokeObjectURL(url) });
+      }
     } else if (btn.dataset.action === 'reconcile') {
       const before = { ...t };
       t.reconciled = !t.reconciled;

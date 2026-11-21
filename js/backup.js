@@ -57,14 +57,28 @@ async function dataUrlToBlob(dataUrl) {
   const res = await fetch(dataUrl);
   return res.blob();
 }
+/** Réduction des photos DANS LA COPIE de sauvegarde (jamais dans la base de l'appareil, qui garde ses photos telles quelles).
+    - « normal » : celle de la saisie (1 600 px, qualité 0,72, rien en dessous de 250 Ko) ;
+    - « léger » (par défaut) : 1 200 px, qualité 0,6, et aussi les photos déjà réduites à partir de 60 Ko. Un ticket de caisse reste
+      lisible, et le poids par photo est à peu près divisé par 2 (mesuré sur des images de test : 320 → 158 Ko, 2 475 → 88 Ko ; une photo déjà
+      petite gagne à peine, 193 → 179 Ko) — or chaque photo est encore gonflée d'environ 1,8×
+      dans la sauvegarde chiffrée (base64 de la photo, puis base64 du chiffré). Réglage `backupLightPhotos` (Paramètres → Sauvegarde). */
+export const BACKUP_PHOTO_PROFILES = {
+  normal: { maxDim: 1600, quality: 0.72, skipBelow: 250 * 1024 },
+  light: { maxDim: 1200, quality: 0.6, skipBelow: 60 * 1024 },
+};
+export async function isLightBackupPhotos() {
+  return (await getSetting('backupLightPhotos', true)) !== false;
+}
 async function serializeReceiptsForExport(data) {
+  const profile = (await isLightBackupPhotos()) ? BACKUP_PHOTO_PROFILES.light : BACKUP_PHOTO_PROFILES.normal;
   for (const t of data.stores?.[STORES.TRANSACTIONS] || []) {
     if (t.receiptBlob instanceof Blob) {
       // Copie d'export seulement (les lignes viennent de dbGetAll, la base n'est pas modifiée) :
       // les photos enregistrées avant l'ajout de la compression (plusieurs Mo chacune) sont
       // réduites ici, sinon la sauvegarde — chiffrée, donc encore gonflée par un double base64 —
       // devient trop lourde à envoyer.
-      t.receiptDataUrl = await blobToDataUrl(await compressImageBlob(t.receiptBlob));
+      t.receiptDataUrl = await blobToDataUrl(await compressImageBlob(t.receiptBlob, profile));
       t.receiptOptimized = true; // la copie exportée est réduite : à la restauration, rien à re-réduire
       delete t.receiptBlob;
     }
@@ -104,6 +118,7 @@ export const BACKUP_SIZE_WARN_BYTES = 30 * 1024 * 1024;     // au-delà : l'envo
 export const BACKUP_SIZE_CRITICAL_BYTES = 60 * 1024 * 1024; // au-delà : risque de manquer de mémoire sur mobile
 const OPTIMIZE_MIN_BYTES = 250 * 1024; // même seuil que compressImageBlob() : en dessous, rien à gagner
 const PHOTO_ESTIMATE_CAP_BYTES = 450 * 1024; // taille typique d'une photo une fois réduite
+const PHOTO_ESTIMATE_CAP_LIGHT_BYTES = 150 * 1024; // idem avec la copie allégée (BACKUP_PHOTO_PROFILES.light) : 90 à 180 Ko mesurés sur des images de test
 
 export function formatBytes(bytes) {
   const mb = bytes / (1024 * 1024);
@@ -116,6 +131,7 @@ export function formatBytes(bytes) {
     du chiffré = ~1,78×), en comptant les photos encore grosses comme elles seront après réduction. */
 export async function estimateBackupSize() {
   const data = await exportAllData();
+  const light = await isLightBackupPhotos();
   let photoCount = 0;
   let photoStoredBytes = 0;
   let photoSentBytes = 0;
@@ -124,9 +140,10 @@ export async function estimateBackupSize() {
     if (t.receiptBlob instanceof Blob) {
       photoCount++;
       photoStoredBytes += t.receiptBlob.size;
-      // Photo déjà réduite (receiptOptimized) : sa taille réelle est celle qui sera envoyée. Sinon
-      // elle sera réduite à l'export : on compte sa taille typique après réduction.
-      photoSentBytes += t.receiptOptimized ? t.receiptBlob.size : Math.min(t.receiptBlob.size, PHOTO_ESTIMATE_CAP_BYTES);
+      // Copie allégée : toute photo est réduite à l'export, on compte sa taille typique après réduction.
+      // Sinon : une photo déjà réduite (receiptOptimized) garde sa taille réelle ; les autres seront réduites à l'export.
+      if (light) photoSentBytes += Math.min(t.receiptBlob.size, PHOTO_ESTIMATE_CAP_LIGHT_BYTES);
+      else photoSentBytes += t.receiptOptimized ? t.receiptBlob.size : Math.min(t.receiptBlob.size, PHOTO_ESTIMATE_CAP_BYTES);
       if (!t.receiptOptimized && t.receiptBlob.size > OPTIMIZE_MIN_BYTES) optimizableCount++;
       delete t.receiptBlob;
     }
@@ -134,7 +151,7 @@ export async function estimateBackupSize() {
   const otherBytes = JSON.stringify(data).length;
   const estimatedBytes = Math.round(otherBytes * 1.34 + photoSentBytes * 1.78);
   const level = estimatedBytes >= BACKUP_SIZE_CRITICAL_BYTES ? 'critical' : estimatedBytes >= BACKUP_SIZE_WARN_BYTES ? 'warn' : 'ok';
-  return { photoCount, photoStoredBytes, optimizableCount, estimatedBytes, level };
+  return { photoCount, photoStoredBytes, optimizableCount, estimatedBytes, level, light };
 }
 
 /** Réduit une fois pour toutes les photos de justificatifs déjà stockées (plus de ~250 Ko).
@@ -310,6 +327,31 @@ export async function exportInvestmentEntriesCsv() {
   downloadFile(`djignan-investissements-${todayISO()}.csv`, '﻿' + lines.join('\n'), 'text/csv;charset=utf-8');
 }
 
+/** Découpe un CSV en enregistrements SANS couper à l'intérieur d'un champ entre guillemets : une note ou un libellé de relevé
+    bancaire peut contenir un saut de ligne (l'export le met entre guillemets), et un simple découpage par lignes en faisait
+    deux lignes fausses. Les enregistrements vides sont ignorés ; `parseCsvLine` lit ensuite les champs de chacun. */
+export function splitCsvRecords(text) {
+  const records = [];
+  let cur = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuotes && text[i + 1] === '"') { cur += '""'; i++; continue; } // guillemet échappé : reste dans le champ
+      inQuotes = !inQuotes;
+      cur += ch;
+    } else if (!inQuotes && (ch === '\n' || ch === '\r')) {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      if (cur.trim().length) records.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  // Guillemet jamais refermé (fichier mal formé, ex. une apostrophe de pouces `5"` dans un libellé) : le découpage sensible aux
+  // guillemets aurait avalé tout le reste du fichier dans un seul enregistrement, on revient au découpage ligne par ligne.
+  if (inQuotes) return text.split(/\r?\n/).filter((l) => l.trim().length);
+  if (cur.trim().length) records.push(cur);
+  return records;
+}
+
 function parseCsvLine(line, delimiter = ';') {
   const out = [];
   let cur = '', inQuotes = false;
@@ -348,7 +390,7 @@ function detectDelimiter(headerLine) {
     nécessite un mapping manuel des colonnes par l'utilisateur avant import). */
 export async function analyzeTransactionsCsv(file) {
   const text = await readFileAsText(file);
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim().length);
+  const lines = splitCsvRecords(text.replace(/^﻿/, ''));
   if (lines.length < 2) throw new Error(tr('Fichier CSV vide.'));
   const delimiter = detectDelimiter(lines[0]);
   const headerCells = parseCsvLine(lines[0], delimiter).map((h) => h.trim());

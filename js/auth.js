@@ -390,9 +390,17 @@ export function initLockScreen({ onUnlock }) {
     if (Date.now() < throttledUntil) showThrottleError();
   }
 
+  let throttleTimer = null;
   function showThrottleError() {
     const remaining = Math.ceil((throttledUntil - Date.now()) / 1000);
     shakeError(t('Trop de tentatives. Réessayez dans {s}s.', { s: Math.max(remaining, 1) }));
+    // Le décompte avance seul et le message disparaît à la fin du blocage (avant, il restait figé sur « 25s » même après l'échéance).
+    clearInterval(throttleTimer);
+    throttleTimer = setInterval(() => {
+      const left = Math.ceil((throttledUntil - Date.now()) / 1000);
+      if (left <= 0) { clearInterval(throttleTimer); throttleTimer = null; errorEl.hidden = true; return; }
+      errorEl.textContent = t('Trop de tentatives. Réessayez dans {s}s.', { s: left });
+    }, 1000);
   }
 
   async function handleDigit(d) {

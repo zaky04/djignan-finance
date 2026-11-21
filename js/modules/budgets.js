@@ -34,6 +34,8 @@ const DEFAULT_CATEGORY_COLOR = CATEGORY_COLORS[0];
 
 let activeTab = 'monthly';
 let monthKey = currentMonthKey();
+/** Remet les budgets sur le mois et l'année en cours (app.js, quand le mois change alors que l'application est restée ouverte). */
+export function resetBudgetsPeriod() { monthKey = currentMonthKey(); annualYear = new Date().getFullYear(); }
 
 /* ==========================================================================
    Onglet 1 — Budgets du mois

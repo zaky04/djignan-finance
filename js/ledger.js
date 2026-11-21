@@ -12,7 +12,7 @@
    Bloqué compte dans le patrimoine net mais PAS dans le « reste à vivre ».
    ========================================================================== */
 
-import { STORES, dbGetAll, getSetting } from './db.js';
+import { STORES, dbGetAll, getSetting, getDataVersion } from './db.js';
 import { advanceDate } from './recurrence.js';
 import { participantReceivablesAsOf } from './shared-loan.js';
 import { convertAmount, currentMonthKey, monthKeyOffset, localISODate, intlLocale, ZERO_DECIMAL_CURRENCIES } from './utils.js';
@@ -22,7 +22,24 @@ import { unpaidInstallments } from './loan-schedule.js';
 // reports-extras.js/search.js/backup.js.
 import { t as tr } from './i18n.js';
 
-async function ctx() {
+/* Lecture complète de la base, partagée entre les calculs d'un même affichage. Le tableau de bord en lance une dizaine en parallèle ;
+   avec 5 ans d'historique (≈ 8 000 opérations) chacun relisait toutes les transactions (~100 ms l'une) : 1,4 s sur un ordinateur, donc
+   plusieurs secondes sur un téléphone d'entrée de gamme. La lecture est réutilisée tant qu'aucune écriture n'a eu lieu (compteur
+   `getDataVersion`, db.js) ET pendant 3 s au plus (un autre onglet ouvert sur la même base peut écrire sans que ce compteur le sache).
+   Les calculs ne modifient jamais ces données (ils trient/filtrent des copies ; getEnrichedTransactions renvoie des copies). */
+const CTX_MAX_AGE_MS = 3000;
+let ctxCache = null; // { version, at, promise }
+function ctx() {
+  const version = getDataVersion();
+  if (ctxCache && ctxCache.version === version && Date.now() - ctxCache.at < CTX_MAX_AGE_MS) return ctxCache.promise;
+  const entry = { version, at: Date.now(), promise: loadCtx() };
+  ctxCache = entry;
+  // Lecture échouée, ou écriture survenue pendant la lecture : on ne garde rien de douteux.
+  entry.promise.then(() => { if (getDataVersion() !== version && ctxCache === entry) ctxCache = null; }, () => { if (ctxCache === entry) ctxCache = null; });
+  return entry.promise;
+}
+
+async function loadCtx() {
   const [wallets, transactions, categories, budgets, investments, investmentEntries, debts, debtPayments, rates, rateHistory, baseCurrency] = await Promise.all([
     dbGetAll(STORES.WALLETS),
     dbGetAll(STORES.TRANSACTIONS),
@@ -780,6 +797,39 @@ export async function getExchangeRates() {
 export async function getUnconfirmedRates() {
   const { rates } = await ctx();
   return rates.filter((r) => r.confirmed === false);
+}
+
+/** Âge (en jours) au-delà duquel un taux de change confirmé est signalé comme ancien sur le tableau de bord. */
+export const STALE_RATE_DAYS = 120;
+
+/** Devises ÉTRANGÈRES réellement détenues (portefeuille non archivé, investissement ou dette en cours) dont le dernier taux saisi ou
+    actualisé date de plus de `maxAgeDays` jours. Sans ça, un taux fixé il y a deux ans continue de convertir silencieusement
+    l'épargne en devise : le patrimoine net dérive sans aucun signe visible. Retourne [{ code, lastDate, days }].
+    N'alerte jamais sur une supposition : un taux sans aucune date dans l'historique (âge inconnu) est ignoré, comme un taux non
+    confirmé (déjà signalé à part). Les parités fixes sont exemptées : l'euro est arrimé au franc CFA (XOF/XAF) à 655,957 pour toujours,
+    et XOF/XAF valent 1:1 — leur taux ne « vieillit » pas. */
+export async function getStaleRates(maxAgeDays = STALE_RATE_DAYS, today = localISODate(new Date())) {
+  const { wallets, investments, debts, rates, rateHistory, baseCurrency } = await ctx();
+  const used = new Set();
+  wallets.filter((w) => !w.archived).forEach((w) => used.add(w.currency));
+  investments.filter((i) => i.status !== 'cancelled').forEach((i) => used.add(i.currency));
+  debts.filter((d) => d.status === 'active').forEach((d) => used.add(d.currency));
+  used.delete(baseCurrency);
+  const isFixedPair = (code) => {
+    const cfa = new Set(['XOF', 'XAF']);
+    return (cfa.has(baseCurrency) && (code === 'EUR' || cfa.has(code))) || (baseCurrency === 'EUR' && cfa.has(code));
+  };
+  const dayNumber = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number); return Date.UTC(y, m - 1, d) / 86400000; };
+  const out = [];
+  for (const r of rates) {
+    if (!used.has(r.code) || r.confirmed === false || isFixedPair(r.code)) continue;
+    const dates = rateHistory.filter((h) => h.code === r.code && h.date).map((h) => h.date).sort();
+    if (!dates.length) continue;
+    const lastDate = dates[dates.length - 1];
+    const days = Math.round(dayNumber(today) - dayNumber(lastDate));
+    if (days > maxAgeDays) out.push({ code: r.code, lastDate, days });
+  }
+  return out;
 }
 
 /** Somme des soldes de portefeuilles actifs ACCESSIBLES (courants + épargne), hors investissements/

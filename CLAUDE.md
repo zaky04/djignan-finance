@@ -4070,6 +4070,56 @@ importé sans validation).
   de l'OS (sans `Origin`) passe. Vérifié par simulation du gestionnaire sous Node (5 cas) ; **non testé sur un vrai téléphone**.
 - Tests : `features.test.html` 330 → **337** ; `ledger.test.html` 175/175.
 
+### 21 novembre 2026 — Passage « peigne fin » de toute l'appli (Djignan uniquement, `CACHE_VERSION` `v177`, non commité au moment d'écrire)
+
+Méthode : audit statique (syntaxe, imports/exports, précache, 1841 clés EN, **identifiants non définis par analyse de portée avec l'acorn embarqué dans Node** — outil validé sur des
+erreurs plantées —, interpolations HTML sans échappement, ids du DOM), les 2 suites de tests, puis parcours réel : 13 vues × FR/EN × clair/sombre × 375 px/bureau (aucun débordement,
+aucun « undefined/NaN », aucun texte français résiduel en anglais), saisie/modification/suppression/annulation (suppression refusée avec un mauvais PIN), dette + remboursement partiel
+(patrimoine net inchangé dans les deux cas), aller-retour de sauvegarde chiffrée (tous les comptes de lignes identiques, mauvais mot de passe refusé, PIN conservé), export puis ré-import CSV,
+blocage anti-force brute (persiste au rechargement), 81 fichiers du précache servis, manifest valide. Trois défauts réels trouvés et corrigés :
+1. **Import CSV : une note sur plusieurs lignes devenait deux lignes fausses** (`analyzeTransactionsCsv` découpait par `\n` avant de lire les guillemets alors que l'export les met bien entre
+   guillemets) → `splitCsvRecords` (`backup.js`) sensible aux guillemets, avec repli ligne par ligne si un guillemet n'est jamais refermé.
+2. **`formatDate` plantait sur un horodatage numérique** (`d.getTime is not a function`) : un réglage de date d'un autre type, par exemple venu d'un import, faisait échouer l'écran Paramètres
+   → accepte Date, texte ou nombre, et renvoie « » pour une valeur illisible.
+3. **Écran de verrouillage : le décompte « Réessayez dans 25s » restait figé**, même après l'échéance → il avance chaque seconde et disparaît à la fin du blocage.
+Tests : `features.test.html` 337 → **344** ; `ledger.test.html` 175/175.
+
+### 21 novembre 2026 (suite) — Usage à long terme : volume, durée de session, vieillissement des données (`CACHE_VERSION` `v179`, non commité au moment d'écrire)
+
+Méthode : jeu de données de **5 ans** (≈ 7 900 opérations, 340 photos de 150 Ko, journal d'audit complet) généré dans le navigateur, mesures de rendu/stockage/export, propriétés de
+temps long sur les modules purs (récurrences 15 ans sur chaque jour d'ancrage + 29 février, mensualités de prêt sur 1 100 combinaisons, intérêts courus en année bissextile, changements
+de mois), invariants du moteur de calcul sur les 60 mois, mise à niveau d'une base v1 → v5. Ce qui tenait : récurrences, échéanciers, patrimoine net = somme de ses parties, résumés
+mensuels = recalcul indépendant, virement neutre, mise à niveau de la base. Sept défauts / dérives corrigés :
+1. **Lecture de toute la base répétée par chaque calcul** (`ledger.js` `ctx()`) : le tableau de bord en lance ~11, chacun relisait toutes les transactions (~100 ms l'une) → 1,4 s ici,
+   plusieurs secondes sur un téléphone modeste. Lecture partagée tant qu'aucune écriture n'a eu lieu (`getDataVersion`, `db.js`, compteur avancé avant ET après chaque écriture) et 3 s au plus
+   (autre onglet). Mesuré : tableau de bord 1 440 → 399 ms, Outils 1 525 → 289, Portefeuilles 654 → 28. Invalidation vérifiée (écriture, modification, suppression, lot, import, réglage).
+2. **Journal d'audit : photos recopiées** (`db.js` `auditSnapshot`) — chaque création/modification/suppression d'une transaction avec photo copiait la photo dans le journal : 114 Mo utilisés
+   pour 51 Mo de photos. Le journal ne garde plus que le marqueur `[fichier]`.
+3. **Journal d'audit sans fin** (`db.js` `maintainAuditLog`, lancé 15 s après le déverrouillage du propriétaire) : plafonné à 3 000 lignes (+300 de marge), nettoyage unique des anciennes photos,
+   par lots de 150 pour ne jamais bloquer l'enregistrement d'une opération (attente maximale mesurée 244 ms, contre 3,6 s en une seule transaction). 5 ans : 114 → 60 Mo, export JSON 5,4 → 3,4 Mo.
+   Réglage `auditCompacted` propre à l'appareil (`DEVICE_LOCAL_SETTING_KEYS`).
+4. **Application ouverte plusieurs jours** (`app.js` `handleDayRollover`) : le verrouillage automatique est désactivé par défaut, donc Transactions, Budgets et Rapports gardaient le mois de
+   l'ouverture et les récurrences du jour n'étaient générées qu'au prochain démarrage. Contrôle toutes les 15 s et au retour sur l'application : au changement de jour, génération des
+   récurrences (propriétaire) et rendu ; au changement de mois, remise des écrans sur le mois courant (`resetTransactionsMonth`, `resetBudgetsPeriod`, `resetReportsPeriod`).
+5. **Taux de change vieillissants sans signe visible** (`ledger.js` `getStaleRates`, alerte du tableau de bord) : un taux confirmé dont la dernière date d'historique dépasse 120 jours, pour une
+   devise réellement détenue, est signalé. Jamais sur une supposition (taux sans date, non confirmé, portefeuille archivé) ; parités fixes exemptées (EUR/XOF/XAF).
+6. **Clic sur une opération** relisait toute la table (photos comprises) pour en retrouver une : lecture par identifiant.
+7. **Photos consultées jamais libérées** (`URL.createObjectURL` sans `revokeObjectURL` dans `transactions.js`) : libérées à la fermeture / au remplacement de l'aperçu.
+Tests : `features.test.html` 344 → **363** ; `ledger.test.html` 175/175.
+8. **Photos allégées dans la copie de sauvegarde** (`backup.js` `BACKUP_PHOTO_PROFILES`, `isLightBackupPhotos`, `v179`) : la copie exportée (JSON, JSON chiffré, sauvegarde cloud, dossier automatique) réduit
+   les photos à 1 200 px / qualité 0,6 et traite aussi celles déjà réduites à partir de 60 Ko (avant : 1 600 px / 0,72, rien sous 250 Ko). Réglage `backupLightPhotos` (défaut : activé), case dans
+   Paramètres → Sauvegarde ; la base de l'appareil n'est jamais touchée, mais une restauration ramène les versions allégées. **Gain mesuré sur des images de test : environ ×2** (320 → 158 Ko,
+   2 475 → 88 Ko, mais 193 → 179 Ko pour une photo déjà petite) — pas ×2-3 ; l'estimation de taille (Paramètres) compte 150 Ko par photo en mode allégé. Chaque photo reste gonflée ≈ 1,8× par le double
+   base64 de la sauvegarde chiffrée. **Pistes suivantes, non faites** : photos envoyées une seule fois à part (le plus gros gain), chiffrer les octets plutôt que du texte (≈ −33 %, change le format).
+   Tests : `features.test.html` 363 → **370**.
+
+**Vérifié sans rien à corriger** : intervalles et écouteurs globaux enregistrés une seule fois, aucun `eval`/`document.write`, précache complet, pas de rendu de liste non borné (Transactions filtre par mois).
+**Reste à surveiller à long terme** : la base grossit surtout avec les photos (~150-400 Ko chacune, l'estimation est dans Paramètres) ; la sauvegarde cloud chiffrée d'un très gros historique avec photos
+reste lourde (découpée en morceaux, voir §6 du 18 octobre) ; sur un téléphone d'entrée de gamme les temps mesurés ici sont à multiplier (non mesuré).
+
+**Limites assumées (valables pour les deux passages du 21 novembre)** : le navigateur de test refuse d'enregistrer un service worker (installation/hors-ligne vérifiés seulement par le téléchargement de chaque fichier du précache) ; voix réelle,
+vrai téléphone, APK/EXE, vrais SMS d'opérateur et vraie connexion Google/Firebase non testés ; l'export CSV ne contient pas les étiquettes (par conception : ce n'est pas une sauvegarde complète).
+
 ## 7. Pistes prioritaires non traitées
 
 Par ordre d'impact estimé, à valider avec l'auteur avant de s'y attaquer :

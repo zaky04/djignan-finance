@@ -6,11 +6,11 @@
    ========================================================================== */
 
 import './app-mode.js'; // en tout premier : pose .is-app avant le moindre rendu (voir app-mode.js)
-import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAULT_CATEGORIES, setAccessRole } from './db.js';
+import { STORES, dbAdd, dbPut, dbDelete, dbGetAll, getSetting, setSetting, DEFAULT_CATEGORIES, setAccessRole, maintainAuditLog } from './db.js';
 import { initLockScreen, isBiometricAvailable, registerBiometric, isPinConfigured, consumeUnlockReport } from './auth.js';
 import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
 import { setAutoMasking } from './privacy.js';
-import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES, intlLocale } from './utils.js';
+import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES, intlLocale, currentMonthKey, todayISO } from './utils.js';
 import { checkWeeklyBackupReminder, importEncryptedBackup } from './backup.js';
 import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, warmUpGoogleSignIn, initCloudAutoBackup } from './firebase-sync.js';
 import { seedDemoData, clearDemoData } from './demo-data.js';
@@ -31,13 +31,13 @@ import { REQUIRE_ACTIVATION_CODE, ACTIVATION_CODE_HASH } from './activation-conf
 
 import { renderDashboard, initDashboardModule, DASHBOARD_PANEL_DEFAULTS } from './modules/dashboard.js';
 import { renderWallets, initWalletsModule, openWalletModal } from './modules/wallets.js';
-import { renderTransactions, initTransactionsModule, openQuickAdd } from './modules/transactions.js';
-import { renderBudgets, initBudgetsModule, generateDueRecurring } from './modules/budgets.js';
+import { renderTransactions, initTransactionsModule, openQuickAdd, resetTransactionsMonth } from './modules/transactions.js';
+import { renderBudgets, initBudgetsModule, generateDueRecurring, resetBudgetsPeriod } from './modules/budgets.js';
 import { renderSavings, initSavingsModule } from './modules/savings.js';
 import { renderInvestments, initInvestmentsModule } from './modules/investments.js';
 import { renderDebts, initDebtsModule, ensureDebtCategoryId, LEGACY_DEBT_CATEGORY_NAME } from './modules/debts.js';
 import { renderTools, initToolsModule } from './modules/tools.js';
-import { renderReports, initReportsModule } from './modules/reports.js';
+import { renderReports, initReportsModule, resetReportsPeriod } from './modules/reports.js';
 import { renderShared, initSharedModule } from './modules/shared.js';
 import { renderKeptAccounts, initKeptAccountsModule } from './modules/kept-accounts.js';
 import { renderTontines, initTontinesModule } from './modules/tontines.js';
@@ -104,6 +104,30 @@ async function lockNow() {
     await lockScreenApi.lock();
     lockScreenApi.show();
   }
+}
+
+/* L'application peut rester ouverte des jours (le verrouillage automatique est désactivé par défaut, et sur téléphone le processus
+   survit en arrière-plan). Les écrans gardaient alors le mois de leur ouverture : après minuit le 1er, Transactions, Budgets et
+   Rapports affichaient encore le mois précédent, et les récurrences du jour n'étaient générées qu'au prochain déverrouillage.
+   Ce contrôle détecte le changement de jour (au repos toutes les 15 s, et au retour sur l'application) et remet les écrans sur
+   la période courante, une seule fois — la navigation volontaire dans un autre mois reste libre jusqu'au prochain changement. */
+let lastSeenDay = todayISO();
+let lastSeenMonthKey = currentMonthKey();
+async function handleDayRollover() {
+  const today = todayISO();
+  if (today === lastSeenDay) return;
+  lastSeenDay = today;
+  if (currentMonthKey() !== lastSeenMonthKey) {
+    lastSeenMonthKey = currentMonthKey();
+    resetTransactionsMonth();
+    resetBudgetsPeriod();
+    resetReportsPeriod();
+  }
+  const appEl = document.getElementById('app');
+  if (!appEl || appEl.hidden) return; // verrouillé : onUnlocked() s'en chargera
+  // Récurrences du nouveau jour : propriétaire seulement (l'aidant ne peut pas écrire) ; sinon elles seront générées au prochain déverrouillage.
+  if (appState.role === 'owner') { try { await generateDueRecurring(); } catch (err) { console.warn('[Récurrences]', err); } }
+  VIEW_RENDERERS[appState.currentView]?.();
 }
 
 async function checkAutoLock() {
@@ -199,7 +223,8 @@ function wireGlobalChrome() {
   ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll'].forEach((ev) => {
     document.addEventListener(ev, markActivity, { passive: true });
   });
-  setInterval(checkAutoLock, 15000);
+  setInterval(() => { checkAutoLock(); handleDayRollover(); }, 15000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') handleDayRollover(); });
 
   bus.on(EVENTS.DATA_CHANGED, (scope) => {
     VIEW_RENDERERS[appState.currentView]?.();
@@ -841,6 +866,8 @@ async function onUnlocked({ role = 'owner' } = {}) {
     setTimeout(() => checkWeeklyCloudBackupReminder(), 6000);
     // Une fois par mois au plus : la sauvegarde est-elle relisible et complète ? (échec visible sur le tableau de bord.)
     setTimeout(() => maybeRunMonthlyBackupCheck().then((result) => { if (result && !result.ok && appState.currentView === 'dashboard') renderDashboard(); }).catch((err) => console.warn('[Vérification de sauvegarde]', err)), 9000);
+    // Entretien du journal d'audit (photos recopiées, plafond de lignes) : au repos, après les invites ci-dessus. Échec sans conséquence.
+    setTimeout(() => maintainAuditLog().catch((err) => console.warn('[Journal d\'audit]', err)), 15000);
   }
   // Sauvegarde cloud automatique (opt-in) : n'écoute que les changements de données et ne charge le SDK
   // Firebase que si elle a été activée ET qu'il y a quelque chose à envoyer.
