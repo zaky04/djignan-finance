@@ -11,7 +11,10 @@
    accès non autorisé. Voir CLAUDE.md pour le contexte de cette décision.
    ========================================================================== */
 
-export const REQUIRE_ACTIVATION_CODE = true;
+// 21 novembre 2026 : code d'activation DÉSACTIVÉ pour tous à la demande de l'auteur (un nouvel appareil tombait sur cet écran sans
+// pouvoir en sortir). Pour le réactiver : remettre `true` — le hash ci-dessous est conservé, donc l'ancien code redevient valable.
+// Les appareils déjà activés (`activated`) ne sont de toute façon jamais concernés.
+export const REQUIRE_ACTIVATION_CODE = false;
 
 // Hash SHA-256 du code valide (hexadécimal, minuscules). Généré via :
 //   crypto.subtle.digest('SHA-256', new TextEncoder().encode(code))

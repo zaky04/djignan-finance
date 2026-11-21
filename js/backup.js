@@ -171,10 +171,15 @@ export async function estimateBackupSize() {
     }
   }
   const otherBytes = JSON.stringify(data).length;
-  const estimatedBytes = Math.round(otherBytes * 1.34 + photoSentBytes * 1.78);
+  // Facteurs : avec compression (format 2) le JSON de données tombe à ~0,3 de sa taille avant le base64 du chiffré (×1,34) → ~0,4 ; une
+  // photo (JPEG, incompressible, mais son base64 est « défait » par la compression) ne pèse plus que son base64 final → ×1,34.
+  // Sans compression (navigateur ancien) : 1,34 et 1,78 comme avant.
+  const gz = isCompressionSupported();
+  const dataBytes = Math.round(otherBytes * (gz ? 0.4 : 1.34));
+  const estimatedBytes = Math.round(dataBytes + photoSentBytes * (gz ? 1.34 : 1.78));
   const level = estimatedBytes >= BACKUP_SIZE_CRITICAL_BYTES ? 'critical' : estimatedBytes >= BACKUP_SIZE_WARN_BYTES ? 'warn' : 'ok';
   // `dataBytes` : la sauvegarde cloud ne contient plus les photos (envoyées à part, une seule fois) — seule cette part compte à chaque envoi.
-  return { photoCount, photoStoredBytes, optimizableCount, estimatedBytes, level, light, dataBytes: Math.round(otherBytes * 1.34) };
+  return { photoCount, photoStoredBytes, optimizableCount, estimatedBytes, level, light, dataBytes };
 }
 
 /** Réduit une fois pour toutes les photos de justificatifs déjà stockées (plus de ~250 Ko).
@@ -237,20 +242,26 @@ export async function importJsonBackup(file, { merge = false, ignoreIntegrity = 
    buildEncryptedPayload()/decryptPayload() portent tout le cœur cryptographique, indépendamment
    de la destination (fichier téléchargé ici, document Firestore dans firebase-sync.js) : le même
    chiffrement, testé une seule fois, sert aux deux. */
-export async function buildEncryptedPayload(passphrase, { collectPhotos = null } = {}) {
+export async function buildEncryptedPayload(passphrase, { collectPhotos = null, compress = true } = {}) {
   const data = await exportAllData();
   // Fichier : photos dans le fichier. Cloud : photos à part (`collectPhotos` = Map à remplir, voir externalizeReceipts).
   if (collectPhotos) await externalizeReceipts(data, collectPhotos);
   else await serializeReceiptsForExport(data);
   data.integrity = await computeIntegrity(data.stores); // vérifiée après déchiffrement (exportEncryptedBackup, importEncryptedBackup)
-  const json = JSON.stringify(data);
+  // Compression AVANT chiffrement (un contenu chiffré ne se compresse plus). Format 2. Pourquoi : le JSON contient les photos en base64
+  // (+33 %), puis le chiffré est lui-même encodé en base64 (+33 % encore) : une photo pesait ~1,78× ses octets. Compressé, le texte
+  // base64 retombe à peu près à la taille des octets d'origine, et le JSON des données (très répétitif) à environ un quart.
+  const bytes = new TextEncoder().encode(JSON.stringify(data));
+  const useGzip = compress && isCompressionSupported();
+  const plain = useGzip ? await gzipBytes(bytes) : bytes;
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveAesKey(passphrase, salt);
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(json));
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain);
   return {
     geofinanceEncryptedBackup: true,
-    version: 1,
+    version: 2,
+    compression: useGzip ? 'gzip' : 'none',
     salt: bufToBase64(salt),
     iv: bufToBase64(iv),
     ciphertext: bufToBase64(ciphertext),
@@ -266,8 +277,25 @@ export async function decryptPayload(payload, passphrase) {
   } catch {
     throw new Error(tr('Mot de passe incorrect ou sauvegarde corrompue.'));
   }
-  return JSON.parse(new TextDecoder().decode(plainBuf));
+  // Format 1 (avant) : JSON en clair sous le chiffrement. Format 2 : JSON compressé (`compression: 'gzip'`).
+  let bytes = new Uint8Array(plainBuf);
+  if (payload.compression === 'gzip') {
+    if (!isCompressionSupported()) throw new Error(tr("Ce navigateur est trop ancien pour lire cette sauvegarde compressée : mettez-le à jour, ou ouvrez-la sur un autre appareil."));
+    try { bytes = await gunzipBytes(bytes); } catch { throw new Error(tr('Mot de passe incorrect ou sauvegarde corrompue.')); }
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
+
+/* ---------- Compression (gzip, natif du navigateur) ---------- */
+export function isCompressionSupported() {
+  return typeof CompressionStream === 'function' && typeof DecompressionStream === 'function' && typeof Response === 'function';
+}
+async function pipeBytes(bytes, transform) {
+  const stream = new Blob([bytes]).stream().pipeThrough(transform);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+export const gzipBytes = (bytes) => pipeBytes(bytes, new CompressionStream('gzip'));
+export const gunzipBytes = (bytes) => pipeBytes(bytes, new DecompressionStream('gzip'));
 
 export async function exportEncryptedBackup(passphrase) {
   const payload = await buildEncryptedPayload(passphrase);

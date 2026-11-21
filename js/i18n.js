@@ -113,6 +113,7 @@ const EN = {
   // ---------- Écran de verrouillage (auth.js) ----------
   'Créer votre code PIN': 'Create your PIN code',
   'Choisissez un code à 4-6 chiffres pour protéger vos données locales.': 'Choose a 4-6 digit code to protect your local data.',
+  'Choisissez un code à 4-6 chiffres pour protéger vos données locales, puis touchez ✓ pour valider.': 'Choose a 4-6 digit code to protect your local data, then tap ✓ to confirm.',
   'Confirmez votre code PIN': 'Confirm your PIN code',
   'Ressaisissez le même code pour confirmer.': 'Re-enter the same code to confirm.',
   'Déverrouiller Djignan': 'Unlock Djignan',
@@ -2178,6 +2179,7 @@ const EN = {
   'Attention : dépenses prévues au-dessus de votre argent': 'Warning: planned spending is above your money',
   "Créez d'abord un portefeuille (menu Plus, puis Portefeuilles).": 'Create a wallet first (More menu, then Wallets).',
   'Que voulez-vous noter ?': 'What do you want to record?',
+  'Ce navigateur est trop ancien pour lire cette sauvegarde compressée : mettez-le à jour, ou ouvrez-la sur un autre appareil.': 'This browser is too old to read this compressed backup: update it, or open it on another device.',
   'Téléchargement de la nouvelle version…': 'Downloading the new version…',
   'Téléchargement encore en cours': 'Still downloading',
   "La nouvelle version se télécharge encore : gardez l'application ouverte, puis touchez « Recharger » quand le bandeau apparaît.": 'The new version is still downloading: keep the app open, then tap "Reload" when the banner appears.',

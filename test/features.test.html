@@ -684,6 +684,40 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   eq('cache : un réglage modifié (devise de base) invalide aussi la lecture', (await computeNetWorth()).currency, 'EUR');
 }
 
+// ---------- Sauvegarde chiffrée compressée (format 2) et lecture de l'ancien format ----------
+{
+  const bk = await import('../js/backup.js');
+  const bi = await import('../js/backup-integrity.js');
+  await wipeAllData();
+  await dbAdd(STORES.WALLETS, { id: 'w-z1', name: 'Caisse', type: 'cash', currency: 'XOF', initialBalance: 0, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  const photo = new Blob([new Uint8Array(30000).map((_, i) => (i * 7) & 255)], { type: 'image/jpeg' });
+  for (let i = 0; i < 120; i++) await dbAdd(STORES.TRANSACTIONS, { id: 'tx-z' + i, walletId: 'w-z1', type: 'expense', amount: 100 + i, date: '2026-10-' + String(1 + (i % 28)).padStart(2, '0'), note: 'Achat numéro ' + i + ' au marché du quartier', tags: [], createdAt: '2026-10-01T00:00:00.000Z', ...(i % 40 === 0 ? { receiptBlob: photo } : {}) });
+  const v2 = await bk.buildEncryptedPayload('mdp');
+  const plainAgain = await bk.buildEncryptedPayload('mdp', { compress: false });
+  eq('sauvegarde chiffrée : format 2, compressée', [bk.isCompressionSupported(), v2.version, v2.compression], [true, 2, 'gzip']);
+  ok('sauvegarde chiffrée : nettement plus légère qu\'avant la compression (≤ 70 %)', v2.ciphertext.length < plainAgain.ciphertext.length * 0.7, `${v2.ciphertext.length} vs ${plainAgain.ciphertext.length}`);
+  const back = await bk.decryptPayload(v2, 'mdp');
+  eq('sauvegarde chiffrée : aller-retour identique (lignes, empreinte valide)', [back.stores.transactions.length, await bi.checkIntegrity(back), back.stores.transactions.filter((t) => t.receiptDataUrl).length], [120, 'ok', 3]);
+  const none = await bk.decryptPayload(plainAgain, 'mdp');
+  eq('sauvegarde chiffrée : sans compression (secours navigateur ancien) elle se relit aussi', [plainAgain.compression, none.stores.transactions.length], ['none', 120]);
+  // Ancien format (version 1, sans champ « compression ») : toujours lisible
+  const legacyBytes = new TextEncoder().encode(JSON.stringify(back));
+  const lsalt = crypto.getRandomValues(new Uint8Array(16)); const liv = crypto.getRandomValues(new Uint8Array(12));
+  const lkey = await bk.deriveAesKey('ancien', lsalt);
+  const legacy = { geofinanceEncryptedBackup: true, version: 1, salt: bk.bufToBase64(lsalt), iv: bk.bufToBase64(liv), ciphertext: bk.bufToBase64(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: liv }, lkey, legacyBytes)) };
+  eq('sauvegarde chiffrée : une sauvegarde de l\'ancien format (v1) se lit toujours', (await bk.decryptPayload(legacy, 'ancien')).stores.transactions.length, 120);
+  const failMsg = async (fn) => { try { await fn(); return 'aucune erreur'; } catch (e) { return e.message; } };
+  const flipped = { ...v2, ciphertext: v2.ciphertext.slice(0, 200) + (v2.ciphertext[200] === 'A' ? 'B' : 'A') + v2.ciphertext.slice(201) };
+  const lying = { ...plainAgain, compression: 'gzip' }; // prétend être compressé alors qu'il ne l'est pas
+  eq('sauvegarde chiffrée : mauvais mot de passe, contenu modifié ou compression mensongère → erreur claire, pas de plantage', [await failMsg(() => bk.decryptPayload(v2, 'faux')), await failMsg(() => bk.decryptPayload(flipped, 'mdp')), await failMsg(() => bk.decryptPayload(lying, 'mdp'))],
+    ['Mot de passe incorrect ou sauvegarde corrompue.', 'Mot de passe incorrect ou sauvegarde corrompue.', 'Mot de passe incorrect ou sauvegarde corrompue.']);
+  const cloud = await bk.buildEncryptedPayload('mdp', { collectPhotos: new Map() });
+  eq('sauvegarde cloud : les données sans photo sont compressées aussi', [cloud.version, cloud.compression, (await bk.decryptPayload(cloud, 'mdp')).photosExternal], [2, 'gzip', true]);
+  const est = await bk.estimateBackupSize();
+  ok('sauvegarde chiffrée : l\'estimation de taille tient compte de la compression', est.dataBytes < JSON.stringify(await (await import('../js/db.js')).exportAllData()).length * 0.5, String(est.dataBytes));
+  await wipeAllData();
+}
+
 // ---------- Assistant : extrait de chiffres, bilan local, appel à l'IA ----------
 {
   const ai = await import('../js/ai-assistant.js');

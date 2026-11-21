@@ -355,7 +355,7 @@ export function initLockScreen({ onUnlock }) {
     mode = 'setup';
     buffer = ''; firstEntry = '';
     title.textContent = t('Créer votre code PIN');
-    subtitle.textContent = t('Choisissez un code à 4-6 chiffres pour protéger vos données locales.');
+    subtitle.textContent = t('Choisissez un code à 4-6 chiffres pour protéger vos données locales, puis touchez ✓ pour valider.');
     errorEl.hidden = true;
     biometricBtn.hidden = true;
     renderDots(6);

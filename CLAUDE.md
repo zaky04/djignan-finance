@@ -4170,6 +4170,25 @@ de la nouvelle version… ». Vérifié par simulation du Service Worker sous No
 conservé) et par le bandeau dans le navigateur. **Non testé sur un vrai appareil** (le navigateur de test refuse les Service Workers) ; l'ancienne version installée n'a pas ce bandeau : la première mise à jour vers
 v183 demande encore une fermeture complète puis une réouverture (le `sw.js` neuf, lui, recharge déjà les pages en arrière-plan).
 
+### 21 novembre 2026 (suite 5) — Sauvegardes chiffrées compressées, format 2 (`CACHE_VERSION` `v184`, non commité au moment d'écrire)
+
+Le « double base64 » : les photos étaient en base64 dans le JSON (+33 %), puis le chiffré encodé en base64 (+33 % encore) → ~1,78× les octets d'une photo. `buildEncryptedPayload` (`backup.js`) **compresse le JSON en gzip AVANT de
+chiffrer** (un contenu chiffré ne se compresse plus) : format `version: 2`, `compression: 'gzip' | 'none'` (secours si le navigateur n'a pas `CompressionStream`, Safari < 16.4). Concerne le fichier chiffré ET la sauvegarde
+cloud (données). `decryptPayload` lit les deux formats : **les anciennes sauvegardes (v1) se lisent toujours** ; une application ANCIENNE ne sait pas lire une sauvegarde v2 (mettre à jour d'abord) ; un navigateur sans
+décompression le dit clairement. Contenu modifié ou « compression » mensongère → l'erreur habituelle, jamais de plantage.
+**Mesuré sur 5 ans (7 862 opérations, 340 photos de 150 Ko aléatoires = non compressibles)** : fichier chiffré **89,3 → 65,6 Mo (−27 %)**, relecture 3,2 s, construction 5,8 → 8,4 s ; données du cloud (sans photos)
+**2,8 → 0,2 Mo, 4 morceaux → 1**. L'estimation de taille (Paramètres) suit : ×0,4 pour les données, ×1,34 pour les photos (avant 1,34 et 1,78). Le gain sur les photos est limité (un JPEG ne se compresse pas) : le reste du poids
+d'un fichier avec photos est le base64 du chiffré (+33 %) — le supprimer demanderait un fichier binaire (autre extension, autre import), non fait. Tests : 8 nouveaux (aller-retour, taille ≤ 70 %, ancien format v1, secours sans
+compression, mauvais mot de passe / contenu modifié / compression mensongère, cloud compressé, estimation) ; `features.test.html` 428.
+
+### 21 novembre 2026 (suite 6) — « Impossible de créer un mot de passe sur ma tablette » : code d'activation désactivé (`CACHE_VERSION` `v185`, non commité au moment d'écrire)
+
+Cause : sur un NOUVEL appareil, le premier écran de la version pro est le **code d'activation** (`REQUIRE_ACTIVATION_CODE = true`), pas la création du PIN. Il demande le code XXXXX-XXXXX remis à l'auteur le 16 août (non écrit dans le dépôt, seul son
+hash l'est) : rien de ce qu'on y saisit ne passe sans lui. **Décision de l'auteur : désactiver le code pour tous** → `REQUIRE_ACTIVATION_CODE = false` (`js/activation-config.js`, hash conservé : remettre `true` réactive l'ancien code).
+Les appareils déjà activés ne changent pas. Premier lancement rejoué sur un stockage vierge : langue → restauration (« Configurer un nouveau compte ») → création du PIN (4 chiffres, ✓, confirmation) → assistant de configuration, sans erreur.
+Au passage : la création du PIN demandait de toucher ✓ après 4 chiffres sans le dire (on pouvait croire que « rien ne passe ») → le texte dit maintenant « …puis touchez ✓ pour valider. ».
+Conséquence : la « version pro » n'est plus filtrée par un code — toute personne ayant le lien y accède (le filtre n'était de toute façon pas une vraie sécurité, voir §6 du 16 août).
+
 **Vérifié sans rien à corriger** : intervalles et écouteurs globaux enregistrés une seule fois, aucun `eval`/`document.write`, précache complet, pas de rendu de liste non borné (Transactions filtre par mois).
 **Reste à surveiller à long terme** : la base grossit surtout avec les photos (~150-400 Ko chacune, l'estimation est dans Paramètres) ; la sauvegarde cloud chiffrée d'un très gros historique avec photos
 reste lourde (découpée en morceaux, voir §6 du 18 octobre) ; sur un téléphone d'entrée de gamme les temps mesurés ici sont à multiplier (non mesuré).
