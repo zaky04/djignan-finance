@@ -154,8 +154,21 @@ const backController = createBackController({
     return true;
   },
   isAppVisible: () => { const appEl = document.getElementById('app'); return !!appEl && !appEl.hidden; },
+  onStartupBack: () => startupBack(),
   onExitWarning: () => showToast(t('Appuyez encore sur Retour pour quitter.')),
 });
+/** Retour du téléphone sur les écrans de démarrage (restauration, création du PIN) : même effet que leur bouton « Retour ». */
+function startupBack() {
+  const shown = (id) => { const el = document.getElementById(id); return !!el && !el.hidden; };
+  if (shown('restore-screen')) {
+    const button = document.querySelector('#restore-local-cancel, #restore-cloud-cancel, #restore-back-btn');
+    if (button) { button.click(); return true; }
+    return false;
+  }
+  const pinBack = document.getElementById('pin-back');
+  if (shown('lock-screen') && pinBack && !pinBack.hidden) { pinBack.click(); return true; }
+  return false;
+}
 let backTrapped = false;
 /** Garde toujours une entrée d'historique « au-dessus » de la base : un retour la consomme au lieu de quitter l'application. */
 function armBackTrap() {
@@ -710,15 +723,19 @@ function showLanguageChoiceScreen() {
     const lockScreen = document.getElementById('lock-screen');
     lockScreen.hidden = true;
     screen.hidden = false;
+    // L'écran peut être rouvert par « Retour » (depuis la restauration) : les deux écouteurs sont retirés ensemble dès qu'un choix est fait,
+    // sinon celui du bouton non utilisé resterait et, au passage suivant, ferait réapparaître le mauvais écran.
+    const listeners = new AbortController();
     async function choose(lang) {
+      listeners.abort();
       await setSetting('language', lang);
       await initI18n();
       screen.hidden = true;
       lockScreen.hidden = false;
       resolve();
     }
-    document.getElementById('language-choice-fr').addEventListener('click', () => choose('fr'), { once: true });
-    document.getElementById('language-choice-en').addEventListener('click', () => choose('en'), { once: true });
+    document.getElementById('language-choice-fr').addEventListener('click', () => choose('fr'), { signal: listeners.signal });
+    document.getElementById('language-choice-en').addEventListener('click', () => choose('en'), { signal: listeners.signal });
   });
 }
 
@@ -742,10 +759,10 @@ function showRestoreScreenIfNeeded() {
     const lockScreen = document.getElementById('lock-screen');
     const content = document.getElementById('restore-screen-content');
 
-    function finish() {
+    function finish(outcome = 'done') {
       screen.hidden = true;
       lockScreen.hidden = false;
-      resolve();
+      resolve(outcome); // 'done' : on continue vers la création du PIN ; 'back' : on revient au choix de la langue
     }
 
     function renderLoading(message) {
@@ -762,10 +779,12 @@ function showRestoreScreenIfNeeded() {
           <button type="button" class="btn btn-primary btn-block" id="restore-local-btn">${t('Importer une sauvegarde locale')}</button>
           <button type="button" class="btn btn-ghost btn-block" id="restore-cloud-btn">${t('Restaurer depuis le cloud (Google)')}</button>
           <button type="button" class="btn btn-ghost btn-block" id="restore-skip-btn" style="opacity:.75;">${t('Configurer un nouveau compte')}</button>
+          <button type="button" class="btn btn-ghost btn-block" id="restore-back-btn">${t('Retour')}</button>
         </div>`;
       content.querySelector('#restore-local-btn').addEventListener('click', renderLocalForm);
       content.querySelector('#restore-cloud-btn').addEventListener('click', startCloudSignIn);
-      content.querySelector('#restore-skip-btn').addEventListener('click', finish);
+      content.querySelector('#restore-skip-btn').addEventListener('click', () => finish('done'));
+      content.querySelector('#restore-back-btn').addEventListener('click', () => finish('back'));
       // Précharge Google Identity Services + le SDK Firebase dès que ce bouton est visible, pas
       // seulement au clic : sur mobile, le délai réseau du chargement pouvait faire perdre le geste
       // utilisateur nécessaire à l'ouverture de la popup (voir warmUpGoogleSignIn(), firebase-sync.js).
@@ -797,7 +816,7 @@ function showRestoreScreenIfNeeded() {
           // ignoreIntegrity : sur ce premier écran il n'y a aucun moyen de « confirmer » un écart, et le fichier chiffré est déjà authentifié par
           // son mot de passe (AES-GCM) : un écart d'empreinte ne pourrait venir que d'un défaut de l'appli, qui ne doit jamais bloquer une restauration.
           await importEncryptedBackup(file, passphrase, { merge: false, ignoreIntegrity: true });
-          finish();
+          finish('done');
         } catch (err) {
           errorEl.textContent = err.message || t('Restauration impossible.');
           errorEl.hidden = false;
@@ -828,7 +847,7 @@ function showRestoreScreenIfNeeded() {
           const restored = await pullBackupFromCloud(passphrase, { merge: false });
           await setSetting('cloudBackupWasSignedIn', true);
           if (restored?.missingPhotos) showToast(restoreDoneMessage(restored), { duration: 9000 });
-          finish();
+          finish('done');
         } catch (err) {
           errorEl.textContent = err.message || t('Restauration impossible.');
           errorEl.hidden = false;
@@ -934,6 +953,9 @@ async function onUnlocked({ role = 'owner' } = {}) {
     // haut, bas de page mobile) et prépare t() pour tous les rendus JS qui suivent — sans ça, un
     // utilisateur en anglais verrait un flash de français le temps que le reste du boot s'exécute.
     await initI18n();
+    // Le retour du téléphone doit déjà fonctionner sur les écrans de démarrage (langue, restauration, création du PIN) : piège et écouteur
+    // sont donc posés AVANT eux (avant, le retour quittait la page dès le premier écran).
+    initBackNavigation();
 
     // Code d'activation (dépôt pro uniquement), choix de la langue, puis proposition de restaurer
     // une sauvegarde — avant même la création du code PIN, sur une toute première installation
@@ -943,8 +965,13 @@ async function onUnlocked({ role = 'owner' } = {}) {
     // avant la création du PIN pour une autre raison, pas de re-harceler inutilement.
     if (!(await isPinConfigured())) {
       await showActivationCodeScreenIfNeeded();
-      if (!(await getSetting('language'))) await showLanguageChoiceScreen();
-      await showRestoreScreenIfNeeded();
+      // Langue → restauration → création du PIN, avec « Retour » d'une étape à la précédente (avant : aucune étape ne se revoyait).
+      let stage = (await getSetting('language')) ? 'restore' : 'language';
+      for (;;) {
+        if (stage === 'language') await showLanguageChoiceScreen();
+        if ((await showRestoreScreenIfNeeded()) !== 'back') break;
+        stage = 'language';
+      }
     }
 
     await seedDefaultsIfNeeded();
@@ -967,7 +994,6 @@ async function onUnlocked({ role = 'owner' } = {}) {
     initSettingsModule();
     initSearchModule();
     wireGlobalChrome();
-    initBackNavigation();
     initEasyHome({ navigateTo });
 
     appState.theme = await getSetting('theme', 'auto');
@@ -978,7 +1004,7 @@ async function onUnlocked({ role = 'owner' } = {}) {
     await applyUiMode();
     await applyEasyHome();
 
-    lockScreenApi = initLockScreen({ onUnlock: onUnlocked });
+    lockScreenApi = initLockScreen({ onUnlock: onUnlocked, onBackToStart: () => window.location.reload() }); // création du PIN : « Retour » rouvre la restauration (la langue choisie est gardée)
   } catch (err) {
     console.error('[Djignan] Échec critique au démarrage :', err);
     const lockScreen = document.getElementById('lock-screen');

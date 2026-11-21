@@ -4189,6 +4189,16 @@ Les appareils déjà activés ne changent pas. Premier lancement rejoué sur un 
 Au passage : la création du PIN demandait de toucher ✓ après 4 chiffres sans le dire (on pouvait croire que « rien ne passe ») → le texte dit maintenant « …puis touchez ✓ pour valider. ».
 Conséquence : la « version pro » n'est plus filtrée par un code — toute personne ayant le lien y accède (le filtre n'était de toute façon pas une vraie sécurité, voir §6 du 16 août).
 
+### 21 novembre 2026 (suite 7) — Retour sur les écrans de démarrage (`CACHE_VERSION` `v186`, non commité au moment d'écrire)
+
+Les écrans de premier lancement étaient des impasses (laissées ouvertes à la fin de la suite 2 du bouton Retour). Maintenant : **restauration → « Retour » → langue** (rouverte, `AbortController` pour retirer les deux écouteurs :
+sans ça le bouton non utilisé réaffichait un écran fantôme au passage suivant) ; **création du PIN → « Retour »** (`#pin-back`) : en confirmation revient à la saisie, à la saisie recharge la page (la langue est gardée,
+la restauration réapparaît) ; séquence de démarrage en boucle `langue ⇄ restauration` (`app.js`, `showRestoreScreenIfNeeded` résout `'done' | 'back'`). Le **bouton Retour du téléphone** recule de la même façon
+(`onStartupBack` de `back-navigation.js`, `startupBack()` dans `app.js`) et, sur le premier écran, affiche « Appuyez encore sur Retour pour quitter ». **Défaut trouvé au test** : `initBackNavigation()` n'était appelée qu'APRÈS les
+écrans de démarrage, donc le retour du téléphone quittait la page dès l'écran de restauration → appelée maintenant avant eux. Vérifié sur un stockage vierge, clics ET `history.back()` : langue → restauration → retour → langue
+(3 allers-retours sans écran fantôme) → formulaires de restauration → PIN (saisie, confirmation, retour) → assistant de configuration (retour d'étape, retour du téléphone qui ferme l'assistant). Tests : 2 nouveaux (430).
+Reste : le vrai bouton Retour d'un téléphone, l'APK/EXE ; l'aidant peut toujours exporter en CSV (lecture seule, non corrigé).
+
 **Vérifié sans rien à corriger** : intervalles et écouteurs globaux enregistrés une seule fois, aucun `eval`/`document.write`, précache complet, pas de rendu de liste non borné (Transactions filtre par mois).
 **Reste à surveiller à long terme** : la base grossit surtout avec les photos (~150-400 Ko chacune, l'estimation est dans Paramètres) ; la sauvegarde cloud chiffrée d'un très gros historique avec photos
 reste lourde (découpée en morceaux, voir §6 du 18 octobre) ; sur un téléphone d'entrée de gamme les temps mesurés ici sont à multiplier (non mesuré).

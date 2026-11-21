@@ -19,6 +19,7 @@ export function createBackController({
   closeTopModal,        // () => true si une fenêtre a été fermée
   isAppVisible,         // () => false sur l'écran de verrouillage ou de démarrage
   onExitWarning,        // () => affiche « Appuyez encore sur Retour pour quitter »
+  onStartupBack = () => false, // () => true si un écran de démarrage (restauration, création du PIN) a reculé d'une étape
   homeView = 'dashboard',
   now = () => Date.now(),
   exitWindowMs = 2500,
@@ -39,6 +40,7 @@ export function createBackController({
     /** Vrai = retour géré, l'application reste ouverte. Faux = rien à faire de plus : on la laisse se fermer. */
     handleBack() {
       if (closeTopModal()) { lastWarningAt = null; return true; }
+      if (!isAppVisible() && onStartupBack()) { lastWarningAt = null; return true; }
       if (isAppVisible()) {
         while (stack.length) {
           const view = stack.pop();

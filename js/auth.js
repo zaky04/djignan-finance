@@ -304,7 +304,7 @@ export async function verifyBiometric() {
 /* ==========================================================================
    Écran de verrouillage — machine à états DOM (setup / confirm / unlock)
    ========================================================================== */
-export function initLockScreen({ onUnlock }) {
+export function initLockScreen({ onUnlock, onBackToStart = null }) {
   const screen = document.getElementById('lock-screen');
   const title = document.getElementById('lock-title');
   const subtitle = document.getElementById('lock-subtitle');
@@ -314,6 +314,7 @@ export function initLockScreen({ onUnlock }) {
   const keypad = document.getElementById('pin-keypad');
   const backspaceBtn = document.getElementById('pin-backspace');
   const biometricBtn = document.getElementById('pin-biometric');
+  const backBtn = document.getElementById('pin-back'); // « Retour » de la création du PIN (absent de l'écran de déverrouillage)
 
   const FINGERPRINT_HTML = biometricBtn.innerHTML;
   const CHECK_HTML = svgIcon('check', 22);
@@ -353,6 +354,7 @@ export function initLockScreen({ onUnlock }) {
 
   async function enterSetupMode() {
     mode = 'setup';
+    if (backBtn) backBtn.hidden = !onBackToStart; // retour à l'écran précédent du démarrage, s'il y en a un
     buffer = ''; firstEntry = '';
     title.textContent = t('Créer votre code PIN');
     subtitle.textContent = t('Choisissez un code à 4-6 chiffres pour protéger vos données locales, puis touchez ✓ pour valider.');
@@ -365,6 +367,7 @@ export function initLockScreen({ onUnlock }) {
     mode = 'confirm';
     buffer = '';
     expectedLength = firstEntry.length;
+    if (backBtn) backBtn.hidden = false; // revenir saisir un autre code
     title.textContent = t('Confirmez votre code PIN');
     subtitle.textContent = t('Ressaisissez le même code pour confirmer.');
     errorEl.hidden = true;
@@ -374,6 +377,7 @@ export function initLockScreen({ onUnlock }) {
 
   async function enterUnlockMode() {
     mode = 'unlock';
+    if (backBtn) backBtn.hidden = true;
     buffer = '';
     expectedLength = await getPinLength();
     title.textContent = t('Déverrouiller Djignan');
@@ -485,6 +489,11 @@ export function initLockScreen({ onUnlock }) {
       }
     }
   }
+
+  backBtn?.addEventListener('click', async () => {
+    if (mode === 'confirm') await enterSetupMode(); // choisir un autre code
+    else if (mode === 'setup' && onBackToStart) onBackToStart();
+  });
 
   keypad.addEventListener('click', (e) => {
     const key = e.target.closest('.pin-key');

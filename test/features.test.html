@@ -823,6 +823,13 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   eq('retour : sur l\'écran de verrouillage ou de démarrage, rien ne navigue derrière, même logique « appuyez encore »', [ctl.handleBack(), world.warnings, (world.clock = 41000, ctl.handleBack())], [true, 3, false]);
   world.visible = true; go('reports'); world.modals = 1; world.clock = 50000; ctl.handleBack(); world.clock = 50100;
   eq('retour : fermer une fenêtre remet à zéro l\'avertissement de sortie', (ctl.handleBack(), world.view), 'dashboard');
+  // Écrans de démarrage (restauration, création du PIN) : le retour recule d'une étape avant tout avertissement de sortie
+  const startup = { steps: 2, clock: 0, warnings: 0 };
+  const c3 = createBackController({ currentView: () => 'dashboard', goToView() {}, closeTopModal: () => false, isAppVisible: () => false,
+    onExitWarning: () => { startup.warnings++; }, onStartupBack: () => (startup.steps > 0 ? (startup.steps--, true) : false), now: () => startup.clock });
+  eq('retour (démarrage) : chaque retour recule d\'une étape (PIN → restauration → langue) sans avertir', [c3.handleBack(), c3.handleBack(), startup.steps, startup.warnings], [true, true, 0, 0]);
+  startup.clock = 1000;
+  eq('retour (démarrage) : plus d\'étape à reculer → « appuyez encore », puis la sortie', [c3.handleBack(), startup.warnings, (startup.clock = 1500, c3.handleBack())], [true, 1, false]);
   // pile bornée et sans doublon de l'écran courant
   const c2 = createBackController({ currentView: () => world.view, goToView: (v) => { world.view = v; }, closeTopModal: () => false, isAppVisible: () => true, onExitWarning() {}, maxStack: 3 });
   for (const v of ['a', 'b', 'c', 'd', 'e']) { c2.visit(world.view, v); world.view = v; }
