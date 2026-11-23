@@ -174,6 +174,7 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
       ${linked || isTransfer ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-cat">${icon('tag', 24)} ${escapeHtml(t('Corriger la catégorie'))}</button>`}
       ${linked || isTransfer || walletFixChoices(tx, wallets).length < 2 ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-wallet">${icon('wallet', 24)} ${escapeHtml(t('Corriger le portefeuille'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-day">${icon('history', 24)} ${escapeHtml(t('Corriger le jour'))}</button>`}
+      ${linked ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-note">${icon('edit', 24)} ${escapeHtml(tx.note ? t('Corriger la note') : t('Ajouter une note'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-danger easy-btn" id="easy-tx-delete">${icon('trash', 24)} ${escapeHtml(t('Supprimer cette opération'))}</button>`}
       <button type="button" class="btn btn-ghost easy-btn" id="easy-tx-close">${escapeHtml(t('Fermer'))}</button>
     </div>`, { title: t('Cette opération') });
@@ -183,6 +184,7 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
   modal.el.querySelector('#easy-tx-cat')?.addEventListener('click', () => { modal.close(); openEasyCategoryFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-wallet')?.addEventListener('click', () => { modal.close(); openEasyWalletFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-day')?.addEventListener('click', () => { modal.close(); openEasyDayFix(tx, { onChange }); });
+  modal.el.querySelector('#easy-tx-note')?.addEventListener('click', () => { modal.close(); openEasyNoteFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-delete')?.addEventListener('click', async () => {
     const ok = await confirmDialog(t('Supprimer cette opération ? ({amount})', { amount: formatCurrency(tx.amount, cur) }), { danger: true, requirePin: true, confirmText: t('Supprimer') });
     if (!ok) return;
@@ -343,6 +345,53 @@ export async function openEasyWalletFix(tx, { onChange = null } = {}) {
       auditNote: t("Portefeuille corrigé depuis l'accueil facile"), doneMsg: t('Portefeuille corrigé.'), failMsg: t("Le portefeuille n'a pas pu être changé."), onChange,
     });
   }));
+  return modal;
+}
+
+/** « Corriger la note » (ou « Ajouter une note ») : un grand champ avec le texte actuel, au clavier ou dicté avec le micro (comme à la saisie).
+    Seule la note change ; la vider l'efface. Inscrit au journal d'audit et annulable comme les autres corrections. */
+export function openEasyNoteFix(tx, { onChange = null } = {}) {
+  const current = (tx.note || '').trim();
+  let listening = null;
+  const modal = openModal(`
+    <p class="easy-question">${escapeHtml(t('Quelle note ?'))}</p>
+    <div class="easy-note-row">
+      <input type="text" id="easy-notefix-input" maxlength="140" value="${escapeHtml(current)}" placeholder="${escapeHtml(t('Ex : taxi, marché, cadeau…'))}" aria-label="${escapeHtml(t('Note (facultatif)'))}" autocomplete="off">
+      ${isVoiceSupported() ? `<button type="button" class="btn btn-ghost easy-btn easy-mic" id="easy-notefix-mic" aria-pressed="false" aria-label="${escapeHtml(t('Dicter la note'))}">${icon('mic', 26)}</button>` : ''}
+    </div>
+    <div class="easy-actions easy-actions-stack">
+      <button type="button" class="btn btn-primary easy-btn easy-save" id="easy-notefix-save" disabled>${icon('check', 28)} ${escapeHtml(t('Enregistrer'))}</button>
+      <div class="easy-actions">
+        ${current ? `<button type="button" class="btn btn-ghost easy-btn" id="easy-notefix-clear">${escapeHtml(t('Effacer la note'))}</button>` : ''}
+        <button type="button" class="btn btn-ghost easy-btn" id="easy-notefix-cancel">${escapeHtml(t('Fermer'))}</button>
+      </div>
+    </div>`, { title: current ? t('Corriger la note') : t('Ajouter une note'), onClose: () => listening?.controller.stop() });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  const input = modal.el.querySelector('#easy-notefix-input');
+  const saveBtn = modal.el.querySelector('#easy-notefix-save');
+  const refresh = () => { saveBtn.disabled = input.value.trim() === current; };
+  input.addEventListener('input', refresh);
+  const micBtn = modal.el.querySelector('#easy-notefix-mic');
+  micBtn?.addEventListener('click', () => {
+    if (listening) { listening.controller.stop(); return; }
+    stopSpeaking(); // la voix de l'application ne doit pas être captée par le micro
+    listening = listenOnce({ lang: getLanguage(), onInterim: (text) => { input.value = text.slice(0, 140); refresh(); } });
+    micBtn.classList.add('is-listening');
+    micBtn.setAttribute('aria-pressed', 'true');
+    listening.promise.then((text) => { input.value = text.slice(0, 140); refresh(); })
+      .catch((err) => showToast(err?.code === 'not-allowed' ? t("Le micro n'est pas autorisé : autorisez-le dans les réglages du navigateur.") : t("Je n'ai rien entendu. Réessayez ou écrivez la note.")))
+      .finally(() => { listening = null; micBtn.classList.remove('is-listening'); micBtn.setAttribute('aria-pressed', 'false'); });
+  });
+  modal.el.querySelector('#easy-notefix-clear')?.addEventListener('click', () => { input.value = ''; refresh(); input.focus(); });
+  modal.el.querySelector('#easy-notefix-cancel').addEventListener('click', () => modal.close());
+  saveBtn.addEventListener('click', async () => {
+    const note = input.value.trim().slice(0, 140);
+    if (note === current) return;
+    modal.close();
+    await saveTxCorrection(tx, { note }, {
+      auditNote: t("Note corrigée depuis l'accueil facile"), doneMsg: note ? t('Note corrigée.') : t('Note effacée.'), failMsg: t("La note n'a pas pu être changée."), onChange,
+    });
+  });
   return modal;
 }
 

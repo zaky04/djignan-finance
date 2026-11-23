@@ -976,6 +976,40 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     for (const w of others) await dbMod.dbPut(STORES.WALLETS, w);
     await dbMod.dbDelete(STORES.WALLETS, 'w-fix-old');
     await dbMod.dbDelete(STORES.WALLETS, 'w-fix2');
+    // « Corriger la note » : champ prérempli, « Enregistrer » grisé tant que rien ne change, seule la note change, annulable ; vider efface la note
+    const noteBefore = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    await openEasyTxDetail(fixId); await wait(200);
+    ok('note : le détail propose le bouton de la note', !!modalRoot.querySelector('#easy-tx-note'));
+    modalRoot.querySelector('#easy-tx-note').click(); await wait(300);
+    const noteInput = modalRoot.querySelector('#easy-notefix-input');
+    eq('note : le champ montre la note actuelle, « Enregistrer » grisé', [noteInput.value, modalRoot.querySelector('#easy-notefix-save').disabled], [(noteBefore.note || '').trim(), true]);
+    noteInput.value = '  Taxi retour de la banque  '; noteInput.dispatchEvent(new Event('input', { bubbles: true }));
+    ok('note : « Enregistrer » s\'allume dès que le texte change', modalRoot.querySelector('#easy-notefix-save').disabled === false);
+    toastBox.textContent = '';
+    modalRoot.querySelector('#easy-notefix-save').click(); await wait(600);
+    const noteAfter = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    eq('note : seule la note change (espaces retirés ; montant, catégorie, portefeuille, jour intacts)', [noteAfter.note, { ...noteAfter, note: '' }], ['Taxi retour de la banque', { ...noteBefore, note: '' }]);
+    ok('note : message affiché et trace « update » au journal d\'audit', toastBox.textContent.includes('Note corrigée') && (await dbGetAll(STORES.AUDIT_LOG)).some((a) => a.action === 'update' && a.entityId === fixId && a.after?.note === 'Taxi retour de la banque' && (a.before?.note || '') === (noteBefore.note || '')));
+    [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
+    eq('note : « Annuler » remet l\'ancienne note', ((await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId).note || ''), (noteBefore.note || ''));
+    modalRoot.innerHTML = '';
+    // Vider la note l'efface (bouton « Effacer la note » présent seulement s'il y a une note)
+    await dbMod.dbPut(STORES.TRANSACTIONS, { ...noteBefore, note: 'Note à effacer' });
+    await openEasyTxDetail(fixId); await wait(200);
+    modalRoot.querySelector('#easy-tx-note').click(); await wait(300);
+    ok('note : « Effacer la note » est proposé quand il y a une note', !!modalRoot.querySelector('#easy-notefix-clear'));
+    modalRoot.querySelector('#easy-notefix-clear').click(); await wait(100);
+    toastBox.textContent = '';
+    modalRoot.querySelector('#easy-notefix-save').click(); await wait(600);
+    ok('note : la note est effacée, avec le message « Note effacée »', ((await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId).note || '') === '' && toastBox.textContent.includes('Note effacée'));
+    modalRoot.innerHTML = '';
+    // Sans note : le bouton propose d'en ajouter une et « Effacer la note » n'apparaît pas
+    await openEasyTxDetail(fixId); await wait(200);
+    ok('note : sans note, le bouton dit « Ajouter une note »', modalRoot.querySelector('#easy-tx-note').textContent.includes('Ajouter une note'));
+    modalRoot.querySelector('#easy-tx-note').click(); await wait(300);
+    ok('note : sans note, pas de bouton « Effacer la note »', !modalRoot.querySelector('#easy-notefix-clear'));
+    modalRoot.innerHTML = '';
+    await dbMod.dbPut(STORES.TRANSACTIONS, noteBefore);
   }
   await setSetting('easyHome', false);
   await applyEasyHome();
