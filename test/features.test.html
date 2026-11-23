@@ -683,6 +683,18 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     ['Vous avez prêté cinq mille francs CFA à Awa. Pour enregistrer, touchez le bouton vert.',
       "C'est noté : Awa vous rend trois mille francs CFA. Il reste deux mille francs CFA. Vous avez maintenant quatre-vingt-onze mille cinq cents francs CFA sur Orange Money.",
       "C'est noté : Vous rendez deux mille francs CFA à Bob. Tout est réglé."]);
+    {
+      const { buildMonthSpeech, spokenAmount: sp } = await import('../js/speech-out.js');
+      const recap = { hasData: true, currency: 'XOF', income: 200000, expenses: 150000, net: 50000, top: [{ name: 'Alimentation', value: 60000 }], expensesDeltaPct: 20, budgetsOver: [{ name: 'Loisirs' }, { name: 'Transport' }] };
+      eq('mon mois : phrases lues (reçu/dépensé, mis de côté, ce qui pèse, évolution, budgets) — cinq au plus', buildMonthSpeech(recap),
+        `Ce mois-ci, vous avez reçu ${sp(200000, 'XOF')} et dépensé ${sp(150000, 'XOF')}. Vous avez pu mettre de côté ${sp(50000, 'XOF')}. Ce qui pèse le plus : Alimentation, ${sp(60000, 'XOF')}. C'est 20 pour cent de plus que le mois dernier. Attention : Loisirs, Transport dépasse le budget.`);
+      eq('mon mois : sans entrée, seule la dépense est dite ; dépenses au-dessus des entrées signalées ; baisse félicitée',
+        [buildMonthSpeech({ ...recap, income: 0, net: -150000, budgetsOver: [], top: [], expensesDeltaPct: null }),
+          buildMonthSpeech({ ...recap, income: 100000, net: -50000, budgetsOver: [], top: [], expensesDeltaPct: -10 })],
+        [`Ce mois-ci, vous avez dépensé ${sp(150000, 'XOF')}.`,
+          `Ce mois-ci, vous avez reçu ${sp(100000, 'XOF')} et dépensé ${sp(150000, 'XOF')}. Attention : vous avez dépensé ${sp(50000, 'XOF')} de plus que vous n'avez reçu. C'est 10 pour cent de moins que le mois dernier. Bravo.`]);
+      eq('mon mois : rien de noté → message simple', [buildMonthSpeech({ hasData: false }), buildMonthSpeech(null)], ["Il n'y a encore rien de noté ce mois-ci.", "Il n'y a encore rien de noté ce mois-ci."]);
+    }
     ok('prêts : un prêt avec intérêts, participants ou compte gardé n\'est pas « simple »', isSimpleDebt({ interestRate: 0 }) && !isSimpleDebt({ interestRate: 5 }) && !isSimpleDebt({ participants: [{ id: 'p' }] }) && !isSimpleDebt({ keptAccountId: 'k' }) && !isSimpleDebt({ investmentId: 'i' }) && !isSimpleDebt(null));
 
     // 1. Nouvelle créance (« j'ai prêté »), sans aucun prêt en cours : on commence par le nom
@@ -778,6 +790,7 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     {
       const calls = [];
       await renderEasyHome();
+      ok('mon mois : l\'accueil facile a ses deux boutons « Écouter » et « Mon mois » (si la voix est possible)', !!easyHost.querySelector('#easy-speak-btn') === !!easyHost.querySelector('#easy-month-btn'));
       initEasyHome({ navigateTo: (v) => calls.push(['nav', v]), openDebts: (k) => calls.push(['debts', k]) });
       easyHost.querySelector('.easy-tile[data-easy="owed"]').click();
       easyHost.querySelector('.easy-tile[data-easy="owe"]').click();

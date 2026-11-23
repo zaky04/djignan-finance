@@ -188,6 +188,33 @@ export function buildDebtSpeech(info) {
   return parts.join(' ');
 }
 
+/** « Mon mois » lu à voix haute, d'après le bilan du mois (monthly-recap.js : buildMonthlyRecap). Phrases courtes, montants en
+    toutes lettres ; au plus cinq phrases : ce qui est entré et sorti, ce qui reste de côté, ce qui pèse le plus, l'évolution
+    depuis le mois dernier, les budgets dépassés. Pure. */
+export function buildMonthSpeech(recap) {
+  if (!recap || !recap.hasData) return t("Il n'y a encore rien de noté ce mois-ci.");
+  const cur = recap.currency;
+  const say = (n) => spokenAmount(n, cur);
+  const parts = [];
+  parts.push(recap.income > 0.004
+    ? t('Ce mois-ci, vous avez reçu {income} et dépensé {expenses}.', { income: say(recap.income), expenses: say(recap.expenses) })
+    : t('Ce mois-ci, vous avez dépensé {expenses}.', { expenses: say(recap.expenses) }));
+  if (recap.income > 0.004) {
+    parts.push(recap.net >= 0
+      ? t('Vous avez pu mettre de côté {amount}.', { amount: say(recap.net) })
+      : t('Attention : vous avez dépensé {amount} de plus que vous n\'avez reçu.', { amount: say(-recap.net) }));
+  }
+  const first = recap.top && recap.top[0];
+  if (first) parts.push(t('Ce qui pèse le plus : {name}, {amount}.', { name: first.name, amount: say(first.value) }));
+  if (recap.expensesDeltaPct != null && Math.abs(recap.expensesDeltaPct) >= 3) {
+    parts.push(recap.expensesDeltaPct > 0
+      ? t("C'est {pct} pour cent de plus que le mois dernier.", { pct: Math.round(recap.expensesDeltaPct) })
+      : t("C'est {pct} pour cent de moins que le mois dernier. Bravo.", { pct: Math.round(-recap.expensesDeltaPct) }));
+  }
+  if (recap.budgetsOver && recap.budgetsOver.length) parts.push(t('Attention : {names} dépasse le budget.', { names: recap.budgetsOver.slice(0, 3).map((b) => b.name).join(', ') }));
+  return parts.slice(0, 5).join(' ');
+}
+
 /** Réglage « lire à voix haute les confirmations » (clé speakConfirmations, désactivé par défaut). */
 export async function isSpeakConfirmationsEnabled() {
   return isSpeechSupported() && !!(await getSetting('speakConfirmations', false));

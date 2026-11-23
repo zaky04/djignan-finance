@@ -24,8 +24,9 @@ import {
 import { recordTemplateNow, undoRecordedTemplate, pastOrTodayISO } from './quick-templates.js';
 import {
   isSpeechSupported, speak, stopSpeaking, primeSpeech, spokenAmount,
-  buildBalanceSpeech, buildSavedSpeech, buildConfirmSpeech, buildTransferSavedSpeech, buildTransferConfirmSpeech, isSpeakConfirmationsEnabled,
+  buildBalanceSpeech, buildSavedSpeech, buildConfirmSpeech, buildTransferSavedSpeech, buildTransferConfirmSpeech, buildMonthSpeech, isSpeakConfirmationsEnabled,
 } from './speech-out.js';
+import { loadMonthlyRecap } from './monthly-recap.js';
 import { formatCurrency, formatDate, escapeHtml, openModal, showToast, intlLocale, todayISO, localISODate, compressImageBlob, ZERO_DECIMAL_CURRENCIES } from './utils.js';
 import { notifyDataChanged } from './state.js';
 import { t, getLanguage } from './i18n.js';
@@ -110,6 +111,14 @@ export async function speakBalance() {
   if (!spoken) showToast(t("Aucune voix n'est installée sur cet appareil : le texte reste affiché."));
 }
 
+/** « Écouter mon mois » : le bilan du mois en cours (monthly-recap.js) lu à voix haute. */
+export async function speakMonth() {
+  primeSpeech();
+  if (!isSpeechSupported()) { showToast(t("La lecture à voix haute n'est pas disponible sur cet appareil.")); return; }
+  const spoken = await speak(buildMonthSpeech(await loadMonthlyRecap(todayISO().slice(0, 7))));
+  if (!spoken) showToast(t("Aucune voix n'est installée sur cet appareil : le texte reste affiché."));
+}
+
 /* ---------- Accueil ---------- */
 
 function recentRowHtml(tx) {
@@ -132,7 +141,8 @@ export async function renderEasyHome() {
   const [snap, recent] = await Promise.all([loadEasySnapshot(), getEnrichedTransactions({ limit: 3 })]);
   const cur = snap.currency;
   const speakBtn = isSpeechSupported()
-    ? `<button type="button" class="easy-speak" id="easy-speak-btn">${icon('speaker', 28)}<span>${t('Écouter')}</span></button>` : '';
+    ? `<div class="easy-speak-row"><button type="button" class="easy-speak" id="easy-speak-btn">${icon('speaker', 28)}<span>${t('Écouter')}</span></button>
+      <button type="button" class="easy-speak" id="easy-month-btn">${icon('chart', 28)}<span>${t('Mon mois')}</span></button></div>` : '';
   const safeLine = snap.safeToSpend === null ? ''
     : snap.safeToSpend >= 0
       ? `<div class="easy-balance-sub">${t("Il vous reste {amount} à dépenser ce mois-ci", { amount: `<span class="amount" data-value="${snap.safeToSpend}">${escapeHtml(formatCurrency(snap.safeToSpend, cur))}</span>` })}</div>`
@@ -510,6 +520,7 @@ export function initEasyHome({ navigateTo, openDebts = null }) {
   document.getElementById('easy-home')?.addEventListener('click', (event) => {
     const speakBtn = event.target.closest('#easy-speak-btn');
     if (speakBtn) { speakBalance(); return; }
+    if (event.target.closest('#easy-month-btn')) { speakMonth(); return; }
     const tile = event.target.closest('[data-easy]');
     if (!tile) return;
     const kind = tile.dataset.easy;

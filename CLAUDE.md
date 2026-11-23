@@ -4222,7 +4222,13 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
-### 23 novembre 2026 (suite 6) — « Relancer » dans la saisie guidée de « On me doit » (`CACHE_VERSION` `v193`, non commité au moment d'écrire)
+### 23 novembre 2026 (suite 7) — « Mon mois » lu à voix haute sur l'accueil facile (`CACHE_VERSION` `v194`, non commité au moment d'écrire)
+
+Second bouton sous « Écouter » dans l'encadré du solde (`easy-home.js`, `speakMonth`) : **« Mon mois »** lit le bilan du mois en cours, d'après `loadMonthlyRecap` (`monthly-recap.js`, les mêmes chiffres que le bilan partageable : dépenses courantes, hors prêts et dépenses exceptionnelles).
+`buildMonthSpeech` (`speech-out.js`, pure, testée) : cinq phrases au plus, montants en toutes lettres — reçu et dépensé (ou dépensé seul), mis de côté ou « dépensé X de plus que reçu », ce qui pèse le plus, évolution depuis le mois dernier (≥ 3 %), budgets dépassés ;
+« Il n'y a encore rien de noté ce mois-ci » sans données. Absent si la voix n'est pas disponible (comme « Écouter »). Tests : 4 nouveaux (505). Vérifié sur 375 px (phrases réellement envoyées à la synthèse, sur les données de démonstration). Voix réelle non écoutée.
+
+### 23 novembre 2026 (suite 6) — « Relancer » dans la saisie guidée de « On me doit » (`CACHE_VERSION` `v193`, poussé en `d2ecc4a`)
 
 Dans la liste des personnes qui doivent encore de l'argent (`easy-debts.js`), un bouton **« Relancer »** (icône message + mot, 84 px) à côté de chaque ligne ouvre la fenêtre de relance existante (`openPersonReminder`, `person-ledger.js` : message prêt avec le nom et le
 total dû, numéro mémorisé, WhatsApp / SMS / copier) par-dessus la liste, qui reste ouverte. Absent côté « Je dois » (on ne relance pas ses propres créanciers). La ligne montre maintenant le nom puis le montant en dessous (avant : un nom comme « Cousin Amadou » se coupait au milieu

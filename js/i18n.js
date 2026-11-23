@@ -2189,6 +2189,17 @@ const EN = {
   "Attention : {wallet} ne contient que {balance}. Ce déplacement le ferait passer en négatif.": 'Careful: {wallet} only holds {balance}. This transfer would make it negative.',
   "Déplacement de {amount}, de {from} vers {to}. Pour enregistrer, touchez le bouton vert.": 'Transfer of {amount}, from {from} to {to}. To save, tap the green button.',
   "C'est noté : {amount} déplacés de {from} vers {to}.": 'Noted: {amount} moved from {from} to {to}.',
+  /* ---- « Écouter mon mois » (accueil facile, speech-out.js : buildMonthSpeech) ---- */
+  'Mon mois': 'My month',
+  "Il n'y a encore rien de noté ce mois-ci.": 'Nothing has been recorded yet this month.',
+  'Ce mois-ci, vous avez reçu {income} et dépensé {expenses}.': 'This month, you received {income} and spent {expenses}.',
+  'Ce mois-ci, vous avez dépensé {expenses}.': 'This month, you spent {expenses}.',
+  'Vous avez pu mettre de côté {amount}.': 'You were able to set aside {amount}.',
+  "Attention : vous avez dépensé {amount} de plus que vous n'avez reçu.": 'Careful: you spent {amount} more than you received.',
+  'Ce qui pèse le plus : {name}, {amount}.': 'The biggest item: {name}, {amount}.',
+  "C'est {pct} pour cent de plus que le mois dernier.": "That is {pct} percent more than last month.",
+  "C'est {pct} pour cent de moins que le mois dernier. Bravo.": 'That is {pct} percent less than last month. Well done.',
+  'Attention : {names} dépasse le budget.': 'Careful: {names} is over budget.',
   /* ---- Saisie guidée des prêts (easy-debts.js) ---- */
   "Qui vous doit encore de l'argent ?": 'Who still owes you money?',
   "À qui devez-vous encore de l'argent ?": 'Who do you still owe money to?',

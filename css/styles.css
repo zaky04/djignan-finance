@@ -1047,6 +1047,8 @@ body[data-easy-home="on"] #panel-recent-transactions { display: none !important;
 .easy-balance-sub.is-bad { color: #ffb4a8; font-weight: 600; }
 .easy-speak { display: inline-flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 24px; border-radius: 999px; border: 2px solid #f3efe3; background: transparent; color: #f3efe3; font: inherit; font-size: 18px; font-weight: 700; cursor: pointer; }
 .easy-speak:hover { background: rgba(255, 255, 255, .12); }
+.easy-speak-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.easy-speak-row .easy-speak { padding: 0 20px; }
 .easy-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .easy-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 150px; padding: 14px 10px; border-radius: var(--radius-lg); border: 2px solid currentColor; background: var(--surface); font: inherit; cursor: pointer; text-align: center; }
 .easy-tile:active { transform: scale(.97); }
