@@ -4222,7 +4222,12 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
-### 23 novembre 2026 (suite 9) — Échéance d'un nouveau prêt en saisie guidée (`CACHE_VERSION` `v196`, non commité au moment d'écrire)
+### 23 novembre 2026 (suite 10) — « Voir toutes mes opérations » en accueil facile (`CACHE_VERSION` `v197`, non commité au moment d'écrire)
+
+L'accueil facile ne montrait que 3 opérations, donc seules ces 3 pouvaient être corrigées. Sous « Dernières opérations », un bouton **« Voir toutes mes opérations »** (`#easy-history-btn`, classe `.easy-more`, pas `.easy-move` : un test compte les boutons `.easy-move`) ouvre `openEasyHistory()` (`easy-home.js`) : toutes les opérations, **par jour** (titres « Aujourd'hui », « Hier », sinon la date ; `groupByDay`, `historyDayLabel`), 30 à la fois avec **« Voir plus »**. Chaque ligne reprend `recentRowHtml` et ouvre `openEasyTxDetail`, qui accepte maintenant `{ onChange }` : après une suppression (ou son annulation) la liste se recharge sans se fermer.
+Tests : 7 nouveaux (525). Vérifié sur 375 px avec les données de démonstration. Piège du navigateur de test : un port déjà utilisé les jours précédents sert d'anciens fichiers (cache), il faut un port neuf à chaque vérification.
+
+### 23 novembre 2026 (suite 9) — Échéance d'un nouveau prêt en saisie guidée (`CACHE_VERSION` `v196`, poussé en `7c02d74`)
 
 Écran « C'est bon ? » d'un **nouveau** prêt (`easy-debts.js`) : sous le récapitulatif, « Quand doit-il vous rendre ? » / « Quand devez-vous rendre ? » — **Pas de date** (par défaut), 1 semaine, 2 semaines, 1 mois, ou Autre jour (calendrier, jamais dans le passé) ; le choix s'ajoute au récapitulatif (« À rendre le … »).
 `createSimpleDebt` (`debts.js`) accepte `dueDate` et l'**ignore** si elle est absurde ou antérieure à la date du prêt (sinon la dette serait « en retard » dès sa création). L'échéance alimente les rappels existants (notifications, Dettes & créances). Pas pour un remboursement. Tests : 4 nouveaux (518). Vérifié sur 375 px.

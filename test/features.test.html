@@ -864,6 +864,30 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     ok('opérations récentes : une opération liée à un prêt s\'affiche sans bouton « Supprimer », avec une explication', !modalRoot.querySelector('#easy-tx-delete') && !!modalRoot.querySelector('.easy-hint') && modalRoot.querySelector('.easy-summary').textContent.includes('Prêt'));
     modalRoot.innerHTML = '';
     await (await import('../js/db.js')).dbDelete(STORES.TRANSACTIONS, 'tx-lien');
+    // « Voir toutes mes opérations » : liste par jour, 30 à la fois
+    const { groupByDay, historyDayLabel, openEasyHistory } = await import('../js/easy-home.js');
+    eq('historique : regroupement par jour (récentes d\'abord)', groupByDay([{ date: '2026-11-03', id: 'a' }, { date: '2026-11-03', id: 'b' }, { date: '2026-11-01', id: 'c' }]).map((g) => [g.date, g.items.map((i) => i.id)]), [['2026-11-03', ['a', 'b']], ['2026-11-01', ['c']]]);
+    eq('historique : « Aujourd\'hui », « Hier », sinon la date', [historyDayLabel('2026-11-23', '2026-11-23'), historyDayLabel('2026-11-22', '2026-11-23'), historyDayLabel('2026-03-01', '2026-11-23') === historyDayLabel('2026-03-01', '2026-11-23') && !['Aujourd\'hui', 'Hier'].includes(historyDayLabel('2026-03-01', '2026-11-23'))], ['Aujourd\'hui', 'Hier', true]);
+    await renderEasyHome();
+    ok('historique : le bouton « Voir toutes mes opérations » est sur l\'accueil', !!easyHost.querySelector('#easy-history-btn'));
+    for (let i = 0; i < 34; i++) await dbAdd(STORES.TRANSACTIONS, { id: `tx-h${i}`, type: 'expense', walletId: 'w-e1', targetWalletId: null, categoryId: 'c-e1', amount: 100 + i, date: '2026-01-15', note: '', tags: [], reconciled: false, createdAt: `2026-01-15T10:${String(i).padStart(2, '0')}:00.000Z` });
+    modalRoot.innerHTML = '';
+    easyHost.querySelector('#easy-history-btn').click(); await wait(500);
+    const total = (await dbGetAll(STORES.TRANSACTIONS)).length;
+    eq('historique : 30 opérations au début, titres de jour, bouton « Voir plus »', [modalRoot.querySelectorAll('#easy-history [data-tx]').length, modalRoot.querySelectorAll('.easy-day-title').length > 1, !!modalRoot.querySelector('#easy-history-more')], [30, true, true]);
+    modalRoot.querySelector('#easy-history-more').click(); await wait(500);
+    eq('historique : « Voir plus » montre toutes les autres, puis le bouton disparaît', [modalRoot.querySelectorAll('#easy-history [data-tx]').length, !!modalRoot.querySelector('#easy-history-more')], [total, false]);
+    // Supprimer depuis la liste : la liste se met à jour
+    modalRoot.querySelector('#easy-history [data-tx="tx-h0"]').click(); await wait(400);
+    modalRoot.querySelector('#easy-tx-delete').click(); await wait();
+    modalRoot.querySelector('[data-act="confirm"]').click(); await wait(600);
+    eq('historique : supprimer depuis la liste retire la ligne sans fermer la liste', [!!modalRoot.querySelector('#easy-history [data-tx="tx-h0"]'), !!modalRoot.querySelector('#easy-history'), (await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.id === 'tx-h0')], [false, true, false]);
+    modalRoot.innerHTML = '';
+    for (let i = 0; i < 34; i++) await (await import('../js/db.js')).dbDelete(STORES.TRANSACTIONS, `tx-h${i}`);
+    modalRoot.innerHTML = '';
+    openEasyHistory(); await wait(400);
+    ok('historique : la liste est utilisable', modalRoot.querySelectorAll('#easy-history [data-tx]').length > 0);
+    modalRoot.innerHTML = '';
   }
   await setSetting('easyHome', false);
   await applyEasyHome();

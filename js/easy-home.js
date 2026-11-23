@@ -143,7 +143,7 @@ export function isLinkedTransaction(tx) {
 
 /** Toucher une des dernières opérations de l'accueil : ce qu'elle est (montant, catégorie, portefeuille, jour, note) et, si elle est
     une erreur, un gros bouton « Supprimer » (avec code PIN s'il y en a un, annulable d'un toucher). */
-export async function openEasyTxDetail(id) {
+export async function openEasyTxDetail(id, { onChange = null } = {}) {
   const [allTx, wallets, categories] = await Promise.all([dbGetAll(STORES.TRANSACTIONS), dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES)]);
   const tx = allTx.find((x) => x.id === id);
   if (!tx) return;
@@ -182,16 +182,64 @@ export async function openEasyTxDetail(id) {
     await dbDelete(STORES.TRANSACTIONS, tx.id);
     await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'delete', before: tx, note: t('Suppression depuis l\'accueil facile') });
     notifyDataChanged('transactions');
+    onChange?.();
     showToast(t('Opération supprimée.'), {
       actionLabel: t('Annuler'),
       onAction: async () => {
         await dbAdd(STORES.TRANSACTIONS, tx);
         await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: t('Restaurée (annulation)') });
         notifyDataChanged('transactions');
+        onChange?.();
         showToast(t('Annulé.'));
       },
     });
   });
+}
+
+const HISTORY_PAGE = 30;
+
+/** « Un jour » en toutes lettres pour les titres de la liste : Aujourd'hui, Hier, sinon la date. */
+export function historyDayLabel(date, today = todayISO()) {
+  if (date === today) return t("Aujourd'hui");
+  const d = new Date(`${today}T12:00:00`);
+  d.setDate(d.getDate() - 1);
+  if (date === localISODate(d)) return t('Hier');
+  return formatDate(date);
+}
+
+/** Regroupe des opérations déjà triées (récentes d'abord) par jour : [{date, items}]. */
+export function groupByDay(list) {
+  const groups = [];
+  for (const tx of list) {
+    const last = groups[groups.length - 1];
+    if (last && last.date === tx.date) last.items.push(tx);
+    else groups.push({ date: tx.date, items: [tx] });
+  }
+  return groups;
+}
+
+/** « Voir toutes mes opérations » : les opérations par jour (30 à la fois), chacune se touche pour la voir ou la supprimer. */
+export function openEasyHistory() {
+  let count = HISTORY_PAGE;
+  const modal = openModal('<div id="easy-history"></div>', { title: t('Toutes mes opérations') });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  const host = modal.el.querySelector('#easy-history');
+  async function render() {
+    const rows = await getEnrichedTransactions({ limit: count + 1 });
+    const more = rows.length > count;
+    const shown = rows.slice(0, count);
+    if (!shown.length) { host.innerHTML = `<p class="easy-hint">${escapeHtml(t("Aucune opération pour l'instant."))}</p>`; return; }
+    host.innerHTML = groupByDay(shown).map((g) => `
+      <h4 class="easy-day-title">${escapeHtml(historyDayLabel(g.date))}</h4>
+      <div class="easy-recent">${g.items.map(recentRowHtml).join('')}</div>`).join('')
+      + (more ? `<button type="button" class="btn btn-ghost easy-btn" id="easy-history-more">${escapeHtml(t('Voir plus'))}</button>` : '');
+  }
+  host.addEventListener('click', (event) => {
+    if (event.target.closest('#easy-history-more')) { count += HISTORY_PAGE; render(); return; }
+    const row = event.target.closest('[data-tx]');
+    if (row) openEasyTxDetail(row.dataset.tx, { onChange: render });
+  });
+  render();
 }
 
 export async function renderEasyHome() {
@@ -220,7 +268,8 @@ export async function renderEasyHome() {
       <button type="button" class="easy-tile easy-owe" data-easy="owe">${icon('ledger', 44)}<span class="easy-tile-label">${t('Je dois')}</span><span class="easy-tile-amount amount" data-value="${snap.debts}">${escapeHtml(formatCurrency(snap.debts, cur))}</span></button>
     </div>
     <button type="button" class="btn btn-ghost easy-move" data-easy="transfer">${icon('swap', 28)} <span>${t("Je déplace de l'argent")}</span></button>
-    ${recent.length ? `<h3 class="easy-section-title">${t('Dernières opérations')}</h3><div class="easy-recent">${recent.map(recentRowHtml).join('')}</div>` : ''}`;
+    ${recent.length ? `<h3 class="easy-section-title">${t('Dernières opérations')}</h3><div class="easy-recent">${recent.map(recentRowHtml).join('')}</div>
+      <button type="button" class="btn btn-ghost easy-more" id="easy-history-btn">${icon('history', 28)} <span>${t('Voir toutes mes opérations')}</span></button>` : ''}`;
 }
 
 /* ---------- Saisie guidée ---------- */
@@ -580,6 +629,7 @@ export function initEasyHome({ navigateTo, openDebts = null }) {
     const speakBtn = event.target.closest('#easy-speak-btn');
     if (speakBtn) { speakBalance(); return; }
     if (event.target.closest('#easy-month-btn')) { speakMonth(); return; }
+    if (event.target.closest('#easy-history-btn')) { openEasyHistory(); return; }
     const row = event.target.closest('[data-tx]');
     if (row) { openEasyTxDetail(row.dataset.tx); return; }
     const tile = event.target.closest('[data-easy]');
