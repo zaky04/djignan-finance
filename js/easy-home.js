@@ -565,13 +565,13 @@ export async function renderEasyHome() {
 /* ---------- Saisie guidée ---------- */
 
 /** Date locale d'il y a `back` jours (AAAA-MM-JJ). */
-function isoDaysAgo(back) {
+export function isoDaysAgo(back) {
   const d = new Date();
   d.setDate(d.getDate() - back);
   return localISODate(d);
 }
 /** « Aujourd'hui », « Hier », « Avant-hier » (écrits en toutes lettres). */
-function dayLabel(back) { return back === 0 ? t("Aujourd'hui") : back === 1 ? t('Hier') : t('Avant-hier'); }
+export function dayLabel(back) { return back === 0 ? t("Aujourd'hui") : back === 1 ? t('Hier') : t('Avant-hier'); }
 
 const KEYPAD_ROWS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 

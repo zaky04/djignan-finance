@@ -790,6 +790,36 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
       await createSimpleDebt({ type: 'debt', personName: 'X', principal: 0, currency: 'XOF' }),
       await createSimpleDebt({ type: 'autre', personName: 'X', principal: 10, currency: 'XOF' }),
       await createSimpleDebt({ type: 'debt', personName: 'X', principal: 10, currency: 'XOF', walletId: 'w-t-save' })], [null, null, null, null]);
+    // 4 bis. Quel jour ? : un prêt ou un remboursement peut dater d'hier, d'avant-hier ou d'un autre jour (jamais le futur, jamais avant le prêt)
+    modalRoot.innerHTML = '';
+    await openEasyDebts('owe');
+    press('#easy-new'); // Bob est déjà noté : la liste vient d'abord
+    typeName('Ida'); press('#easy-next'); press('[data-wallet=""]');
+    press('[data-key="1"]'); press('[data-key="000"]'); press('#easy-next');
+    eq('prêts : « Quel jour ? » propose aujourd\'hui (choisi), hier, avant-hier et « Autre jour »', [[...modalRoot.querySelectorAll('.easy-summary ~ .easy-date [data-day]')].map((b) => b.dataset.day), modalRoot.querySelector('.easy-summary ~ .easy-date [data-day]').getAttribute('aria-pressed'), !!modalRoot.querySelector('#easy-day-other'), modalRoot.querySelector('#easy-day-input').max], [[isoAgo(0), isoAgo(1), isoAgo(2)], 'true', true, isoAgo(0)]);
+    press(`[data-day="${isoAgo(1)}"]`);
+    ok('prêts : toucher « Hier » le met en avant', modalRoot.querySelector(`[data-day="${isoAgo(1)}"]`).getAttribute('aria-pressed') === 'true' && modalRoot.querySelector(`[data-day="${isoAgo(0)}"]`).getAttribute('aria-pressed') === 'false');
+    press('#easy-save'); await wait();
+    const ida = (await dbGetAll(STORES.DEBTS)).find((d) => d.personName === 'Ida');
+    eq('prêts : la dette enregistrée date d\'hier', ida?.startDate, isoAgo(1));
+    await deleteDebtCascade(ida.id);
+    // Un remboursement ne peut pas précéder le prêt : jours antérieurs grisés, calendrier plafonné
+    const jo = await createSimpleDebt({ type: 'receivable', personName: 'Jo', principal: 2000, currency: 'XOF', date: isoAgo(1) });
+    modalRoot.innerHTML = '';
+    await openEasyDebts('owed');
+    press(`[data-debt="${[...modalRoot.querySelectorAll('[data-debt]')].findIndex((b) => b.textContent.includes('Jo'))}"]`);
+    press('[data-key="1"]'); press('[data-key="000"]'); press('#easy-next');
+    if (modalRoot.querySelector('[data-wallet]')) press('[data-wallet="w-e1"]');
+    eq('prêts : un remboursement ne peut pas précéder le prêt (avant-hier grisé, hier permis, calendrier limité)', [modalRoot.querySelector(`[data-day="${isoAgo(2)}"]`).disabled, modalRoot.querySelector(`[data-day="${isoAgo(1)}"]`).disabled, modalRoot.querySelector('#easy-day-input').min], [true, false, isoAgo(1)]);
+    press(`[data-day="${isoAgo(2)}"]`);
+    ok('prêts : toucher un jour grisé ne change rien (aujourd\'hui reste choisi)', modalRoot.querySelector(`[data-day="${isoAgo(0)}"]`).getAttribute('aria-pressed') === 'true');
+    press(`[data-day="${isoAgo(1)}"]`);
+    press('#easy-save'); await wait();
+    const joPay = (await dbGetAll(STORES.DEBT_PAYMENTS)).find((p) => p.debtId === jo.debt.id);
+    const joTx = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.debtPaymentId === joPay?.id);
+    eq('prêts : le remboursement et sa transaction portent le jour choisi (hier)', [joPay?.date, joTx?.date], [isoAgo(1), isoAgo(1)]);
+    await deleteDebtCascade(jo.debt.id);
+    modalRoot.innerHTML = '';
     // 5. Un prêt avec intérêts ouvre la fenêtre complète
     await dbAdd(STORES.DEBTS, { id: 'd-int', type: 'receivable', personName: 'Dan', principal: 4000, currency: 'XOF', interestRate: 5, startDate: '2026-01-01', status: 'active', createdAt: '2026-01-01T00:00:00.000Z' });
     modalRoot.innerHTML = '';

@@ -14,7 +14,8 @@
 
 import { STORES, dbGetAll, getSetting } from './db.js';
 import { getWalletBalance, isDailyWallet } from './ledger.js';
-import { keypadPress, addToAmount, quickAmounts } from './easy-home.js';
+import { keypadPress, addToAmount, quickAmounts, isoDaysAgo, dayLabel } from './easy-home.js';
+import { pastOrTodayISO } from './quick-templates.js';
 import {
   isSimpleDebt, listOpenDebts, createSimpleDebt, recordSimplePayment, undoSimplePayment, deleteDebtCascade, openPaymentModal,
 } from './modules/debts.js';
@@ -49,7 +50,7 @@ export async function openEasyDebts(kind) {
   const dailyWallets = allWallets.filter(isDailyWallet);
   const names = [...new Set(allDebts.slice().sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '')).map((d) => d.personName).filter(Boolean))].slice(0, 5);
 
-  const state = { step: open.length ? 'list' : 'who', mode: 'new', debt: null, owed: 0, name: '', amount: '', walletId: null, noWallet: false, due: '' };
+  const state = { step: open.length ? 'list' : 'who', mode: 'new', debt: null, owed: 0, name: '', amount: '', walletId: null, noWallet: false, due: '', date: todayISO() };
   /** Date locale dans `days` jours (AAAA-MM-JJ). */
   const isoInDays = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return localISODate(d); };
   const hasList = open.length > 0;
@@ -224,6 +225,23 @@ export async function openEasyDebts(kind) {
     return { action: action(), amount: Number(state.amount) || 0, currency: currency(), name: state.mode === 'repay' ? state.debt.personName : state.name, ...extra };
   }
 
+  /** Plus ancien jour possible : un remboursement ne peut pas précéder le prêt qu'il rembourse ; un nouveau prêt n'a pas de limite. */
+  const earliestDay = () => (state.mode === 'repay' && state.debt?.startDate ? state.debt.startDate : '');
+  /** « Quel jour ? » : aujourd'hui par défaut ; hier, avant-hier ou un autre jour (jamais dans le futur, jamais avant le prêt remboursé). */
+  function dayChooserHtml() {
+    const min = earliestDay();
+    const quick = [0, 1, 2].map((back) => ({ back, iso: isoDaysAgo(back) }));
+    const isOther = !quick.some((q) => q.iso === state.date);
+    return `<div class="easy-date" role="group" aria-label="${escapeHtml(t('Quel jour ?'))}">
+        <span class="easy-note-label">${escapeHtml(t('Quel jour ?'))}</span>
+        <div class="easy-date-row">
+          ${quick.map(({ back, iso }) => `<button type="button" class="btn easy-day ${state.date === iso ? 'is-on' : 'btn-ghost'}" data-day="${iso}" aria-pressed="${state.date === iso}" ${min && iso < min ? 'disabled' : ''}>${escapeHtml(dayLabel(back))}</button>`).join('')}
+          <button type="button" class="btn easy-day ${isOther ? 'is-on' : 'btn-ghost'}" id="easy-day-other" aria-pressed="${isOther}">${escapeHtml(isOther ? formatDate(state.date) : t('Autre jour'))}</button>
+        </div>
+        <input type="date" id="easy-day-input" class="easy-day-input" ${min ? `min="${escapeHtml(min)}"` : ''} max="${todayISO()}" value="${escapeHtml(state.date)}" hidden aria-label="${escapeHtml(t('Choisir le jour'))}">
+      </div>`;
+  }
+
   /** « Quand doit-il rendre ? » : choix d'une échéance facultative (nouveau prêt). */
   function dueChooserHtml() {
     const presets = [['', t('Pas de date')], [isoInDays(7), t('1 semaine')], [isoInDays(14), t('2 semaines')], [isoInDays(30), t('1 mois')]];
@@ -240,6 +258,7 @@ export async function openEasyDebts(kind) {
   }
 
   function renderConfirm(body) {
+    if (earliestDay() && state.date < earliestDay()) state.date = earliestDay() <= todayISO() ? earliestDay() : todayISO(); // un autre prêt a été choisi entre-temps
     const n = Number(state.amount) || 0;
     const repay = state.mode === 'repay';
     const person = repay ? state.debt.personName : state.name;
@@ -258,6 +277,7 @@ export async function openEasyDebts(kind) {
         ${repay ? `<div class="easy-summary-line">${icon('ledger', 22)} ${escapeHtml(left > 0.005 ? t('Il restera {amount}', { amount: formatCurrency(left, currency()) }) : t('Tout sera réglé'))}</div>` : ''}
         ${!repay && state.due ? `<div class="easy-summary-line">${icon('history', 22)} ${escapeHtml(t('À rendre le {date}', { date: formatDate(state.due) }))}</div>` : ''}
       </div>
+      ${dayChooserHtml()}
       ${repay ? '' : dueChooserHtml()}
       <div class="easy-warning" id="easy-warning" hidden></div>
       <div class="easy-actions easy-actions-stack">
@@ -281,13 +301,23 @@ export async function openEasyDebts(kind) {
     body.querySelectorAll('[data-due]').forEach((b) => b.addEventListener('click', () => chooseDue(b.dataset.due)));
     body.querySelector('#easy-due-other')?.addEventListener('click', () => { dueInput.hidden = false; if (dueInput.showPicker) { try { dueInput.showPicker(); } catch { dueInput.focus(); } } else dueInput.focus(); });
     dueInput?.addEventListener('change', () => { if (dueInput.value) chooseDue(dueInput.value); });
+    // Jour de l'opération : jamais dans le futur, jamais avant le prêt que l'on rembourse (sinon on garde le jour actuel).
+    const dayInput = body.querySelector('#easy-day-input');
+    const chooseDay = (iso) => {
+      const day = pastOrTodayISO(iso);
+      if (!earliestDay() || day >= earliestDay()) state.date = day;
+      renderConfirm(body);
+    };
+    body.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => chooseDay(b.dataset.day)));
+    body.querySelector('#easy-day-other').addEventListener('click', () => { dayInput.hidden = false; if (dayInput.showPicker) { try { dayInput.showPicker(); } catch { dayInput.focus(); } } else dayInput.focus(); });
+    dayInput.addEventListener('change', () => { if (dayInput.value) chooseDay(dayInput.value); });
     body.querySelector('#easy-say')?.addEventListener('click', () => { primeSpeech(); speak(buildDebtSpeech(sentenceInfo({ left }))); });
     body.querySelector('#easy-fix').addEventListener('click', () => go('amount'));
     body.querySelector('#easy-save').addEventListener('click', async (e) => {
       primeSpeech();
       const saveBtn = e.currentTarget;
       saveBtn.disabled = true; // un seul enregistrement, même en cas de double toucher
-      const date = todayISO();
+      const date = state.date;
       let undo;
       let balanceWalletId = state.walletId;
       if (repay) {
