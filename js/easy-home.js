@@ -173,6 +173,7 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
       ${linked ? '' : `<button type="button" class="btn btn-primary easy-btn" id="easy-tx-fix">${icon('edit', 24)} ${escapeHtml(t('Corriger le montant'))}</button>`}
       ${linked || isTransfer ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-cat">${icon('tag', 24)} ${escapeHtml(t('Corriger la catégorie'))}</button>`}
       ${linked || isTransfer || walletFixChoices(tx, wallets).length < 2 ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-wallet">${icon('wallet', 24)} ${escapeHtml(t('Corriger le portefeuille'))}</button>`}
+      ${linked || !isTransfer || transferFixChoices(tx, wallets).length < 2 ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-wallets">${icon('swap', 24)} ${escapeHtml(t('Corriger les portefeuilles'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-day">${icon('history', 24)} ${escapeHtml(t('Corriger le jour'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-note">${icon('edit', 24)} ${escapeHtml(tx.note ? t('Corriger la note') : t('Ajouter une note'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-danger easy-btn" id="easy-tx-delete">${icon('trash', 24)} ${escapeHtml(t('Supprimer cette opération'))}</button>`}
@@ -183,6 +184,7 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
   modal.el.querySelector('#easy-tx-fix')?.addEventListener('click', () => { modal.close(); openEasyAmountFix(tx, cur, { onChange }); });
   modal.el.querySelector('#easy-tx-cat')?.addEventListener('click', () => { modal.close(); openEasyCategoryFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-wallet')?.addEventListener('click', () => { modal.close(); openEasyWalletFix(tx, { onChange }); });
+  modal.el.querySelector('#easy-tx-wallets')?.addEventListener('click', () => { modal.close(); openEasyTransferFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-day')?.addEventListener('click', () => { modal.close(); openEasyDayFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-note')?.addEventListener('click', () => { modal.close(); openEasyNoteFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-delete')?.addEventListener('click', async () => {
@@ -392,6 +394,55 @@ export function openEasyNoteFix(tx, { onChange = null } = {}) {
       auditNote: t("Note corrigée depuis l'accueil facile"), doneMsg: note ? t('Note corrigée.') : t('Note effacée.'), failMsg: t("La note n'a pas pu être changée."), onChange,
     });
   });
+  return modal;
+}
+
+/** Portefeuilles d'un déplacement : tous ceux de la MÊME devise (le montant reste juste), non archivés ; le départ et l'arrivée actuels restent proposés
+    même archivés (sinon ils disparaîtraient). L'épargne en fait partie, comme à la saisie d'un déplacement. */
+function transferFixChoices(tx, wallets) {
+  const current = wallets.find((w) => w.id === tx.walletId);
+  if (!current) return [];
+  return wallets.filter((w) => w.currency === current.currency && (!w.archived || w.id === tx.walletId || w.id === tx.targetWalletId));
+}
+
+/** « Corriger les portefeuilles » d'un déplacement : « D'où part l'argent ? » puis « Où va l'argent ? », comme à la saisie, avec le départ et
+    l'arrivée actuels marqués. Rien n'est écrit avant le second choix ; départ et arrivée changent ensemble (annulable d'un toucher, trace au journal). */
+export async function openEasyTransferFix(tx, { onChange = null } = {}) {
+  const choices = transferFixChoices(tx, await dbGetAll(STORES.WALLETS));
+  let fromId = tx.walletId;
+  const modal = openModal('<div id="easy-transferfix"></div>', { title: t('Corriger les portefeuilles') });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  const root = modal.el.querySelector('#easy-transferfix');
+  function renderFrom() {
+    const tiles = choices.filter((w) => !w.archived || w.id === tx.walletId);
+    root.innerHTML = `
+      <p class="easy-question">${escapeHtml(t("D'où part l'argent ?"))}</p>
+      <div class="easy-wallets">${tiles.map((w) => walletTileHtml(w, 'data-from', w.id === tx.walletId)).join('')}</div>
+      <div class="easy-actions"><button type="button" class="btn btn-ghost easy-btn" id="easy-transferfix-cancel">${escapeHtml(t('Fermer'))}</button></div>`;
+    root.querySelectorAll('[data-from]').forEach((btn) => btn.addEventListener('click', () => { fromId = btn.dataset.from; renderTo(); }));
+    root.querySelector('#easy-transferfix-cancel').addEventListener('click', () => modal.close());
+  }
+  function renderTo() {
+    const tiles = choices.filter((w) => w.id !== fromId && (!w.archived || w.id === tx.targetWalletId));
+    root.innerHTML = `
+      <p class="easy-question">${escapeHtml(t("Où va l'argent ?"))}</p>
+      <div class="easy-wallets">${tiles.map((w) => walletTileHtml(w, 'data-to', w.id === tx.targetWalletId)).join('')}</div>
+      <div class="easy-actions">
+        <button type="button" class="btn btn-ghost easy-btn" id="easy-transferfix-back">${escapeHtml(t('Retour'))}</button>
+        <button type="button" class="btn btn-ghost easy-btn" id="easy-transferfix-cancel">${escapeHtml(t('Fermer'))}</button>
+      </div>`;
+    root.querySelector('#easy-transferfix-back').addEventListener('click', renderFrom);
+    root.querySelector('#easy-transferfix-cancel').addEventListener('click', () => modal.close());
+    root.querySelectorAll('[data-to]').forEach((btn) => btn.addEventListener('click', async () => {
+      const toId = btn.dataset.to;
+      modal.close();
+      if (fromId === tx.walletId && toId === tx.targetWalletId) return;
+      await saveTxCorrection(tx, { walletId: fromId, targetWalletId: toId }, {
+        auditNote: t("Portefeuilles corrigés depuis l'accueil facile"), doneMsg: t('Portefeuilles corrigés.'), failMsg: t("Les portefeuilles n'ont pas pu être changés."), onChange,
+      });
+    }));
+  }
+  renderFrom();
   return modal;
 }
 

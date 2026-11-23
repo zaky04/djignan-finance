@@ -1010,6 +1010,48 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     ok('note : sans note, pas de bouton « Effacer la note »', !modalRoot.querySelector('#easy-notefix-clear'));
     modalRoot.innerHTML = '';
     await dbMod.dbPut(STORES.TRANSACTIONS, noteBefore);
+    // « Corriger les portefeuilles » d'un déplacement : départ puis arrivée, même devise seulement, rien d'écrit avant le second choix, annulable
+    const mkW = (id, name, currency, archived = false) => ({ id, name, type: 'cash', currency, initialBalance: 0, archived, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+    for (const w of [mkW('w-tf1', 'Départ', 'XOF'), mkW('w-tf2', 'Arrivée', 'XOF'), mkW('w-tf3', 'Troisième', 'XOF'), mkW('w-tf-old', 'Vieux', 'XOF', true), mkW('w-tf-eur', 'Euros', 'EUR')]) await dbAdd(STORES.WALLETS, w);
+    await dbAdd(STORES.TRANSACTIONS, { id: 'tx-tf', type: 'transfer', walletId: 'w-tf1', targetWalletId: 'w-tf2', categoryId: null, amount: 1000, date: new Date().toISOString().slice(0, 10), note: 'Déplacement test', tags: [], reconciled: false, createdAt: '2026-01-02T00:00:00.000Z' });
+    const trBefore = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-tf');
+    await openEasyTxDetail('tx-tf'); await wait(200);
+    ok('déplacement : le détail propose « Corriger les portefeuilles » (ni catégorie ni portefeuille seul)', !!modalRoot.querySelector('#easy-tx-wallets') && !modalRoot.querySelector('#easy-tx-cat') && !modalRoot.querySelector('#easy-tx-wallet'));
+    modalRoot.querySelector('#easy-tx-wallets').click(); await wait(300);
+    const fromTiles = [...modalRoot.querySelectorAll('#easy-transferfix [data-from]')].map((b) => b.dataset.from);
+    eq('déplacement : le départ propose la même devise seulement (ni archivé ni euros), l\'actuel est marqué', [fromTiles.includes('w-tf3'), fromTiles.includes('w-tf-old'), fromTiles.includes('w-tf-eur'), [...modalRoot.querySelectorAll('#easy-transferfix .is-current')].map((b) => b.dataset.from)], [true, false, false, ['w-tf1']]);
+    modalRoot.querySelector('[data-from="w-tf1"]').click(); await wait(200);
+    const toTiles = [...modalRoot.querySelectorAll('#easy-transferfix [data-to]')].map((b) => b.dataset.to);
+    eq('déplacement : l\'arrivée ne propose pas le départ choisi, l\'arrivée actuelle est marquée', [toTiles.includes('w-tf1'), toTiles.includes('w-tf3'), [...modalRoot.querySelectorAll('#easy-transferfix .is-current')].map((b) => b.dataset.to)], [false, true, ['w-tf2']]);
+    eq('déplacement : rien n\'est écrit avant le second choix', (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-tf'), trBefore);
+    toastBox.textContent = '';
+    modalRoot.querySelector('[data-to="w-tf3"]').click(); await wait(600);
+    const trAfter = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-tf');
+    eq('déplacement : seule l\'arrivée change (montant, jour, note intacts)', [trAfter.walletId, trAfter.targetWalletId, { ...trAfter, targetWalletId: '' }], ['w-tf1', 'w-tf3', { ...trBefore, targetWalletId: '' }]);
+    ok('déplacement : message affiché et trace « update » au journal d\'audit', toastBox.textContent.includes('Portefeuilles corrigés') && (await dbGetAll(STORES.AUDIT_LOG)).some((a) => a.action === 'update' && a.entityId === 'tx-tf' && a.before?.targetWalletId === 'w-tf2' && a.after?.targetWalletId === 'w-tf3'));
+    [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
+    eq('déplacement : « Annuler » remet départ et arrivée d\'origine', (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-tf'), trBefore);
+    modalRoot.innerHTML = '';
+    // Sens inversé : départ et arrivée changent ensemble
+    await openEasyTxDetail('tx-tf'); await wait(200);
+    modalRoot.querySelector('#easy-tx-wallets').click(); await wait(300);
+    modalRoot.querySelector('[data-from="w-tf2"]').click(); await wait(200);
+    ok('déplacement : si le départ change, l\'ancien départ est proposé à l\'arrivée', !!modalRoot.querySelector('[data-to="w-tf1"]') && !modalRoot.querySelector('[data-to="w-tf2"]'));
+    modalRoot.querySelector('[data-to="w-tf1"]').click(); await wait(600);
+    const trRev = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-tf');
+    eq('déplacement : sens inversé enregistré', [trRev.walletId, trRev.targetWalletId], ['w-tf2', 'w-tf1']);
+    await dbMod.dbPut(STORES.TRANSACTIONS, trBefore);
+    modalRoot.innerHTML = '';
+    // Choisir les mêmes départ et arrivée : rien ne change, rien n'est écrit au journal
+    await openEasyTxDetail('tx-tf'); await wait(200);
+    modalRoot.querySelector('#easy-tx-wallets').click(); await wait(300);
+    const trAudit = (await dbGetAll(STORES.AUDIT_LOG)).length;
+    modalRoot.querySelector('[data-from="w-tf1"]').click(); await wait(200);
+    modalRoot.querySelector('[data-to="w-tf2"]').click(); await wait(500);
+    eq('déplacement : mêmes départ et arrivée = rien ne change ni n\'est écrit au journal', [(await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-tf'), (await dbGetAll(STORES.AUDIT_LOG)).length], [trBefore, trAudit]);
+    modalRoot.innerHTML = '';
+    await dbMod.dbDelete(STORES.TRANSACTIONS, 'tx-tf');
+    for (const id of ['w-tf1', 'w-tf2', 'w-tf3', 'w-tf-old', 'w-tf-eur']) await dbMod.dbDelete(STORES.WALLETS, id);
   }
   await setSetting('easyHome', false);
   await applyEasyHome();
