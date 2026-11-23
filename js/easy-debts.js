@@ -50,7 +50,8 @@ export async function openEasyDebts(kind) {
   const dailyWallets = allWallets.filter(isDailyWallet);
   const names = [...new Set(allDebts.slice().sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '')).map((d) => d.personName).filter(Boolean))].slice(0, 5);
 
-  const state = { step: open.length ? 'list' : 'who', mode: 'new', debt: null, owed: 0, name: '', amount: '', walletId: null, noWallet: false, due: '', date: todayISO() };
+  const state = { step: open.length ? 'list' : 'who', mode: 'new', debt: null, owed: 0, name: '', amount: '', walletId: null, noWallet: false, due: '', date: todayISO(), note: '' };
+  let noteListening = null; // dictée de la note en cours (écran « C'est bon ? »)
   /** Date locale dans `days` jours (AAAA-MM-JJ). */
   const isoInDays = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return localISODate(d); };
   const hasList = open.length > 0;
@@ -61,7 +62,7 @@ export async function openEasyDebts(kind) {
   const allowDecimal = () => !ZERO_DECIMAL_CURRENCIES.has(currency());
   const title = kind === 'owed' ? t('On me doit') : t('Je dois');
 
-  const modal = openModal('<div id="easy-step"></div>', { title, onClose: () => stopSpeaking() });
+  const modal = openModal('<div id="easy-step"></div>', { title, onClose: () => { stopSpeaking(); noteListening?.controller.stop(); } });
   modal.el.querySelector('.modal-card').classList.add('easy-modal');
   const stepEl = modal.el.querySelector('#easy-step');
 
@@ -279,6 +280,16 @@ export async function openEasyDebts(kind) {
       </div>
       ${dayChooserHtml()}
       ${repay ? '' : dueChooserHtml()}
+      <div class="easy-note">
+        <button type="button" class="btn btn-ghost easy-btn" id="easy-note-toggle" ${state.note ? 'hidden' : ''}>${icon('edit', 22)} ${escapeHtml(t('Ajouter une note'))}</button>
+        <div class="easy-note-box" id="easy-note-box" ${state.note ? '' : 'hidden'}>
+          <label class="easy-note-label" for="easy-note-input">${escapeHtml(t('Note (facultatif)'))}</label>
+          <div class="easy-note-row">
+            <input type="text" id="easy-note-input" maxlength="140" value="${escapeHtml(state.note)}" placeholder="${escapeHtml(t('Ex : pour le loyer, un cadeau…'))}" autocomplete="off">
+            ${isVoiceSupported() ? `<button type="button" class="btn btn-ghost easy-btn easy-mic" id="easy-note-mic" aria-pressed="false" aria-label="${escapeHtml(t('Dicter la note'))}">${icon('mic', 26)}</button>` : ''}
+          </div>
+        </div>
+      </div>
       <div class="easy-warning" id="easy-warning" hidden></div>
       <div class="easy-actions easy-actions-stack">
         <button type="button" class="btn easy-btn easy-save" id="easy-save">${icon('check', 28)} ${t('Oui, enregistrer')}</button>
@@ -311,8 +322,29 @@ export async function openEasyDebts(kind) {
     body.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => chooseDay(b.dataset.day)));
     body.querySelector('#easy-day-other').addEventListener('click', () => { dayInput.hidden = false; if (dayInput.showPicker) { try { dayInput.showPicker(); } catch { dayInput.focus(); } } else dayInput.focus(); });
     dayInput.addEventListener('change', () => { if (dayInput.value) chooseDay(dayInput.value); });
+    // Note facultative (au clavier ou dictée) : gardée si l'on change le jour ou l'échéance, ou si l'on corrige le montant puis revient.
+    const noteInput = body.querySelector('#easy-note-input');
+    body.querySelector('#easy-note-toggle').addEventListener('click', (e) => {
+      e.currentTarget.hidden = true;
+      body.querySelector('#easy-note-box').hidden = false;
+      noteInput.focus();
+      body.querySelector('#easy-note-box').scrollIntoView?.({ block: 'nearest' });
+    });
+    noteInput.addEventListener('input', () => { state.note = noteInput.value.slice(0, 140); });
+    const micBtn = body.querySelector('#easy-note-mic');
+    micBtn?.addEventListener('click', () => {
+      if (noteListening) { noteListening.controller.stop(); return; }
+      stopSpeaking(); // la voix de l'application ne doit pas être captée par le micro
+      const session = listenOnce({ lang: getLanguage(), onInterim: (text) => { noteInput.value = text.slice(0, 140); } });
+      noteListening = session;
+      micBtn.classList.add('is-listening');
+      micBtn.setAttribute('aria-pressed', 'true');
+      session.promise.then((text) => { state.note = text.slice(0, 140); noteInput.value = state.note; })
+        .catch((err) => showToast(err?.code === 'not-allowed' ? t("Le micro n'est pas autorisé : autorisez-le dans les réglages du navigateur.") : t("Je n'ai rien entendu. Réessayez ou écrivez la note.")))
+        .finally(() => { if (noteListening === session) noteListening = null; micBtn.classList.remove('is-listening'); micBtn.setAttribute('aria-pressed', 'false'); });
+    });
     body.querySelector('#easy-say')?.addEventListener('click', () => { primeSpeech(); speak(buildDebtSpeech(sentenceInfo({ left }))); });
-    body.querySelector('#easy-fix').addEventListener('click', () => go('amount'));
+    body.querySelector('#easy-fix').addEventListener('click', () => { noteListening?.controller.stop(); go('amount'); });
     body.querySelector('#easy-save').addEventListener('click', async (e) => {
       primeSpeech();
       const saveBtn = e.currentTarget;
@@ -321,11 +353,11 @@ export async function openEasyDebts(kind) {
       let undo;
       let balanceWalletId = state.walletId;
       if (repay) {
-        const result = await recordSimplePayment(state.debt, { amount: n, walletId: state.walletId, date });
+        const result = await recordSimplePayment(state.debt, { amount: n, walletId: state.walletId, date, note: state.note });
         if (!result) { saveBtn.disabled = false; showToast(t("Impossible d'enregistrer : vérifiez le montant et le portefeuille.")); return; }
         undo = () => undoSimplePayment(result);
       } else {
-        const result = await createSimpleDebt({ type: debtType, personName: state.name, principal: n, currency: currency(), walletId: state.walletId, date, dueDate: state.due || null });
+        const result = await createSimpleDebt({ type: debtType, personName: state.name, principal: n, currency: currency(), walletId: state.walletId, date, dueDate: state.due || null, note: state.note });
         if (!result) { saveBtn.disabled = false; showToast(t("Impossible d'enregistrer : ce portefeuille n'est plus disponible.")); return; }
         undo = () => deleteDebtCascade(result.debt.id);
       }

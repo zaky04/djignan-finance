@@ -820,6 +820,36 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     eq('prêts : le remboursement et sa transaction portent le jour choisi (hier)', [joPay?.date, joTx?.date], [isoAgo(1), isoAgo(1)]);
     await deleteDebtCascade(jo.debt.id);
     modalRoot.innerHTML = '';
+    // 4 ter. Note facultative : au clavier ou dictée, gardée entre les écrans, enregistrée sur le prêt ou sur le versement
+    await openEasyDebts('owe');
+    press('#easy-new');
+    typeName('Léa'); press('#easy-next'); press('[data-wallet=""]');
+    press('[data-key="1"]'); press('[data-key="000"]'); press('#easy-next');
+    ok('prêts : la note est cachée au départ, un bouton propose de l\'ajouter', !!modalRoot.querySelector('#easy-note-toggle') && modalRoot.querySelector('#easy-note-box').hidden);
+    press('#easy-note-toggle');
+    ok('prêts : toucher « Ajouter une note » montre le champ', !modalRoot.querySelector('#easy-note-box').hidden && modalRoot.querySelector('#easy-note-toggle').hidden);
+    const ni = modalRoot.querySelector('#easy-note-input'); ni.value = '  Pour la boutique  '; ni.dispatchEvent(new Event('input', { bubbles: true }));
+    press(`[data-day="${isoAgo(1)}"]`);
+    eq('prêts : la note écrite reste quand on change le jour', [modalRoot.querySelector('#easy-note-input').value, modalRoot.querySelector('#easy-note-box').hidden], ['  Pour la boutique  ', false]);
+    press('#easy-save'); await wait();
+    const lea = (await dbGetAll(STORES.DEBTS)).find((d) => d.personName === 'Léa');
+    eq('prêts : la note (sans espaces autour) est gardée sur la dette', lea?.note, 'Pour la boutique');
+    await deleteDebtCascade(lea.id);
+    // Remboursement avec note : portée par le versement
+    const kim = await createSimpleDebt({ type: 'receivable', personName: 'Kim', principal: 2000, currency: 'XOF' });
+    modalRoot.innerHTML = '';
+    await openEasyDebts('owed');
+    press(`[data-debt="${[...modalRoot.querySelectorAll('[data-debt]')].findIndex((b) => b.textContent.includes('Kim'))}"]`);
+    press('[data-key="1"]'); press('[data-key="000"]'); press('#easy-next');
+    if (modalRoot.querySelector('[data-wallet]')) press('[data-wallet="w-e1"]');
+    press('#easy-note-toggle');
+    const ni2 = modalRoot.querySelector('#easy-note-input'); ni2.value = 'Reçu en main propre'; ni2.dispatchEvent(new Event('input', { bubbles: true }));
+    press('#easy-save'); await wait();
+    const kimPay = (await dbGetAll(STORES.DEBT_PAYMENTS)).find((p) => p.debtId === kim.debt.id);
+    eq('prêts : la note d\'un remboursement est gardée sur le versement', kimPay?.note, 'Reçu en main propre');
+    await deleteDebtCascade(kim.debt.id);
+    eq('prêts : sans note, rien n\'est écrit (dette et versement ont une note vide)', [(await createSimpleDebt({ type: 'debt', personName: 'Nul', principal: 10, currency: 'XOF' }).then(async (r) => { const n = r.debt.note; await deleteDebtCascade(r.debt.id); return n; }))], ['']);
+    modalRoot.innerHTML = '';
     // 5. Un prêt avec intérêts ouvre la fenêtre complète
     await dbAdd(STORES.DEBTS, { id: 'd-int', type: 'receivable', personName: 'Dan', principal: 4000, currency: 'XOF', interestRate: 5, startDate: '2026-01-01', status: 'active', createdAt: '2026-01-01T00:00:00.000Z' });
     modalRoot.innerHTML = '';

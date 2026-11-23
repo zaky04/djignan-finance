@@ -200,7 +200,7 @@ export async function listOpenDebts(type) {
 /** Nouvelle dette (`type: 'debt'`, j'ai emprunté) ou créance (`'receivable'`, j'ai prêté). Avec `walletId`, l'argent entre
     dans (dette) ou sort de (créance) ce portefeuille aujourd'hui ; sans, rien ne bouge (le prêt date d'avant l'appli).
     Renvoie `{ debt, openingTx }` (ou `null` si le portefeuille ne convient pas) ; on l'annule par deleteDebtCascade(debt.id). */
-export async function createSimpleDebt({ type, personName, principal, currency, walletId = null, date = todayISO(), dueDate = null }) {
+export async function createSimpleDebt({ type, personName, principal, currency, walletId = null, date = todayISO(), dueDate = null, note = '' }) {
   const name = String(personName || '').trim().slice(0, 60);
   if (!name || !(principal > 0) || (type !== 'debt' && type !== 'receivable')) return null;
   let wallet = null;
@@ -213,7 +213,7 @@ export async function createSimpleDebt({ type, personName, principal, currency, 
     id: uuid(), type, personName: name, principal: safeNumber(principal), currency, interestRate: 0, termMonths: null,
     // Échéance facultative : un jour valide, pas avant la date du prêt (sinon la dette serait « en retard » dès sa création).
     startDate: date, dueDate: /^\d{4}-\d{2}-\d{2}$/.test(dueDate || '') && dueDate >= date ? dueDate : null,
-    status: 'active', note: '', openingTransactionId: null, createdAt: new Date().toISOString(),
+    status: 'active', note: String(note || '').trim().slice(0, 140), openingTransactionId: null, createdAt: new Date().toISOString(),
   };
   let openingTx = null;
   if (wallet) {
@@ -234,7 +234,7 @@ export async function createSimpleDebt({ type, personName, principal, currency, 
 
 /** Remboursement simple d'une dette/créance sans intérêts, passant par un portefeuille (de la devise de la dette). Refuse
     (renvoie `null`) un montant nul, supérieur au restant dû, une dette non simple, ou un portefeuille qui ne convient pas. */
-export async function recordSimplePayment(debt, { amount, walletId, date = todayISO() }) {
+export async function recordSimplePayment(debt, { amount, walletId, date = todayISO(), note = '' }) {
   if (!isSimpleDebt(debt) || !(amount > 0)) return null;
   const [wallets, allPayments] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.DEBT_PAYMENTS)]);
   const wallet = wallets.find((w) => w.id === walletId);
@@ -243,7 +243,7 @@ export async function recordSimplePayment(debt, { amount, walletId, date = today
   const owed = remaining(debt, own);
   const value = roundTo(safeNumber(amount), decimalsOf(debt.currency));
   if (!(value > 0) || value > owed + 0.005) return null;
-  const payment = { id: uuid(), debtId: debt.id, amount: value, interestPart: 0, date, note: '' };
+  const payment = { id: uuid(), debtId: debt.id, amount: value, interestPart: 0, date, note: String(note || '').trim().slice(0, 140) };
   const txType = debt.type === 'debt' ? 'expense' : 'income';
   const tx = {
     id: uuid(), type: txType, walletId: wallet.id, targetWalletId: null, categoryId: await ensureDebtCategoryId(debt.type, txType),

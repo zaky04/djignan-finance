@@ -2189,6 +2189,7 @@ const EN = {
   'Jour corrigé.': 'Day corrected.',
   "Jour corrigé depuis l'accueil facile": 'Day corrected from the easy home',
   "Le jour n'a pas pu être changé.": 'The day could not be changed.',
+  'Ex : pour le loyer, un cadeau…': 'E.g. for rent, a gift…',
   'Corriger les portefeuilles': 'Fix the wallets',
   'Portefeuilles corrigés.': 'Wallets corrected.',
   "Portefeuilles corrigés depuis l'accueil facile": 'Wallets corrected from the easy home',
