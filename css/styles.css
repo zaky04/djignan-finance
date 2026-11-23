@@ -1109,6 +1109,7 @@ body[data-easy-home="on"] #panel-recent-transactions { display: none !important;
 .easy-hint { margin: 8px 0 0; font-size: 16px; font-weight: 600; text-align: center; }
 .easy-cats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
 .easy-cat { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 104px; padding: 8px 4px; border-radius: var(--radius-lg); border: 2px solid var(--cat, var(--border)); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; text-align: center; }
+.easy-cat.is-current { background: var(--accent-soft); box-shadow: 0 0 0 2px var(--cat, var(--accent)) inset; }
 .easy-cat-icon { color: var(--cat, var(--accent)); display: flex; }
 .easy-cat-name { font-size: 15px; font-weight: 700; line-height: 1.15; overflow-wrap: anywhere; }
 .easy-summary { border: 2px solid var(--border); border-radius: var(--radius-lg); padding: 16px; text-align: center; background: var(--surface-alt); margin-bottom: 12px; }

@@ -171,6 +171,7 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
     ${linked ? `<p class="easy-hint">${escapeHtml(t("Cette opération est liée à un prêt, un investissement, une tontine ou une dépense partagée : pour la supprimer, supprimez l'élément d'origine."))}</p>` : ''}
     <div class="easy-actions easy-actions-stack">
       ${linked ? '' : `<button type="button" class="btn btn-primary easy-btn" id="easy-tx-fix">${icon('edit', 24)} ${escapeHtml(t('Corriger le montant'))}</button>`}
+      ${linked || isTransfer ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-cat">${icon('tag', 24)} ${escapeHtml(t('Corriger la catégorie'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-day">${icon('history', 24)} ${escapeHtml(t('Corriger le jour'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-danger easy-btn" id="easy-tx-delete">${icon('trash', 24)} ${escapeHtml(t('Supprimer cette opération'))}</button>`}
       <button type="button" class="btn btn-ghost easy-btn" id="easy-tx-close">${escapeHtml(t('Fermer'))}</button>
@@ -178,6 +179,7 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
   modal.el.querySelector('.modal-card').classList.add('easy-modal');
   modal.el.querySelector('#easy-tx-close').addEventListener('click', () => modal.close());
   modal.el.querySelector('#easy-tx-fix')?.addEventListener('click', () => { modal.close(); openEasyAmountFix(tx, cur, { onChange }); });
+  modal.el.querySelector('#easy-tx-cat')?.addEventListener('click', () => { modal.close(); openEasyCategoryFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-day')?.addEventListener('click', () => { modal.close(); openEasyDayFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-delete')?.addEventListener('click', async () => {
     const ok = await confirmDialog(t('Supprimer cette opération ? ({amount})', { amount: formatCurrency(tx.amount, cur) }), { danger: true, requirePin: true, confirmText: t('Supprimer') });
@@ -270,6 +272,42 @@ async function saveTxCorrection(tx, patch, { auditNote, doneMsg, failMsg, onChan
     },
   });
   return true;
+}
+
+/** Une grosse tuile de catégorie (icône + nom), commune à la saisie guidée et à « Corriger la catégorie ». `current` la marque comme choix actuel. */
+function categoryTileHtml(id, label, look, current = false) {
+  return `
+      <button type="button" class="easy-cat ${current ? 'is-current' : ''}" data-cat="${escapeHtml(id)}" style="--cat:${look.color};" ${current ? 'aria-pressed="true"' : ''}>
+        <span class="easy-cat-icon">${icon(look.icon, 34)}</span><span class="easy-cat-name">${escapeHtml(label)}</span>
+      </button>`;
+}
+
+/** « Corriger la catégorie » (dépense ou recette, pas un déplacement) : les mêmes grosses tuiles que la saisie guidée, la plus utilisée en premier,
+    la catégorie actuelle marquée. Toucher une autre tuile change la catégorie tout de suite (annulable d'un toucher) ; toucher l'actuelle ferme. */
+export async function openEasyCategoryFix(tx, { onChange = null } = {}) {
+  const [allCategories, allTx] = await Promise.all([dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.TRANSACTIONS)]);
+  const usage = new Map();
+  for (const x of allTx) if (x.type === tx.type && x.categoryId) usage.set(x.categoryId, (usage.get(x.categoryId) || 0) + 1);
+  const categories = allCategories.filter((c) => c.type === tx.type && (!c.parentId || c.id === tx.categoryId))
+    .sort((a, b) => (usage.get(b.id) || 0) - (usage.get(a.id) || 0) || a.name.localeCompare(b.name));
+  const modal = openModal(`
+    <p class="easy-question">${escapeHtml(tx.type === 'income' ? t("D'où vient cet argent ?") : t('Pour quoi ?'))}</p>
+    <div class="easy-cats">
+      ${categories.map((c) => categoryTileHtml(c.id, c.name, categoryLook(c), c.id === tx.categoryId)).join('')}
+      ${categoryTileHtml('', t('Autre chose'), { icon: 'more', color: 'var(--text-muted)' }, !tx.categoryId)}
+    </div>
+    <div class="easy-actions"><button type="button" class="btn btn-ghost easy-btn" id="easy-catfix-cancel">${escapeHtml(t('Fermer'))}</button></div>`, { title: t('Corriger la catégorie') });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  modal.el.querySelector('#easy-catfix-cancel').addEventListener('click', () => modal.close());
+  modal.el.querySelectorAll('[data-cat]').forEach((btn) => btn.addEventListener('click', async () => {
+    const categoryId = btn.dataset.cat || null;
+    modal.close();
+    if (categoryId === (tx.categoryId || null)) return;
+    await saveTxCorrection(tx, { categoryId }, {
+      auditNote: t("Catégorie corrigée depuis l'accueil facile"), doneMsg: t('Catégorie corrigée.'), failMsg: t("La catégorie n'a pas pu être changée."), onChange,
+    });
+  }));
+  return modal;
 }
 
 /** « Corriger le jour » : les mêmes gros boutons que la saisie guidée (Aujourd'hui, Hier, Avant-hier, Autre jour — jamais dans le futur).
@@ -531,10 +569,7 @@ export async function openEasyEntry(type) {
   }
 
   function renderCategoryStep(body) {
-    const tile = (id, label, look) => `
-      <button type="button" class="easy-cat" data-cat="${escapeHtml(id)}" style="--cat:${look.color};">
-        <span class="easy-cat-icon">${icon(look.icon, 34)}</span><span class="easy-cat-name">${escapeHtml(label)}</span>
-      </button>`;
+    const tile = categoryTileHtml;
     body.innerHTML = `
       <p class="easy-question">${type === 'income' ? t("D'où vient cet argent ?") : t('Pour quoi ?')}</p>
       <div class="easy-cats">

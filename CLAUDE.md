@@ -4222,7 +4222,12 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
-### 23 novembre 2026 (suite 12) — « Corriger le jour » depuis le détail d'une opération (`CACHE_VERSION` `v199`, non commité au moment d'écrire)
+### 23 novembre 2026 (suite 13) — « Corriger la catégorie » depuis le détail d'une opération (`CACHE_VERSION` `v200`, non commité au moment d'écrire)
+
+Troisième bouton de correction, **« Corriger la catégorie »** (`openEasyCategoryFix`, `easy-home.js`), pour une dépense ou une recette (absent pour un déplacement et pour une opération liée) : les mêmes grosses tuiles que « Pour quoi ? » / « D'où vient cet argent ? » de la saisie guidée (factorisées en `categoryTileHtml`, partagée), la plus utilisée en premier, **la catégorie actuelle marquée** (`.easy-cat.is-current`, `aria-pressed`), « Autre chose » = sans catégorie. **Toucher une autre tuile change tout de suite** (pas de bouton « Enregistrer » : un seul toucher, annulable par le toast) ; toucher la tuile actuelle ou « Fermer » ne change et n'écrit rien. Passe par `saveTxCorrection` (trace `update` avant/après, aidant limité à ses opérations).
+Une sous-catégorie déjà posée sur l'opération reste proposée (sinon elle disparaîtrait de la liste). Tests : 6 nouveaux (544). Vérifié sur 375 px. Reste à corriger autrement : portefeuille, note.
+
+### 23 novembre 2026 (suite 12) — « Corriger le jour » depuis le détail d'une opération (`CACHE_VERSION` `v199`, poussé en `47a4af7`)
 
 Second bouton de correction, **« Corriger le jour »** (`openEasyDayFix`, `easy-home.js`) : les mêmes gros boutons que l'écran « Quel jour ? » de la saisie guidée (Aujourd'hui, Hier, Avant-hier, Autre jour → calendrier plafonné à aujourd'hui, `pastOrTodayISO`), « Enregistrer » grisé tant que le jour est inchangé. Seul `date` change ; trace `update` au journal d'audit, toast annulable, aidant limité à ses propres opérations.
 Refactor au passage : la sauvegarde annulable d'une correction est maintenant **`saveTxCorrection(tx, patch, {...})`**, partagée avec « Corriger le montant » (un futur « Corriger la catégorie / le portefeuille » n'aura qu'à l'appeler). La fenêtre se ferme AVANT l'appel (comme avant). Tests : 6 nouveaux (538). Vérifié sur 375 px (aucun défilement horizontal). Reste à corriger autrement : catégorie, portefeuille, note.

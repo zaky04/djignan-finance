@@ -925,6 +925,28 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
     eq('jour : « Annuler » remet l\'ancien jour', (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId).date, dayBefore.date);
     modalRoot.innerHTML = '';
+    // « Corriger la catégorie » : tuiles comme la saisie guidée, l'actuelle marquée, un toucher change, annulable
+    const catBefore = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    await openEasyTxDetail(fixId); await wait(200);
+    ok('catégorie : le détail propose « Corriger la catégorie »', !!modalRoot.querySelector('#easy-tx-cat'));
+    modalRoot.querySelector('#easy-tx-cat').click(); await wait(400);
+    const catTiles = [...modalRoot.querySelectorAll('.easy-cats [data-cat]')];
+    eq('catégorie : la catégorie actuelle est la seule marquée, « Autre chose » est proposé', [catTiles.filter((b) => b.classList.contains('is-current')).map((b) => b.dataset.cat), catTiles.some((b) => b.dataset.cat === '')], [[catBefore.categoryId], true]);
+    const newCat = catTiles.find((b) => b.dataset.cat && b.dataset.cat !== catBefore.categoryId).dataset.cat;
+    toastBox.textContent = '';
+    modalRoot.querySelector(`.easy-cats [data-cat="${newCat}"]`).click(); await wait(600);
+    const catAfter = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    eq('catégorie : seule la catégorie change (montant, portefeuille, jour, note intacts)', [catAfter.categoryId, { ...catAfter, categoryId: '' }], [newCat, { ...catBefore, categoryId: '' }]);
+    ok('catégorie : message affiché et trace « update » au journal d\'audit', toastBox.textContent.includes('Catégorie corrigée') && (await dbGetAll(STORES.AUDIT_LOG)).some((a) => a.action === 'update' && a.entityId === fixId && a.before?.categoryId === catBefore.categoryId && a.after?.categoryId === newCat));
+    [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
+    eq('catégorie : « Annuler » remet l\'ancienne catégorie', (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId).categoryId, catBefore.categoryId);
+    modalRoot.innerHTML = '';
+    await openEasyTxDetail(fixId); await wait(200);
+    modalRoot.querySelector('#easy-tx-cat').click(); await wait(400);
+    const auditCount = (await dbGetAll(STORES.AUDIT_LOG)).length;
+    modalRoot.querySelector('.easy-cats .is-current').click(); await wait(400);
+    eq('catégorie : toucher la catégorie actuelle ferme sans rien changer ni écrire au journal', [!!modalRoot.querySelector('.easy-cats'), (await dbGetAll(STORES.AUDIT_LOG)).length], [false, auditCount]);
+    modalRoot.innerHTML = '';
   }
   await setSetting('easyHome', false);
   await applyEasyHome();
