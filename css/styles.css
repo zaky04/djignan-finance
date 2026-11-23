@@ -1084,6 +1084,11 @@ body[data-easy-home="on"] #panel-recent-transactions { display: none !important;
 .easy-summary-kind.neg { color: var(--neg); }
 .easy-summary-amount { font-size: 38px; font-weight: 700; margin: 6px 0 2px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .easy-summary-words { font-size: 14px; color: var(--text-muted); margin-bottom: 10px; }
+.easy-date { margin-top: 12px; }
+.easy-date-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.easy-day { min-height: 52px; padding: 6px 4px; font-size: 15px; font-weight: 700; justify-content: center; text-align: center; line-height: 1.15; white-space: normal; }
+.easy-day.is-on { background: var(--accent, #1f3a8a); color: #fff; border-color: var(--accent, #1f3a8a); }
+.easy-day-input { width: 100%; margin-top: 8px; font-size: 18px; padding: 12px 14px; }
 .easy-note { margin-top: 12px; }
 .easy-note > .btn { width: 100%; justify-content: center; }
 .easy-note-label { display: block; font-size: 15px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }

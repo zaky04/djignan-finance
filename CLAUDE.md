@@ -4207,6 +4207,14 @@ est coupée avant l'écoute ; refus du micro ou silence → message clair). La n
 la zone reste cachée tant qu'on ne touche pas « Ajouter une note ». Tests : 6 nouveaux (436) ; vérifié en réel (tablette 768 px, note enregistrée et visible dans Transactions). **La dictée réelle n'a pas été essayée** (pas de micro dans
 l'environnement de test).
 
+### 23 novembre 2026 (suite) — Choix du jour dans la saisie guidée (`CACHE_VERSION` `v188`, non commité au moment d'écrire)
+
+Autre manque de la saisie guidée par rapport au formulaire classique, trouvé en cherchant ce qui manquait après la note : **elle enregistrait toujours à la date du jour** — la dépense d'hier, notée le lendemain, était mal datée.
+À l'étape « C'est bon ? » (`easy-home.js`) : rangée « Quel jour ? » de quatre gros boutons **Aujourd'hui / Hier / Avant-hier / Autre jour** (calendrier natif limité à aujourd'hui, le bouton affiche alors la date choisie).
+`recordTemplateNow` (`quick-templates.js`) accepte `date`, validée par `pastOrTodayISO` : jamais dans le futur, jamais une date absurde (retombe sur aujourd'hui). Tests : 8 nouveaux (444) ; vu en réel sur 375 px.
+Piège rencontré : une regex écrite par `node -` dans un script s'est retrouvée sans ses antislashs (`/^d{4}…/`) et rejetait toute date — repéré par les tests ; **toujours écrire une regex avec l'outil Edit** (voir la mémoire du projet).
+**Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », justificatif photo, division en plusieurs catégories — non demandés, laissés au formulaire classique.
+
 **Vérifié sans rien à corriger** : intervalles et écouteurs globaux enregistrés une seule fois, aucun `eval`/`document.write`, précache complet, pas de rendu de liste non borné (Transactions filtre par mois).
 **Reste à surveiller à long terme** : la base grossit surtout avec les photos (~150-400 Ko chacune, l'estimation est dans Paramètres) ; la sauvegarde cloud chiffrée d'un très gros historique avec photos
 reste lourde (découpée en morceaux, voir §6 du 18 octobre) ; sur un téléphone d'entrée de gamme les temps mesurés ici sont à multiplier (non mesuré).

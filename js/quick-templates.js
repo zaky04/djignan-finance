@@ -96,13 +96,19 @@ export async function computeFrequentSuggestions({ limit = 4, today = new Date()
 
 /** Enregistre un favori comme transaction d'aujourd'hui, en un geste. Renvoie l'enregistrement créé,
     ou `null` si le favori n'a pas de montant ou si son portefeuille n'existe plus / n'est plus courant. */
+/** Date d'une saisie rapide : celle demandée si c'est un jour valide qui n'est pas dans le futur, sinon aujourd'hui. */
+export function pastOrTodayISO(date) {
+  const today = todayISO();
+  return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(new Date(date + 'T00:00:00').getTime()) && date <= today ? date : today;
+}
+
 export async function recordTemplateNow(template) {
   if (!(template.amount > 0)) return null;
   const wallet = (await dbGetAll(STORES.WALLETS)).find((w) => w.id === template.walletId);
   if (!wallet || !isDailyWallet(wallet)) return null;
   const record = {
     id: uuid(), type: template.type, walletId: template.walletId, targetWalletId: null,
-    categoryId: template.categoryId || null, amount: template.amount, date: todayISO(),
+    categoryId: template.categoryId || null, amount: template.amount, date: pastOrTodayISO(template.date),
     note: template.note || '', tags: [], reconciled: false, createdAt: new Date().toISOString(),
   };
   await dbAdd(STORES.TRANSACTIONS, record);

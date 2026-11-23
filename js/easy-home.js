@@ -21,12 +21,12 @@ import {
   computeNetWorthComposition, computeEndOfMonthForecast, computeBudgetVsActual, computeSafeToSpend,
   getWalletBalance, checkUnusualExpense, isDailyWallet, getEnrichedTransactions,
 } from './ledger.js';
-import { recordTemplateNow, undoRecordedTemplate } from './quick-templates.js';
+import { recordTemplateNow, undoRecordedTemplate, pastOrTodayISO } from './quick-templates.js';
 import {
   isSpeechSupported, speak, stopSpeaking, primeSpeech, spokenAmount,
   buildBalanceSpeech, buildSavedSpeech, buildConfirmSpeech, isSpeakConfirmationsEnabled,
 } from './speech-out.js';
-import { formatCurrency, escapeHtml, openModal, showToast, intlLocale, ZERO_DECIMAL_CURRENCIES } from './utils.js';
+import { formatCurrency, formatDate, escapeHtml, openModal, showToast, intlLocale, todayISO, localISODate, ZERO_DECIMAL_CURRENCIES } from './utils.js';
 import { notifyDataChanged } from './state.js';
 import { t, getLanguage } from './i18n.js';
 import { isVoiceSupported, listenOnce } from './voice-input.js';
@@ -155,6 +155,15 @@ export async function renderEasyHome() {
 
 /* ---------- Saisie guidée ---------- */
 
+/** Date locale d'il y a `back` jours (AAAA-MM-JJ). */
+function isoDaysAgo(back) {
+  const d = new Date();
+  d.setDate(d.getDate() - back);
+  return localISODate(d);
+}
+/** « Aujourd'hui », « Hier », « Avant-hier » (écrits en toutes lettres). */
+function dayLabel(back) { return back === 0 ? t("Aujourd'hui") : back === 1 ? t('Hier') : t('Avant-hier'); }
+
 const KEYPAD_ROWS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 
 /** Ouvre la saisie guidée pour une dépense ou une recette. */
@@ -175,7 +184,7 @@ export async function openEasyEntry(type) {
   const categories = allCategories.filter((c) => c.type === type && !c.parentId)
     .sort((a, b) => (usage.get(b.id) || 0) - (usage.get(a.id) || 0) || a.name.localeCompare(b.name));
 
-  const state = { step: wallets.length > 1 ? 'wallet' : 'amount', walletId: wallets[0].id, amount: '', categoryId: null, note: '' };
+  const state = { step: wallets.length > 1 ? 'wallet' : 'amount', walletId: wallets[0].id, amount: '', categoryId: null, note: '', date: todayISO() };
   const wallet = () => wallets.find((w) => w.id === state.walletId);
   const currency = () => wallet().currency;
   const allowDecimal = () => !ZERO_DECIMAL_CURRENCIES.has(currency());
@@ -288,6 +297,14 @@ export async function openEasyEntry(type) {
         <div class="easy-summary-line"><span style="color:${look.color};">${icon(look.icon, 22)}</span> ${escapeHtml(catName)}</div>
         <div class="easy-summary-line">${icon('wallet', 22)} ${escapeHtml(wallet().name)}</div>
       </div>
+      <div class="easy-date" role="group" aria-label="${escapeHtml(t('Quel jour ?'))}">
+        <span class="easy-note-label">${t('Quel jour ?')}</span>
+        <div class="easy-date-row">
+          ${[0, 1, 2].map((back) => { const iso = isoDaysAgo(back); return `<button type="button" class="btn easy-day ${state.date === iso ? 'is-on' : 'btn-ghost'}" data-day="${iso}" aria-pressed="${state.date === iso}">${escapeHtml(dayLabel(back))}</button>`; }).join('')}
+          <button type="button" class="btn easy-day ${[0, 1, 2].some((b) => isoDaysAgo(b) === state.date) ? 'btn-ghost' : 'is-on'}" id="easy-day-other" aria-pressed="${![0, 1, 2].some((b) => isoDaysAgo(b) === state.date)}">${escapeHtml(![0, 1, 2].some((b) => isoDaysAgo(b) === state.date) ? formatDate(state.date) : t('Autre jour'))}</button>
+        </div>
+        <input type="date" id="easy-day-input" class="easy-day-input" max="${todayISO()}" value="${state.date}" hidden aria-label="${escapeHtml(t('Choisir le jour'))}">
+      </div>
       <div class="easy-note">
         <button type="button" class="btn btn-ghost easy-btn" id="easy-note-toggle" ${state.note ? 'hidden' : ''}>${icon('edit', 22)} ${t('Ajouter une note')}</button>
         <div class="easy-note-box" id="easy-note-box" ${state.note ? '' : 'hidden'}>
@@ -338,6 +355,13 @@ export async function openEasyEntry(type) {
       primeSpeech();
       speak(buildConfirmSpeech({ type, amount: n, currency: currency(), categoryName: cat ? cat.name : '', walletName: wallet().name }));
     });
+    // Jour de l'opération : aujourd'hui par défaut ; hier, avant-hier, ou un autre jour (jamais dans le futur). On note souvent en fin de journée,
+    // ou le lendemain : sans ça, la dépense d'hier était enregistrée à la date d'aujourd'hui.
+    const dayInput = body.querySelector('#easy-day-input');
+    const chooseDay = (iso) => { state.date = pastOrTodayISO(iso); renderConfirmStep(body); };
+    body.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => chooseDay(b.dataset.day)));
+    body.querySelector('#easy-day-other').addEventListener('click', () => { dayInput.hidden = false; if (dayInput.showPicker) { try { dayInput.showPicker(); } catch { dayInput.focus(); } } else dayInput.focus(); });
+    dayInput.addEventListener('change', () => { if (dayInput.value) chooseDay(dayInput.value); });
     // Note facultative : au clavier, ou dictée (micro) pour qui n'écrit pas facilement. Gardée si l'on corrige le montant puis revient ici.
     const noteInput = body.querySelector('#easy-note-input');
     body.querySelector('#easy-note-toggle').addEventListener('click', (e) => {
@@ -363,7 +387,7 @@ export async function openEasyEntry(type) {
       primeSpeech(); // avant tout await : la lecture de confirmation suit l'enregistrement
       const saveBtn = e.currentTarget; // e.currentTarget vaut null après un await : on le garde avant
       saveBtn.disabled = true; // un seul enregistrement, même en cas de double toucher
-      const record = await recordTemplateNow({ type, walletId: state.walletId, categoryId: state.categoryId, amount: n, note: state.note.trim() });
+      const record = await recordTemplateNow({ type, walletId: state.walletId, categoryId: state.categoryId, amount: n, note: state.note.trim(), date: state.date });
       if (!record) {
         saveBtn.disabled = false;
         showToast(t("Impossible d'enregistrer : ce portefeuille n'est plus disponible."));
