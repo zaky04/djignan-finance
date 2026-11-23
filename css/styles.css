@@ -1094,6 +1094,7 @@ body[data-easy-home="on"] #panel-recent-transactions { display: none !important;
 .easy-save { background: var(--pos); color: #fff; min-height: 72px; font-size: 22px; font-weight: 700; width: 100%; flex: none; }
 .easy-wallets { display: grid; gap: 10px; }
 .easy-wallet { display: flex; align-items: center; gap: 14px; min-height: 72px; padding: 0 16px; border-radius: var(--radius-lg); border: 2px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 20px; font-weight: 700; cursor: pointer; text-align: left; }
+.easy-wallet.is-current { background: var(--accent-soft); border-color: var(--accent); }
 .easy-wallet-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .easy-wallet-cur { font-size: 14px; color: var(--text-muted); font-weight: 600; }
 /* Saisie guidée des prêts : noms déjà utilisés (un toucher pour les reprendre) et message « trop » sous le pavé. */

@@ -172,6 +172,7 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
     <div class="easy-actions easy-actions-stack">
       ${linked ? '' : `<button type="button" class="btn btn-primary easy-btn" id="easy-tx-fix">${icon('edit', 24)} ${escapeHtml(t('Corriger le montant'))}</button>`}
       ${linked || isTransfer ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-cat">${icon('tag', 24)} ${escapeHtml(t('Corriger la catégorie'))}</button>`}
+      ${linked || isTransfer || walletFixChoices(tx, wallets).length < 2 ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-wallet">${icon('wallet', 24)} ${escapeHtml(t('Corriger le portefeuille'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-day">${icon('history', 24)} ${escapeHtml(t('Corriger le jour'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-danger easy-btn" id="easy-tx-delete">${icon('trash', 24)} ${escapeHtml(t('Supprimer cette opération'))}</button>`}
       <button type="button" class="btn btn-ghost easy-btn" id="easy-tx-close">${escapeHtml(t('Fermer'))}</button>
@@ -180,6 +181,7 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
   modal.el.querySelector('#easy-tx-close').addEventListener('click', () => modal.close());
   modal.el.querySelector('#easy-tx-fix')?.addEventListener('click', () => { modal.close(); openEasyAmountFix(tx, cur, { onChange }); });
   modal.el.querySelector('#easy-tx-cat')?.addEventListener('click', () => { modal.close(); openEasyCategoryFix(tx, { onChange }); });
+  modal.el.querySelector('#easy-tx-wallet')?.addEventListener('click', () => { modal.close(); openEasyWalletFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-day')?.addEventListener('click', () => { modal.close(); openEasyDayFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-delete')?.addEventListener('click', async () => {
     const ok = await confirmDialog(t('Supprimer cette opération ? ({amount})', { amount: formatCurrency(tx.amount, cur) }), { danger: true, requirePin: true, confirmText: t('Supprimer') });
@@ -305,6 +307,40 @@ export async function openEasyCategoryFix(tx, { onChange = null } = {}) {
     if (categoryId === (tx.categoryId || null)) return;
     await saveTxCorrection(tx, { categoryId }, {
       auditNote: t("Catégorie corrigée depuis l'accueil facile"), doneMsg: t('Catégorie corrigée.'), failMsg: t("La catégorie n'a pas pu être changée."), onChange,
+    });
+  }));
+  return modal;
+}
+
+/** Un gros bouton de portefeuille (icône, nom, devise), commun à la saisie guidée et à « Corriger le portefeuille ». `attr` : l'attribut data-* qui porte l'identifiant. */
+function walletTileHtml(w, attr, current = false) {
+  const ico = w.type === 'mobile_money' ? 'phone' : w.type === 'cash' ? 'banknote' : w.type === 'bank' ? 'bank' : 'wallet';
+  return `<button type="button" class="easy-wallet ${current ? 'is-current' : ''}" ${attr}="${escapeHtml(w.id)}" ${current ? 'aria-pressed="true"' : ''}>${icon(ico, 30)}<span class="easy-wallet-name">${escapeHtml(w.name)}</span><span class="easy-wallet-cur">${escapeHtml(w.currency)}</span></button>`;
+}
+
+/** Portefeuilles vers lesquels on peut ramener une opération : de tous les jours, non archivés, dans la MÊME devise (le montant reste juste). */
+function walletFixChoices(tx, wallets) {
+  const current = wallets.find((w) => w.id === tx.walletId);
+  if (!current) return [];
+  return wallets.filter((w) => w.id === tx.walletId || (isDailyWallet(w) && w.currency === current.currency));
+}
+
+/** « Corriger le portefeuille » (dépense ou recette) : « Sur quel portefeuille ? » avec les mêmes gros boutons que la saisie guidée, l'actuel marqué.
+    Toucher un autre portefeuille déplace l'opération (son solde et celui de l'autre changent, la devise reste la même) ; annulable d'un toucher. */
+export async function openEasyWalletFix(tx, { onChange = null } = {}) {
+  const wallets = walletFixChoices(tx, await dbGetAll(STORES.WALLETS));
+  const modal = openModal(`
+    <p class="easy-question">${escapeHtml(t('Sur quel portefeuille ?'))}</p>
+    <div class="easy-wallets">${wallets.map((w) => walletTileHtml(w, 'data-wallet', w.id === tx.walletId)).join('')}</div>
+    <div class="easy-actions"><button type="button" class="btn btn-ghost easy-btn" id="easy-walletfix-cancel">${escapeHtml(t('Fermer'))}</button></div>`, { title: t('Corriger le portefeuille') });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  modal.el.querySelector('#easy-walletfix-cancel').addEventListener('click', () => modal.close());
+  modal.el.querySelectorAll('[data-wallet]').forEach((btn) => btn.addEventListener('click', async () => {
+    const walletId = btn.dataset.wallet;
+    modal.close();
+    if (walletId === tx.walletId) return;
+    await saveTxCorrection(tx, { walletId }, {
+      auditNote: t("Portefeuille corrigé depuis l'accueil facile"), doneMsg: t('Portefeuille corrigé.'), failMsg: t("Le portefeuille n'a pas pu être changé."), onChange,
     });
   }));
   return modal;
@@ -499,7 +535,7 @@ export async function openEasyEntry(type) {
     body.innerHTML = `
       <p class="easy-question">${isTransfer ? t("D'où part l'argent ?") : t('Sur quel portefeuille ?')}</p>
       <div class="easy-wallets">
-        ${wallets.map((w) => `<button type="button" class="easy-wallet" data-wallet="${escapeHtml(w.id)}">${icon(w.type === 'mobile_money' ? 'phone' : w.type === 'cash' ? 'banknote' : w.type === 'bank' ? 'bank' : 'wallet', 30)}<span class="easy-wallet-name">${escapeHtml(w.name)}</span><span class="easy-wallet-cur">${escapeHtml(w.currency)}</span></button>`).join('')}
+        ${wallets.map((w) => walletTileHtml(w, 'data-wallet')).join('')}
       </div>`;
     body.querySelectorAll('[data-wallet]').forEach((btn) => btn.addEventListener('click', () => {
       if (state.walletId !== btn.dataset.wallet) state.amount = ''; // la devise peut changer : on repart d'un montant vide
@@ -519,7 +555,7 @@ export async function openEasyEntry(type) {
     body.innerHTML = `
       <p class="easy-question">${t("Où va l'argent ?")}</p>
       <div class="easy-wallets">
-        ${peers.map((w) => `<button type="button" class="easy-wallet" data-target="${escapeHtml(w.id)}">${icon(w.type === 'mobile_money' ? 'phone' : w.type === 'cash' ? 'banknote' : w.type === 'bank' ? 'bank' : 'wallet', 30)}<span class="easy-wallet-name">${escapeHtml(w.name)}</span><span class="easy-wallet-cur">${escapeHtml(w.currency)}</span></button>`).join('')}
+        ${peers.map((w) => walletTileHtml(w, 'data-target')).join('')}
       </div>
       <div class="easy-actions"><button type="button" class="btn btn-ghost easy-btn" id="easy-back">${t('Retour')}</button></div>`;
     body.querySelectorAll('[data-target]').forEach((btn) => btn.addEventListener('click', () => { state.targetId = btn.dataset.target; go('amount'); }));

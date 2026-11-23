@@ -947,6 +947,35 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     modalRoot.querySelector('.easy-cats .is-current').click(); await wait(400);
     eq('catégorie : toucher la catégorie actuelle ferme sans rien changer ni écrire au journal', [!!modalRoot.querySelector('.easy-cats'), (await dbGetAll(STORES.AUDIT_LOG)).length], [false, auditCount]);
     modalRoot.innerHTML = '';
+    // « Corriger le portefeuille » : seulement les portefeuilles de tous les jours de la MÊME devise, l'actuel marqué, un toucher déplace, annulable
+    await dbAdd(STORES.WALLETS, { id: 'w-fix2', name: 'Portefeuille bis', type: 'cash', currency: 'XOF', initialBalance: 0, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+    await dbAdd(STORES.WALLETS, { id: 'w-fix-old', name: 'Ancien portefeuille', type: 'cash', currency: 'XOF', initialBalance: 0, archived: true, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+    const walBefore = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    await openEasyTxDetail(fixId); await wait(200);
+    ok('portefeuille : le détail propose « Corriger le portefeuille »', !!modalRoot.querySelector('#easy-tx-wallet'));
+    modalRoot.querySelector('#easy-tx-wallet').click(); await wait(400);
+    const walTiles = [...modalRoot.querySelectorAll('.easy-wallets [data-wallet]')];
+    const allW = await dbGetAll(STORES.WALLETS);
+    const walCur = allW.find((w) => w.id === walBefore.walletId).currency;
+    eq('portefeuille : même devise seulement, ni archivé ni autre devise, l\'actuel est le seul marqué', [walTiles.every((b) => allW.find((w) => w.id === b.dataset.wallet).currency === walCur && !allW.find((w) => w.id === b.dataset.wallet).archived), walTiles.some((b) => b.dataset.wallet === 'w-fix2'), walTiles.some((b) => b.dataset.wallet === 'w-fix-old'), walTiles.filter((b) => b.classList.contains('is-current')).map((b) => b.dataset.wallet)], [true, true, false, [walBefore.walletId]]);
+    toastBox.textContent = '';
+    modalRoot.querySelector('.easy-wallets [data-wallet="w-fix2"]').click(); await wait(600);
+    const walAfter = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    eq('portefeuille : seul le portefeuille change (montant, catégorie, jour, note intacts)', [walAfter.walletId, { ...walAfter, walletId: '' }], ['w-fix2', { ...walBefore, walletId: '' }]);
+    ok('portefeuille : message affiché et trace « update » au journal d\'audit', toastBox.textContent.includes('Portefeuille corrigé') && (await dbGetAll(STORES.AUDIT_LOG)).some((a) => a.action === 'update' && a.entityId === fixId && a.before?.walletId === walBefore.walletId && a.after?.walletId === 'w-fix2'));
+    [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
+    eq('portefeuille : « Annuler » remet l\'ancien portefeuille', (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId).walletId, walBefore.walletId);
+    modalRoot.innerHTML = '';
+    // Plus aucun autre portefeuille de la même devise : le bouton disparaît (rien à choisir)
+    const dbMod = await import('../js/db.js');
+    const others = (await dbGetAll(STORES.WALLETS)).filter((w) => w.id !== walBefore.walletId && w.currency === walCur && !w.archived);
+    for (const w of others) await dbMod.dbPut(STORES.WALLETS, { ...w, archived: true }); // archivés le temps du test, puis remis comme avant
+    await openEasyTxDetail(fixId); await wait(200);
+    ok('portefeuille : pas de bouton quand il n\'existe aucun autre portefeuille possible', !modalRoot.querySelector('#easy-tx-wallet'));
+    modalRoot.innerHTML = '';
+    for (const w of others) await dbMod.dbPut(STORES.WALLETS, w);
+    await dbMod.dbDelete(STORES.WALLETS, 'w-fix-old');
+    await dbMod.dbDelete(STORES.WALLETS, 'w-fix2');
   }
   await setSetting('easyHome', false);
   await applyEasyHome();
