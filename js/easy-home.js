@@ -171,12 +171,14 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
     ${linked ? `<p class="easy-hint">${escapeHtml(t("Cette opération est liée à un prêt, un investissement, une tontine ou une dépense partagée : pour la supprimer, supprimez l'élément d'origine."))}</p>` : ''}
     <div class="easy-actions easy-actions-stack">
       ${linked ? '' : `<button type="button" class="btn btn-primary easy-btn" id="easy-tx-fix">${icon('edit', 24)} ${escapeHtml(t('Corriger le montant'))}</button>`}
+      ${linked ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-day">${icon('history', 24)} ${escapeHtml(t('Corriger le jour'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-danger easy-btn" id="easy-tx-delete">${icon('trash', 24)} ${escapeHtml(t('Supprimer cette opération'))}</button>`}
       <button type="button" class="btn btn-ghost easy-btn" id="easy-tx-close">${escapeHtml(t('Fermer'))}</button>
     </div>`, { title: t('Cette opération') });
   modal.el.querySelector('.modal-card').classList.add('easy-modal');
   modal.el.querySelector('#easy-tx-close').addEventListener('click', () => modal.close());
   modal.el.querySelector('#easy-tx-fix')?.addEventListener('click', () => { modal.close(); openEasyAmountFix(tx, cur, { onChange }); });
+  modal.el.querySelector('#easy-tx-day')?.addEventListener('click', () => { modal.close(); openEasyDayFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-delete')?.addEventListener('click', async () => {
     const ok = await confirmDialog(t('Supprimer cette opération ? ({amount})', { amount: formatCurrency(tx.amount, cur) }), { danger: true, requirePin: true, confirmText: t('Supprimer') });
     if (!ok) return;
@@ -234,31 +236,79 @@ export function openEasyAmountFix(tx, cur, { onChange = null } = {}) {
   saveBtn.addEventListener('click', async () => {
     const n = Number(amount) || 0;
     if (!(n > 0) || n === Number(tx.amount)) return;
-    const before = { ...tx };
-    const after = { ...tx, amount: n };
-    try {
-      await dbPut(STORES.TRANSACTIONS, after);
-    } catch (err) {
-      modal.close();
-      showToast(err?.name === 'HelperRestrictedError' ? t('Action réservée au propriétaire.') : t("Le montant n'a pas pu être changé."));
-      return;
-    }
     modal.close();
-    await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'update', before, after, note: t("Montant corrigé depuis l'accueil facile") });
-    notifyDataChanged('transactions');
-    onChange?.();
-    showToast(t('Montant corrigé.'), {
-      actionLabel: t('Annuler'),
-      onAction: async () => {
-        await dbPut(STORES.TRANSACTIONS, before);
-        await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'update', before: after, after: before, note: t('Restaurée (annulation)') });
-        notifyDataChanged('transactions');
-        onChange?.();
-        showToast(t('Annulé.'));
-      },
+    await saveTxCorrection(tx, { amount: n }, {
+      auditNote: t("Montant corrigé depuis l'accueil facile"), doneMsg: t('Montant corrigé.'), failMsg: t("Le montant n'a pas pu être changé."), onChange,
     });
   });
   refresh();
+  return modal;
+}
+
+/** Enregistre une correction d'une opération (quelques champs seulement), la trace au journal d'audit et propose « Annuler » d'un toucher.
+    Commun à « Corriger le montant » et « Corriger le jour ». Renvoie true si la correction est faite. */
+async function saveTxCorrection(tx, patch, { auditNote, doneMsg, failMsg, onChange = null }) {
+  const before = { ...tx };
+  const after = { ...tx, ...patch };
+  try {
+    await dbPut(STORES.TRANSACTIONS, after);
+  } catch (err) {
+    showToast(err?.name === 'HelperRestrictedError' ? t('Action réservée au propriétaire.') : failMsg);
+    return false;
+  }
+  await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'update', before, after, note: auditNote });
+  notifyDataChanged('transactions');
+  onChange?.();
+  showToast(doneMsg, {
+    actionLabel: t('Annuler'),
+    onAction: async () => {
+      await dbPut(STORES.TRANSACTIONS, before);
+      await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'update', before: after, after: before, note: t('Restaurée (annulation)') });
+      notifyDataChanged('transactions');
+      onChange?.();
+      showToast(t('Annulé.'));
+    },
+  });
+  return true;
+}
+
+/** « Corriger le jour » : les mêmes gros boutons que la saisie guidée (Aujourd'hui, Hier, Avant-hier, Autre jour — jamais dans le futur).
+    Seul le jour change ; trace au journal et annulable comme pour le montant. */
+export function openEasyDayFix(tx, { onChange = null } = {}) {
+  let date = tx.date;
+  const modal = openModal('<div id="easy-dayfix"></div>', { title: t('Corriger le jour') });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  const root = modal.el.querySelector('#easy-dayfix');
+  function render() {
+    const isQuick = [0, 1, 2].some((b) => isoDaysAgo(b) === date);
+    root.innerHTML = `
+      <p class="easy-question">${escapeHtml(t('Quel est le bon jour ?'))}</p>
+      <div class="easy-date" role="group" aria-label="${escapeHtml(t('Quel jour ?'))}">
+        <div class="easy-date-row">
+          ${[0, 1, 2].map((back) => { const iso = isoDaysAgo(back); return `<button type="button" class="btn easy-day ${date === iso ? 'is-on' : 'btn-ghost'}" data-day="${iso}" aria-pressed="${date === iso}">${escapeHtml(dayLabel(back))}</button>`; }).join('')}
+          <button type="button" class="btn easy-day ${isQuick ? 'btn-ghost' : 'is-on'}" id="easy-dayfix-other" aria-pressed="${!isQuick}">${escapeHtml(isQuick ? t('Autre jour') : formatDate(date))}</button>
+        </div>
+        <input type="date" id="easy-dayfix-input" class="easy-day-input" max="${todayISO()}" value="${escapeHtml(date)}" hidden aria-label="${escapeHtml(t('Choisir le jour'))}">
+      </div>
+      <div class="easy-actions easy-actions-stack">
+        <button type="button" class="btn btn-primary easy-btn easy-save" id="easy-dayfix-save" ${date === tx.date ? 'disabled' : ''}>${icon('check', 28)} ${escapeHtml(t('Enregistrer'))}</button>
+        <button type="button" class="btn btn-ghost easy-btn" id="easy-dayfix-cancel">${escapeHtml(t('Fermer'))}</button>
+      </div>`;
+    const input = root.querySelector('#easy-dayfix-input');
+    const choose = (iso) => { date = pastOrTodayISO(iso); render(); };
+    root.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => choose(b.dataset.day)));
+    root.querySelector('#easy-dayfix-other').addEventListener('click', () => { input.hidden = false; if (input.showPicker) { try { input.showPicker(); } catch { input.focus(); } } else input.focus(); });
+    input.addEventListener('change', () => { if (input.value) choose(input.value); });
+    root.querySelector('#easy-dayfix-cancel').addEventListener('click', () => modal.close());
+    root.querySelector('#easy-dayfix-save').addEventListener('click', async () => {
+      if (date === tx.date) return;
+      modal.close();
+      await saveTxCorrection(tx, { date }, {
+        auditNote: t("Jour corrigé depuis l'accueil facile"), doneMsg: t('Jour corrigé.'), failMsg: t("Le jour n'a pas pu être changé."), onChange,
+      });
+    });
+  }
+  render();
   return modal;
 }
 

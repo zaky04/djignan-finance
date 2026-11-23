@@ -908,6 +908,23 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
     eq('correction : « Annuler » remet l\'ancien montant', (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId).amount, 5500);
     modalRoot.innerHTML = '';
+    // « Corriger le jour » : les gros boutons Aujourd'hui / Hier / Avant-hier / Autre jour, seul le jour change, annulable
+    const dayBefore = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    await openEasyTxDetail(fixId); await wait(200);
+    ok('jour : le détail propose « Corriger le jour »', !!modalRoot.querySelector('#easy-tx-day'));
+    modalRoot.querySelector('#easy-tx-day').click(); await wait(300);
+    eq('jour : 3 boutons de jours + « Autre jour », « Enregistrer » grisé, pas de futur possible', [modalRoot.querySelectorAll('#easy-dayfix [data-day]').length, !!modalRoot.querySelector('#easy-dayfix-other'), modalRoot.querySelector('#easy-dayfix-save').disabled, modalRoot.querySelector('#easy-dayfix-input').max.length === 10], [3, true, true, true]);
+    const otherDay = [...modalRoot.querySelectorAll('#easy-dayfix [data-day]')].find((b) => b.dataset.day !== dayBefore.date).dataset.day;
+    modalRoot.querySelector(`#easy-dayfix [data-day="${otherDay}"]`).click(); await wait(100);
+    eq('jour : le jour touché est mis en avant et « Enregistrer » s\'allume', [modalRoot.querySelector(`#easy-dayfix [data-day="${otherDay}"]`).getAttribute('aria-pressed'), modalRoot.querySelector('#easy-dayfix-save').disabled], ['true', false]);
+    toastBox.textContent = '';
+    modalRoot.querySelector('#easy-dayfix-save').click(); await wait(600);
+    const dayAfter = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    eq('jour : seul le jour change (montant, catégorie, portefeuille, note intacts)', [dayAfter.date, { ...dayAfter, date: '' }], [otherDay, { ...dayBefore, date: '' }]);
+    ok('jour : message affiché et trace « update » au journal d\'audit', toastBox.textContent.includes('Jour corrigé') && (await dbGetAll(STORES.AUDIT_LOG)).some((a) => a.action === 'update' && a.entityId === fixId && a.before?.date === dayBefore.date && a.after?.date === otherDay));
+    [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
+    eq('jour : « Annuler » remet l\'ancien jour', (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId).date, dayBefore.date);
+    modalRoot.innerHTML = '';
   }
   await setSetting('easyHome', false);
   await applyEasyHome();

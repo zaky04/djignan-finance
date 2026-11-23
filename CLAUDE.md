@@ -4222,7 +4222,12 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
-### 23 novembre 2026 (suite 11) — « Corriger le montant » depuis le détail d'une opération (`CACHE_VERSION` `v198`, non commité au moment d'écrire)
+### 23 novembre 2026 (suite 12) — « Corriger le jour » depuis le détail d'une opération (`CACHE_VERSION` `v199`, non commité au moment d'écrire)
+
+Second bouton de correction, **« Corriger le jour »** (`openEasyDayFix`, `easy-home.js`) : les mêmes gros boutons que l'écran « Quel jour ? » de la saisie guidée (Aujourd'hui, Hier, Avant-hier, Autre jour → calendrier plafonné à aujourd'hui, `pastOrTodayISO`), « Enregistrer » grisé tant que le jour est inchangé. Seul `date` change ; trace `update` au journal d'audit, toast annulable, aidant limité à ses propres opérations.
+Refactor au passage : la sauvegarde annulable d'une correction est maintenant **`saveTxCorrection(tx, patch, {...})`**, partagée avec « Corriger le montant » (un futur « Corriger la catégorie / le portefeuille » n'aura qu'à l'appeler). La fenêtre se ferme AVANT l'appel (comme avant). Tests : 6 nouveaux (538). Vérifié sur 375 px (aucun défilement horizontal). Reste à corriger autrement : catégorie, portefeuille, note.
+
+### 23 novembre 2026 (suite 11) — « Corriger le montant » depuis le détail d'une opération (`CACHE_VERSION` `v198`, poussé en `58dc945`)
 
 Le détail d'une opération (accueil ou liste complète) a un gros bouton **« Corriger le montant »** (absent pour une opération liée à un prêt, etc., comme « Supprimer ») : `openEasyAmountFix(tx, cur, { onChange })` (`easy-home.js`) ouvre le pavé numérique avec le montant actuel déjà écrit (chiffres et lettres). « Enregistrer » reste grisé tant que le montant est nul ou inchangé. Seul le **montant** change (le reste de l'opération est recopié tel quel), avec une trace `update` (avant/après) au journal d'audit et un toast **annulable**. Pour changer autre chose (catégorie, portefeuille, jour) : supprimer puis ressaisir, ou l'écran Transactions.
 Aidant : `dbPut` ne lui permet de corriger que ce qu'il a saisi lui-même ; sur une opération du propriétaire il reçoit « Action réservée au propriétaire. ». Piège de traduction : le bouton de sortie s'appelle « Fermer », pas « Annuler » (cette clé est « Undo » en anglais, réservée aux toasts). Tests : 7 nouveaux (532). Vérifié sur 375 px.
