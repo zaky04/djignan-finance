@@ -111,6 +111,8 @@ export async function recordTemplateNow(template) {
     categoryId: template.categoryId || null, amount: template.amount, date: pastOrTodayISO(template.date),
     note: template.note || '', tags: [], reconciled: false, createdAt: new Date().toISOString(),
   };
+  // Photo de justificatif facultative (saisie guidée) : déjà réduite par l'appelant, marquée comme telle (Paramètres > « Réduire les photos » ne la reproposera pas).
+  if (template.receiptBlob instanceof Blob && template.receiptBlob.size > 0) { record.receiptBlob = template.receiptBlob; record.receiptOptimized = true; }
   await dbAdd(STORES.TRANSACTIONS, record);
   await logAudit({ entityType: 'transaction', entityId: record.id, action: 'create', after: record, note: 'favori' });
   return record;

@@ -26,7 +26,7 @@ import {
   isSpeechSupported, speak, stopSpeaking, primeSpeech, spokenAmount,
   buildBalanceSpeech, buildSavedSpeech, buildConfirmSpeech, isSpeakConfirmationsEnabled,
 } from './speech-out.js';
-import { formatCurrency, formatDate, escapeHtml, openModal, showToast, intlLocale, todayISO, localISODate, ZERO_DECIMAL_CURRENCIES } from './utils.js';
+import { formatCurrency, formatDate, escapeHtml, openModal, showToast, intlLocale, todayISO, localISODate, compressImageBlob, ZERO_DECIMAL_CURRENCIES } from './utils.js';
 import { notifyDataChanged } from './state.js';
 import { t, getLanguage } from './i18n.js';
 import { isVoiceSupported, listenOnce } from './voice-input.js';
@@ -184,13 +184,15 @@ export async function openEasyEntry(type) {
   const categories = allCategories.filter((c) => c.type === type && !c.parentId)
     .sort((a, b) => (usage.get(b.id) || 0) - (usage.get(a.id) || 0) || a.name.localeCompare(b.name));
 
-  const state = { step: wallets.length > 1 ? 'wallet' : 'amount', walletId: wallets[0].id, amount: '', categoryId: null, note: '', date: todayISO() };
+  const state = { step: wallets.length > 1 ? 'wallet' : 'amount', walletId: wallets[0].id, amount: '', categoryId: null, note: '', date: todayISO(), photo: null, photoUrl: '' };
+  const MAX_PHOTO_BYTES = 15 * 1024 * 1024; // même plafond que le partage entrant (sw.js) : au-delà, la photo n'est pas gardée
+  const setPhoto = (blob) => { if (state.photoUrl) URL.revokeObjectURL(state.photoUrl); state.photo = blob; state.photoUrl = blob ? URL.createObjectURL(blob) : ''; };
   const wallet = () => wallets.find((w) => w.id === state.walletId);
   const currency = () => wallet().currency;
   const allowDecimal = () => !ZERO_DECIMAL_CURRENCIES.has(currency());
   const title = type === 'income' ? t("J'ai reçu de l'argent") : t("J'ai dépensé de l'argent");
 
-  const modal = openModal('<div id="easy-step"></div>', { title, onClose: () => stopSpeaking() });
+  const modal = openModal('<div id="easy-step"></div>', { title, onClose: () => { stopSpeaking(); setPhoto(null); } });
   modal.el.querySelector('.modal-card').classList.add('easy-modal');
   const stepEl = modal.el.querySelector('#easy-step');
 
@@ -305,6 +307,7 @@ export async function openEasyEntry(type) {
         </div>
         <input type="date" id="easy-day-input" class="easy-day-input" max="${todayISO()}" value="${state.date}" hidden aria-label="${escapeHtml(t('Choisir le jour'))}">
       </div>
+      <div class="easy-extras">
       <div class="easy-note">
         <button type="button" class="btn btn-ghost easy-btn" id="easy-note-toggle" ${state.note ? 'hidden' : ''}>${icon('edit', 22)} ${t('Ajouter une note')}</button>
         <div class="easy-note-box" id="easy-note-box" ${state.note ? '' : 'hidden'}>
@@ -314,6 +317,15 @@ export async function openEasyEntry(type) {
             ${isVoiceSupported() ? `<button type="button" class="btn btn-ghost easy-btn easy-mic" id="easy-note-mic" aria-pressed="false" aria-label="${escapeHtml(t('Dicter la note'))}">${icon('mic', 26)}</button>` : ''}
           </div>
         </div>
+      </div>
+      <div class="easy-photo">
+        <button type="button" class="btn btn-ghost easy-btn" id="easy-photo-toggle" ${state.photo ? 'hidden' : ''}>${icon('receipt', 22)} ${t('Ajouter une photo')}</button>
+        <input type="file" id="easy-photo-input" accept="image/*" capture="environment" hidden>
+        <div class="easy-photo-box" id="easy-photo-box" ${state.photo ? '' : 'hidden'}>
+          <img id="easy-photo-img" alt="${escapeHtml(t('Photo du justificatif'))}" src="${escapeHtml(state.photoUrl)}">
+          <button type="button" class="btn btn-ghost easy-btn" id="easy-photo-remove">${icon('trash', 20)} ${t('Retirer la photo')}</button>
+        </div>
+      </div>
       </div>
       <div class="easy-warning" id="easy-warning" hidden></div>
       <div class="easy-actions easy-actions-stack">
@@ -362,12 +374,27 @@ export async function openEasyEntry(type) {
     body.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => chooseDay(b.dataset.day)));
     body.querySelector('#easy-day-other').addEventListener('click', () => { dayInput.hidden = false; if (dayInput.showPicker) { try { dayInput.showPicker(); } catch { dayInput.focus(); } } else dayInput.focus(); });
     dayInput.addEventListener('change', () => { if (dayInput.value) chooseDay(dayInput.value); });
+    // Photo facultative du justificatif (ticket, facture) : prise avec l'appareil photo ou choisie dans la galerie, réduite avant d'être gardée.
+    // Comme la note, elle reste si l'on change le jour ou corrige le montant, et rien n'apparaît pour qui n'en veut pas.
+    const photoInput = body.querySelector('#easy-photo-input');
+    body.querySelector('#easy-photo-toggle').addEventListener('click', () => photoInput.click());
+    photoInput.addEventListener('change', async () => {
+      const file = photoInput.files[0];
+      photoInput.value = '';
+      if (!file) return;
+      if (!file.type.startsWith('image/')) { showToast(t("Ce fichier n'est pas une photo.")); return; }
+      if (file.size > MAX_PHOTO_BYTES) { showToast(t('Cette photo est trop lourde (15 Mo au plus).')); return; }
+      try { setPhoto(await compressImageBlob(file)); } catch { showToast(t('Impossible de lire cette photo.')); return; }
+      if (body.isConnected) { renderConfirmStep(body); body.querySelector('#easy-photo-box')?.scrollIntoView?.({ block: 'nearest' }); } // l'aperçu ne doit pas rester sous le bouton « Enregistrer »
+    });
+    body.querySelector('#easy-photo-remove').addEventListener('click', () => { setPhoto(null); renderConfirmStep(body); });
     // Note facultative : au clavier, ou dictée (micro) pour qui n'écrit pas facilement. Gardée si l'on corrige le montant puis revient ici.
     const noteInput = body.querySelector('#easy-note-input');
     body.querySelector('#easy-note-toggle').addEventListener('click', (e) => {
       e.currentTarget.hidden = true;
       body.querySelector('#easy-note-box').hidden = false;
       noteInput.focus();
+      body.querySelector('#easy-note-box').scrollIntoView?.({ block: 'nearest' });
     });
     noteInput.addEventListener('input', () => { state.note = noteInput.value.slice(0, 140); });
     const micBtn = body.querySelector('#easy-note-mic');
@@ -387,7 +414,7 @@ export async function openEasyEntry(type) {
       primeSpeech(); // avant tout await : la lecture de confirmation suit l'enregistrement
       const saveBtn = e.currentTarget; // e.currentTarget vaut null après un await : on le garde avant
       saveBtn.disabled = true; // un seul enregistrement, même en cas de double toucher
-      const record = await recordTemplateNow({ type, walletId: state.walletId, categoryId: state.categoryId, amount: n, note: state.note.trim(), date: state.date });
+      const record = await recordTemplateNow({ type, walletId: state.walletId, categoryId: state.categoryId, amount: n, note: state.note.trim(), date: state.date, receiptBlob: state.photo });
       if (!record) {
         saveBtn.disabled = false;
         showToast(t("Impossible d'enregistrer : ce portefeuille n'est plus disponible."));

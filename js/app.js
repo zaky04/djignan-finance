@@ -239,7 +239,14 @@ function applyTheme(theme) {
 function applyPrivacy(hidden) {
   document.body.dataset.privacy = hidden ? 'hidden' : 'visible';
   setAutoMasking(hidden);
-  document.getElementById('privacy-toggle')?.setAttribute('aria-pressed', String(hidden));
+  const toggle = document.getElementById('privacy-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-pressed', String(hidden));
+    // L'étiquette dit ce que fera le toucher (avant : toujours « Masquer », même quand les montants étaient déjà cachés).
+    const label = t(hidden ? 'Afficher les montants' : 'Masquer les montants');
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('title', label);
+  }
 }
 
 function wireGlobalChrome() {

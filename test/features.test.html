@@ -599,6 +599,29 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   eq('saisie guidée (jour) : l\'opération est enregistrée au jour choisi (il y a 9 jours)', await dayOf(6), [isoAgo(9)]);
   const { pastOrTodayISO } = await import('../js/quick-templates.js');
   eq('saisie guidée (jour) : une date future, absurde ou absente retombe sur aujourd\'hui', [pastOrTodayISO('2999-01-01'), pastOrTodayISO('pas une date'), pastOrTodayISO(undefined), pastOrTodayISO('2026-13-45'), pastOrTodayISO(isoAgo(3))], [isoAgo(0), isoAgo(0), isoAgo(0), isoAgo(0), isoAgo(3)]);
+  // Photo de justificatif facultative (comme la note)
+  const rowOf = async (amount) => (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.amount === amount);
+  const pickFile = async (file) => { const input = modalRoot.querySelector('#easy-photo-input'); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true })); await new Promise((r) => setTimeout(r, 300)); };
+  const fakePhoto = () => new File([new Uint8Array(4000).map((_, i) => (i * 13) & 255)], 'ticket.jpg', { type: 'image/jpeg' });
+  await openEasyEntry('expense'); press('[data-key="7"]'); press('#easy-next'); press('[data-cat="c-e1"]');
+  ok('saisie guidée (photo) : « Ajouter une photo » proposé, aucun aperçu au départ', !modalRoot.querySelector('#easy-photo-toggle').hidden && modalRoot.querySelector('#easy-photo-box').hidden && modalRoot.querySelector('#easy-photo-input').accept === 'image/*');
+  await pickFile(new File(['pas une image'], 'notes.txt', { type: 'text/plain' }));
+  ok('saisie guidée (photo) : un fichier qui n\'est pas une image est refusé avec un message', modalRoot.querySelector('#easy-photo-box').hidden && toastBox.textContent.includes('pas une photo'));
+  await pickFile(fakePhoto());
+  ok('saisie guidée (photo) : la photo s\'affiche (aperçu), le bouton « Ajouter » disparaît', !modalRoot.querySelector('#easy-photo-box').hidden && modalRoot.querySelector('#easy-photo-toggle').hidden && modalRoot.querySelector('#easy-photo-img').src.startsWith('blob:'));
+  press(`[data-day="${isoAgo(1)}"]`);
+  ok('saisie guidée (photo) : la photo reste quand on change le jour', !modalRoot.querySelector('#easy-photo-box').hidden);
+  press('#easy-save'); await new Promise((r) => setTimeout(r, 400));
+  const withPhoto = await rowOf(7);
+  eq('saisie guidée (photo) : la photo est enregistrée avec l\'opération (marquée réduite), jour choisi aussi', [withPhoto.receiptBlob instanceof Blob, withPhoto.receiptBlob.size, withPhoto.receiptOptimized, withPhoto.date], [true, 4000, true, isoAgo(1)]);
+  const auditRows = (await dbGetAll(STORES.AUDIT_LOG)).filter((a) => a.entityId === withPhoto.id);
+  ok('saisie guidée (photo) : le journal d\'audit ne recopie pas la photo', auditRows.length > 0 && auditRows.every((a) => !a.after || !(a.after.receiptBlob instanceof Blob)));
+  await openEasyEntry('expense'); press('[data-key="8"]'); press('#easy-next'); press('[data-cat="c-e1"]');
+  await pickFile(fakePhoto()); press('#easy-photo-remove');
+  ok('saisie guidée (photo) : « Retirer la photo » ramène au bouton « Ajouter »', modalRoot.querySelector('#easy-photo-box').hidden && !modalRoot.querySelector('#easy-photo-toggle').hidden);
+  press('#easy-save'); await new Promise((r) => setTimeout(r, 400));
+  const without = await rowOf(8);
+  eq('saisie guidée (photo) : photo retirée ou jamais ajoutée → aucune photo enregistrée', [without.receiptBlob, without.receiptOptimized], [undefined, undefined]);
   await dbm_cleanup();
   async function dbm_cleanup() { for (const row of (await dbGetAll(STORES.TRANSACTIONS))) if (row.amount !== 5500) await (await import('../js/db.js')).dbDelete(STORES.TRANSACTIONS, row.id); }
 

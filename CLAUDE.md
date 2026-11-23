@@ -4213,7 +4213,21 @@ Autre manque de la saisie guidée par rapport au formulaire classique, trouvé e
 À l'étape « C'est bon ? » (`easy-home.js`) : rangée « Quel jour ? » de quatre gros boutons **Aujourd'hui / Hier / Avant-hier / Autre jour** (calendrier natif limité à aujourd'hui, le bouton affiche alors la date choisie).
 `recordTemplateNow` (`quick-templates.js`) accepte `date`, validée par `pastOrTodayISO` : jamais dans le futur, jamais une date absurde (retombe sur aujourd'hui). Tests : 8 nouveaux (444) ; vu en réel sur 375 px.
 Piège rencontré : une regex écrite par `node -` dans un script s'est retrouvée sans ses antislashs (`/^d{4}…/`) et rejetait toute date — repéré par les tests ; **toujours écrire une regex avec l'outil Edit** (voir la mémoire du projet).
-**Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », justificatif photo, division en plusieurs catégories — non demandés, laissés au formulaire classique.
+### 23 novembre 2026 (suite 2) — Photo de justificatif facultative dans la saisie guidée (`CACHE_VERSION` `v189`, non commité au moment d'écrire)
+
+Choisie par l'auteur parmi les manques restants, « facultative comme la note ». À l'étape « C'est bon ? » (`easy-home.js`) : bouton **« Ajouter une photo »** (champ fichier `image/*` + `capture="environment"` : appareil photo sur téléphone,
+galerie sinon). La photo est réduite par `compressImageBlob` (même réduction que le formulaire classique), refusée si ce n'est pas une image ou si elle dépasse 15 Mo, prévisualisée en vignette avec « Retirer la photo », conservée quand on
+change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermeture. `recordTemplateNow` accepte `receiptBlob` (marqué `receiptOptimized`) ; le journal d'audit n'en garde pas de copie (`auditSnapshot`). Note et photo sont
+**deux boutons côte à côte sur une seule rangée** (la zone ouverte prend toute la largeur et se fait voir au-dessus de la barre « Enregistrer ») : l'écran de confirmation tient sans défilement sur 375×812 tant qu'on n'ouvre rien. Tests : 8 nouveaux
+(452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
+**Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
+
+### 23 novembre 2026 (suite 3) — Boutons du haut en couleur, « Afficher » quand les montants sont cachés (`CACHE_VERSION` `v190`, non commité au moment d'écrire)
+
+Demande de l'auteur : une fois les sommes cachées, un utilisateur novice ne voyait rien pour les réafficher (les trois icônes du haut étaient grises et discrètes). `css/styles.css` : **recherche en bleu, montants en vert, thème en doré** (fond teinté +
+icône colorée, clair et sombre, survol) ; quand les montants sont cachés le bouton devient un **bouton orange plein avec le mot « Afficher »** et un halo (`#privacy-toggle`, `.privacy-label` ajouté dans `index.html`). `applyPrivacy` (`app.js`) met aussi
+à jour l'étiquette et l'infobulle (« Afficher les montants » / « Masquer les montants » : avant, toujours « Masquer »). Vérifié sur 375 px en clair et en sombre, aller-retour caché/affiché (le réglage est bien mémorisé). Pas de test automatisé
+(pur CSS + libellé). — non demandés, laissés au formulaire classique.
 
 **Vérifié sans rien à corriger** : intervalles et écouteurs globaux enregistrés une seule fois, aucun `eval`/`document.write`, précache complet, pas de rendu de liste non borné (Transactions filtre par mois).
 **Reste à surveiller à long terme** : la base grossit surtout avec les photos (~150-400 Ko chacune, l'estimation est dans Paramètres) ; la sauvegarde cloud chiffrée d'un très gros historique avec photos
