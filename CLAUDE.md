@@ -4222,7 +4222,15 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
-### 23 novembre 2026 (suite 7) — « Mon mois » lu à voix haute sur l'accueil facile (`CACHE_VERSION` `v194`, non commité au moment d'écrire)
+### 23 novembre 2026 (suite 8) — Corriger une erreur depuis l'accueil facile : toucher une dernière opération (`CACHE_VERSION` `v195`, non commité au moment d'écrire)
+
+Jusqu'ici une erreur de saisie en accueil facile ne se corrigeait que dans l'écran Transactions. Les trois « Dernières opérations » sont maintenant des **boutons** (`.easy-recent-row[data-tx]`) : toucher une ligne ouvre `openEasyTxDetail` (`easy-home.js`) — nature, montant (chiffres et lettres),
+catégorie ou « De / Vers », portefeuille, jour, note — avec un gros bouton **« Supprimer cette opération »** et « Fermer ». La suppression passe par `confirmDialog({ danger, requirePin })` (code PIN s'il y en a un ; refusée à un aidant, comme partout), est inscrite au journal d'audit et **annulable** par le toast.
+Une opération **liée** à un prêt, un investissement, une tontine, une dépense partagée ou un projet (`isLinkedTransaction`, même règle que `transactionLinkKind` de `transactions.js`) s'affiche avec une explication mais **sans** bouton de suppression : on supprime l'élément d'origine. Pas de modification
+(on supprime puis on ressaisit) : ouvrir le formulaire classique depuis l'accueil facile demanderait d'importer `transactions.js` dans `easy-home.js` (risque de cycle), à faire par injection depuis `app.js` si l'auteur le veut. Tests : 9 nouveaux (514). Vérifié sur 375 px et en réel avec le code PIN
+(19 → 18 → 19 opérations après annulation).
+
+### 23 novembre 2026 (suite 7) — « Mon mois » lu à voix haute sur l'accueil facile (`CACHE_VERSION` `v194`, poussé en `e9d3be5`)
 
 Second bouton sous « Écouter » dans l'encadré du solde (`easy-home.js`, `speakMonth`) : **« Mon mois »** lit le bilan du mois en cours, d'après `loadMonthlyRecap` (`monthly-recap.js`, les mêmes chiffres que le bilan partageable : dépenses courantes, hors prêts et dépenses exceptionnelles).
 `buildMonthSpeech` (`speech-out.js`, pure, testée) : cinq phrases au plus, montants en toutes lettres — reçu et dépensé (ou dépensé seul), mis de côté ou « dépensé X de plus que reçu », ce qui pèse le plus, évolution depuis le mois dernier (≥ 3 %), budgets dépassés ;

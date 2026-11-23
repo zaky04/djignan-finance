@@ -2189,6 +2189,13 @@ const EN = {
   "Attention : {wallet} ne contient que {balance}. Ce déplacement le ferait passer en négatif.": 'Careful: {wallet} only holds {balance}. This transfer would make it negative.',
   "Déplacement de {amount}, de {from} vers {to}. Pour enregistrer, touchez le bouton vert.": 'Transfer of {amount}, from {from} to {to}. To save, tap the green button.',
   "C'est noté : {amount} déplacés de {from} vers {to}.": 'Noted: {amount} moved from {from} to {to}.',
+  /* ---- Toucher une dernière opération de l'accueil facile : détail et suppression ---- */
+  'Cette opération': 'This operation',
+  'Supprimer cette opération': 'Delete this operation',
+  'Supprimer cette opération ? ({amount})': 'Delete this operation? ({amount})',
+  'Opération supprimée.': 'Operation deleted.',
+  "Suppression depuis l'accueil facile": 'Deleted from the easy home screen',
+  "Cette opération est liée à un prêt, un investissement, une tontine ou une dépense partagée : pour la supprimer, supprimez l'élément d'origine.": 'This operation is linked to a loan, an investment, a tontine or a shared expense: to delete it, delete the original item.',
   /* ---- « Écouter mon mois » (accueil facile, speech-out.js : buildMonthSpeech) ---- */
   'Mon mois': 'My month',
   "Il n'y a encore rien de noté ce mois-ci.": 'Nothing has been recorded yet this month.',

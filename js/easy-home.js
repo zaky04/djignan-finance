@@ -16,7 +16,7 @@
    pures et testées hors navigateur.
    ========================================================================== */
 
-import { STORES, dbGetAll, getSetting, setSetting } from './db.js';
+import { STORES, dbGetAll, dbAdd, dbDelete, logAudit, getSetting, setSetting } from './db.js';
 import {
   computeNetWorthComposition, computeEndOfMonthForecast, computeBudgetVsActual, computeSafeToSpend,
   getWalletBalance, checkUnusualExpense, isDailyWallet, getEnrichedTransactions,
@@ -27,7 +27,7 @@ import {
   buildBalanceSpeech, buildSavedSpeech, buildConfirmSpeech, buildTransferSavedSpeech, buildTransferConfirmSpeech, buildMonthSpeech, isSpeakConfirmationsEnabled,
 } from './speech-out.js';
 import { loadMonthlyRecap } from './monthly-recap.js';
-import { formatCurrency, formatDate, escapeHtml, openModal, showToast, intlLocale, todayISO, localISODate, compressImageBlob, ZERO_DECIMAL_CURRENCIES } from './utils.js';
+import { formatCurrency, formatDate, escapeHtml, openModal, confirmDialog, showToast, intlLocale, todayISO, localISODate, compressImageBlob, ZERO_DECIMAL_CURRENCIES } from './utils.js';
 import { notifyDataChanged } from './state.js';
 import { t, getLanguage } from './i18n.js';
 import { isVoiceSupported, listenOnce } from './voice-input.js';
@@ -128,11 +128,70 @@ function recentRowHtml(tx) {
   const sign = tx.type === 'income' ? '+' : tx.type === 'expense' ? '−' : '';
   const cls = tx.type === 'income' ? 'pos' : tx.type === 'expense' ? 'neg' : '';
   return `
-    <div class="easy-recent-row">
+    <button type="button" class="easy-recent-row" data-tx="${escapeHtml(tx.id)}">
       <span class="easy-recent-icon" style="color:${look.color};">${icon(look.icon, 24)}</span>
       <span class="easy-recent-title">${escapeHtml(title)}</span>
       <span class="easy-recent-amount amount ${cls}" data-value="${tx.amount}">${sign}${escapeHtml(formatCurrency(tx.amount, tx.wallet?.currency || 'EUR'))}</span>
-    </div>`;
+    </button>`;
+}
+
+/** Une opération liée à un prêt, un investissement, une tontine, une dépense partagée ou un projet se supprime depuis son élément d'origine
+    (sinon celui-ci resterait orphelin : voir transactionLinkKind dans transactions.js). */
+export function isLinkedTransaction(tx) {
+  return !!tx && !!(tx.debtId || tx.debtInterestId || tx.investmentId || tx.tontineId || tx.sharedExpenseId || tx.projectId);
+}
+
+/** Toucher une des dernières opérations de l'accueil : ce qu'elle est (montant, catégorie, portefeuille, jour, note) et, si elle est
+    une erreur, un gros bouton « Supprimer » (avec code PIN s'il y en a un, annulable d'un toucher). */
+export async function openEasyTxDetail(id) {
+  const [allTx, wallets, categories] = await Promise.all([dbGetAll(STORES.TRANSACTIONS), dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES)]);
+  const tx = allTx.find((x) => x.id === id);
+  if (!tx) return;
+  const wallet = wallets.find((w) => w.id === tx.walletId);
+  const target = wallets.find((w) => w.id === tx.targetWalletId);
+  const cat = categories.find((c) => c.id === tx.categoryId) || null;
+  const cur = wallet?.currency || 'EUR';
+  const isTransfer = tx.type === 'transfer';
+  const look = isTransfer ? { icon: 'swap', color: 'var(--accent)' } : categoryLook(cat);
+  const kind = isTransfer ? t('Déplacé') : tx.type === 'income' ? t('Reçu') : t('Dépensé');
+  const linked = isLinkedTransaction(tx);
+  const modal = openModal(`
+    <div class="easy-summary">
+      <div class="easy-summary-kind ${isTransfer ? '' : tx.type === 'income' ? 'pos' : 'neg'}">${icon(isTransfer ? 'swap' : tx.type === 'income' ? 'arrowDown' : 'arrowUp', 30)} ${escapeHtml(kind)}</div>
+      <div class="easy-summary-amount amount" data-value="${tx.amount}">${escapeHtml(formatCurrency(tx.amount, cur))}</div>
+      <div class="easy-summary-words">${escapeHtml(spokenAmount(tx.amount, cur))}</div>
+      ${isTransfer
+        ? `<div class="easy-summary-line">${icon('wallet', 22)} ${escapeHtml(t('De {name}', { name: wallet?.name || '—' }))}</div>
+      <div class="easy-summary-line">${icon('wallet', 22)} ${escapeHtml(t('Vers {name}', { name: target?.name || '—' }))}</div>`
+        : `<div class="easy-summary-line"><span style="color:${look.color};">${icon(look.icon, 22)}</span> ${escapeHtml(cat ? cat.name : t('Sans catégorie'))}</div>
+      <div class="easy-summary-line">${icon('wallet', 22)} ${escapeHtml(wallet?.name || '—')}</div>`}
+      <div class="easy-summary-line">${icon('history', 22)} ${escapeHtml(formatDate(tx.date))}</div>
+      ${tx.note ? `<div class="easy-summary-line">${icon('edit', 22)} ${escapeHtml(tx.note)}</div>` : ''}
+    </div>
+    ${linked ? `<p class="easy-hint">${escapeHtml(t("Cette opération est liée à un prêt, un investissement, une tontine ou une dépense partagée : pour la supprimer, supprimez l'élément d'origine."))}</p>` : ''}
+    <div class="easy-actions easy-actions-stack">
+      ${linked ? '' : `<button type="button" class="btn btn-danger easy-btn" id="easy-tx-delete">${icon('trash', 24)} ${escapeHtml(t('Supprimer cette opération'))}</button>`}
+      <button type="button" class="btn btn-ghost easy-btn" id="easy-tx-close">${escapeHtml(t('Fermer'))}</button>
+    </div>`, { title: t('Cette opération') });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  modal.el.querySelector('#easy-tx-close').addEventListener('click', () => modal.close());
+  modal.el.querySelector('#easy-tx-delete')?.addEventListener('click', async () => {
+    const ok = await confirmDialog(t('Supprimer cette opération ? ({amount})', { amount: formatCurrency(tx.amount, cur) }), { danger: true, requirePin: true, confirmText: t('Supprimer') });
+    if (!ok) return;
+    modal.close();
+    await dbDelete(STORES.TRANSACTIONS, tx.id);
+    await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'delete', before: tx, note: t('Suppression depuis l\'accueil facile') });
+    notifyDataChanged('transactions');
+    showToast(t('Opération supprimée.'), {
+      actionLabel: t('Annuler'),
+      onAction: async () => {
+        await dbAdd(STORES.TRANSACTIONS, tx);
+        await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: t('Restaurée (annulation)') });
+        notifyDataChanged('transactions');
+        showToast(t('Annulé.'));
+      },
+    });
+  });
 }
 
 export async function renderEasyHome() {
@@ -521,6 +580,8 @@ export function initEasyHome({ navigateTo, openDebts = null }) {
     const speakBtn = event.target.closest('#easy-speak-btn');
     if (speakBtn) { speakBalance(); return; }
     if (event.target.closest('#easy-month-btn')) { speakMonth(); return; }
+    const row = event.target.closest('[data-tx]');
+    if (row) { openEasyTxDetail(row.dataset.tx); return; }
     const tile = event.target.closest('[data-easy]');
     if (!tile) return;
     const kind = tile.dataset.easy;

@@ -820,6 +820,40 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   eq('accueil facile : quatre grosses touches, et le bouton « déplacer » en dessous', [[...easyHost.querySelectorAll('.easy-tile')].map((b) => b.dataset.easy), [...easyHost.querySelectorAll('.easy-move')].map((b) => b.dataset.easy)], [['income', 'expense', 'owed', 'owe'], ['transfer']]);
   ok('accueil facile : solde 94 500 (100 000 − 5 500)', /94\D*500/.test(easyHost.querySelector('.easy-balance-value').textContent), easyHost.querySelector('.easy-balance-value').textContent);
   ok('accueil facile : dernière opération affichée', easyHost.querySelector('.easy-recent-title')?.textContent === 'Transport');
+  // Toucher une dernière opération : détail + suppression (annulable)
+  {
+    const wait = (ms = 400) => new Promise((r) => setTimeout(r, ms));
+    const { isLinkedTransaction } = await import('../js/easy-home.js');
+    ok('opérations récentes : chaque ligne est un bouton qui porte l\'identifiant de l\'opération', !!easyHost.querySelector('button.easy-recent-row[data-tx]'));
+    eq('opérations récentes : liens (prêt, investissement, tontine, partage, projet) reconnus ; opération libre non', [{ debtId: 'x' }, { debtInterestId: 'x' }, { investmentId: 'x' }, { tontineId: 'x' }, { sharedExpenseId: 'x' }, { projectId: 'x' }, {}, null].map(isLinkedTransaction), [true, true, true, true, true, true, false, false]);
+    modalRoot.innerHTML = '';
+    easyHost.querySelector('[data-tx]').click(); await wait();
+    const detail = modalRoot.querySelector('.easy-summary')?.textContent || '';
+    ok('opérations récentes : toucher une ligne montre le détail (dépensé, montant, catégorie, portefeuille)', detail.includes('Dépensé') && /5\D*500/.test(detail) && detail.includes('Transport') && detail.includes('Orange Money') && !!modalRoot.querySelector('#easy-tx-delete'));
+    modalRoot.querySelector('#easy-tx-close').click(); await wait(200);
+    ok('opérations récentes : « Fermer » ferme sans rien supprimer', !modalRoot.querySelector('.easy-summary') && (await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.amount === 5500));
+    easyHost.querySelector('[data-tx]').click(); await wait();
+    modalRoot.querySelector('#easy-tx-delete').click(); await wait();
+    ok('opérations récentes : « Supprimer » demande d\'abord confirmation (rien n\'est encore supprimé)', !!modalRoot.querySelector('[data-act="confirm"]') && (await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.amount === 5500));
+    modalRoot.querySelector('[data-act="cancel"]').click(); await wait(300);
+    ok('opérations récentes : refuser la confirmation garde l\'opération', (await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.amount === 5500));
+    toastBox.textContent = '';
+    modalRoot.innerHTML = '';
+    easyHost.querySelector('[data-tx]').click(); await wait();
+    modalRoot.querySelector('#easy-tx-delete').click(); await wait();
+    modalRoot.querySelector('[data-act="confirm"]').click(); await wait(600);
+    eq('opérations récentes : confirmer supprime l\'opération, message affiché, trace au journal d\'audit', [(await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.amount === 5500), toastBox.textContent.includes('Opération supprimée'), (await dbGetAll(STORES.AUDIT_LOG)).some((a) => a.action === 'delete' && a.before?.amount === 5500)], [false, true, true]);
+    [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
+    eq('opérations récentes : « Annuler » dans le message remet l\'opération telle qu\'elle était', (await dbGetAll(STORES.TRANSACTIONS)).filter((x) => x.amount === 5500).map((x) => [x.type, x.walletId, x.categoryId]), [['expense', 'w-e1', 'c-e1']]);
+    // Opération liée à un prêt : détail oui, suppression non
+    await dbAdd(STORES.TRANSACTIONS, { id: 'tx-lien', type: 'expense', walletId: 'w-e1', targetWalletId: null, categoryId: 'c-e1', amount: 777, date: new Date().toISOString().slice(0, 10), note: 'Prêt', tags: [], reconciled: false, debtId: 'd-x', createdAt: '2026-01-01T00:00:00.000Z' });
+    modalRoot.innerHTML = '';
+    const { openEasyTxDetail } = await import('../js/easy-home.js');
+    await openEasyTxDetail('tx-lien'); await wait(200);
+    ok('opérations récentes : une opération liée à un prêt s\'affiche sans bouton « Supprimer », avec une explication', !modalRoot.querySelector('#easy-tx-delete') && !!modalRoot.querySelector('.easy-hint') && modalRoot.querySelector('.easy-summary').textContent.includes('Prêt'));
+    modalRoot.innerHTML = '';
+    await (await import('../js/db.js')).dbDelete(STORES.TRANSACTIONS, 'tx-lien');
+  }
   await setSetting('easyHome', false);
   await applyEasyHome();
   eq('accueil facile désactivé : panneau caché', [easyHost.hidden, document.body.dataset.easyHome], [true, 'off']);
