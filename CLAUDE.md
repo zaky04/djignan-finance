@@ -4222,6 +4222,18 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
+### 23 novembre 2026 (suite 5) — « On me doit » / « Je dois » en gros boutons (`CACHE_VERSION` `v192`, non commité au moment d'écrire)
+
+Dernier gros manque de la saisie guidée : les deux tuiles de prêts ouvraient encore l'écran classique des dettes. Nouveau `js/easy-debts.js` (`openEasyDebts('owed'|'owe')`, branché par `app.js` via `initEasyHome({ openDebts })` : `easy-home.js` n'importe pas ce
+fichier, pas de cycle ; `easy-debts.js` réutilise le pavé de `easy-home.js`). Deux gestes par touche : **nouveau prêt** (nom écrit ou dicté + noms déjà utilisés → portefeuille, avec « Pas de mouvement : c'était avant » → montant → « C'est bon ? ») et
+**remboursement** (liste des prêts en cours avec le reste dû → montant, bouton « Tout » → portefeuille de la devise si plusieurs → « C'est bon ? », « Il restera X » / « Tout sera réglé »). Refus d'un montant au-dessus du reste dû ; avertissement si le
+portefeuille deviendrait négatif ; voix (`buildDebtSpeech`) ; annulation par le toast. **Écriture dans `debts.js`** (mêmes enregistrements que l'écran Dettes : catégorie Prêt/Créance, `debtId`/`debtPaymentId`) : `createSimpleDebt`,
+`recordSimplePayment`, `undoSimplePayment`, `listOpenDebts`, `isSimpleDebt`. **Pas gérés ici** : prêts avec intérêts, participants, compte gardé, projet, investissement ou partage → toucher la personne ouvre alors la fenêtre de remboursement complète
+(`openPaymentModal`). Pas de jour, de note ni d'échéance dans ce flux (aujourd'hui, sans note ; modifiables ensuite dans Dettes & créances). Bug trouvé par les tests : choisir le portefeuille d'un remboursement remettait le montant à zéro (la remise à zéro ne
+vaut que pour un nouveau prêt, dont la devise suit le portefeuille). Tests : 31 nouveaux (498). Vérifié en réel sur 375 px (remboursement de 5 000 sur « Cousin Amadou » : tuile 30 000 → 25 000, annulation → 30 000).
+**Piège d'environnement** : le navigateur de test garde en cache les fichiers d'une même adresse après modification (même après redémarrage du serveur) → pour revoir une modification, lancer le serveur sur un autre port.
+**Toujours absent** de la saisie guidée : étiquettes, dépense « exceptionnelle », division en catégories, virement entre devises, échéance/jour/note des prêts.
+
 ### 23 novembre 2026 (suite 4) — Déplacer de l'argent en gros boutons (`CACHE_VERSION` `v191`, non commité au moment d'écrire)
 
 Manque suivant de la saisie guidée (recommandé à l'auteur, qui a choisi la photo d'abord) : le **virement entre portefeuilles** (typiquement Mobile Money → espèces, ou « mettre de côté »). `openEasyEntry('transfer')` (`easy-home.js`) :

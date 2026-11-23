@@ -177,6 +177,102 @@ export async function ensureDebtCategoryId(debtType, txType) {
   return category.id;
 }
 
+/* ---------- Saisie guidée (accueil facile, easy-debts.js) ----------
+   Le cas courant, sans les options avancées (intérêts, participants, compte gardé, projet) : « j'ai prêté 5 000 à Awa »,
+   « Awa m'a rendu 2 000 ». Mêmes enregistrements que l'écran Dettes & créances (même catégorie, mêmes liens debtId/
+   debtPaymentId), donc tout s'y retrouve, se modifie et se supprime comme d'habitude. */
+
+/** Une dette/créance que la saisie guidée sait rembourser seule : sans intérêts ni participants, sans compte gardé ni
+    projet collectif ni investissement. Les autres passent par la fenêtre de remboursement complète. */
+export function isSimpleDebt(d) {
+  return !!d && !(d.interestRate > 0) && !(d.participants && d.participants.length) && !d.keptAccountId && !d.projectId && !d.investmentId && !d.sharedExpenseId;
+}
+
+/** Dettes (`type: 'debt'`) ou créances (`'receivable'`) encore à régler, avec le restant dû, les plus anciennes d'abord. */
+export async function listOpenDebts(type) {
+  const [debts, payments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
+  return debts.filter((d) => d.type === type && d.status === 'active')
+    .map((d) => ({ debt: d, owed: remaining(d, payments.filter((p) => p.debtId === d.id)) }))
+    .filter((x) => x.owed > 0.005)
+    .sort((a, b) => (a.debt.startDate || '').localeCompare(b.debt.startDate || ''));
+}
+
+/** Nouvelle dette (`type: 'debt'`, j'ai emprunté) ou créance (`'receivable'`, j'ai prêté). Avec `walletId`, l'argent entre
+    dans (dette) ou sort de (créance) ce portefeuille aujourd'hui ; sans, rien ne bouge (le prêt date d'avant l'appli).
+    Renvoie `{ debt, openingTx }` (ou `null` si le portefeuille ne convient pas) ; on l'annule par deleteDebtCascade(debt.id). */
+export async function createSimpleDebt({ type, personName, principal, currency, walletId = null, date = todayISO() }) {
+  const name = String(personName || '').trim().slice(0, 60);
+  if (!name || !(principal > 0) || (type !== 'debt' && type !== 'receivable')) return null;
+  let wallet = null;
+  if (walletId) {
+    wallet = (await dbGetAll(STORES.WALLETS)).find((w) => w.id === walletId);
+    if (!wallet || !isDailyWallet(wallet)) return null;
+    currency = wallet.currency; // la dette suit la devise du portefeuille
+  }
+  const debt = {
+    id: uuid(), type, personName: name, principal: safeNumber(principal), currency, interestRate: 0, termMonths: null,
+    startDate: date, dueDate: null, status: 'active', note: '', openingTransactionId: null, createdAt: new Date().toISOString(),
+  };
+  let openingTx = null;
+  if (wallet) {
+    const txType = type === 'debt' ? 'income' : 'expense';
+    openingTx = {
+      id: uuid(), type: txType, walletId: wallet.id, targetWalletId: null, categoryId: await ensureDebtCategoryId(type, txType),
+      amount: debt.principal, date,
+      note: type === 'debt' ? tr('Prêt reçu de {name}', { name }) : tr('Prêt accordé à {name}', { name }),
+      tags: [], reconciled: false, debtId: debt.id, createdAt: new Date().toISOString(),
+    };
+    debt.openingTransactionId = openingTx.id;
+  }
+  await dbWriteBatch([...(openingTx ? [{ store: STORES.TRANSACTIONS, type: 'add', value: openingTx }] : []), { store: STORES.DEBTS, type: 'put', value: debt }]);
+  if (openingTx) await logAudit({ entityType: 'transaction', entityId: openingTx.id, action: 'create', after: openingTx, note: tr('Mouvement de dette/créance') });
+  await logAudit({ entityType: 'debt', entityId: debt.id, action: 'create', after: debt });
+  return { debt, openingTx };
+}
+
+/** Remboursement simple d'une dette/créance sans intérêts, passant par un portefeuille (de la devise de la dette). Refuse
+    (renvoie `null`) un montant nul, supérieur au restant dû, une dette non simple, ou un portefeuille qui ne convient pas. */
+export async function recordSimplePayment(debt, { amount, walletId, date = todayISO() }) {
+  if (!isSimpleDebt(debt) || !(amount > 0)) return null;
+  const [wallets, allPayments] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.DEBT_PAYMENTS)]);
+  const wallet = wallets.find((w) => w.id === walletId);
+  if (!wallet || !isDailyWallet(wallet) || wallet.currency !== debt.currency) return null;
+  const own = allPayments.filter((p) => p.debtId === debt.id);
+  const owed = remaining(debt, own);
+  const value = roundTo(safeNumber(amount), decimalsOf(debt.currency));
+  if (!(value > 0) || value > owed + 0.005) return null;
+  const payment = { id: uuid(), debtId: debt.id, amount: value, interestPart: 0, date, note: '' };
+  const txType = debt.type === 'debt' ? 'expense' : 'income';
+  const tx = {
+    id: uuid(), type: txType, walletId: wallet.id, targetWalletId: null, categoryId: await ensureDebtCategoryId(debt.type, txType),
+    amount: value, date, note: tr('Remboursement — {name}', { name: debt.personName }),
+    tags: [], reconciled: false, debtId: debt.id, debtPaymentId: payment.id, createdAt: new Date().toISOString(),
+  };
+  const settles = owed - value <= 0.005;
+  const after = settles ? { ...debt, status: 'paid' } : null;
+  await dbWriteBatch([
+    { store: STORES.DEBT_PAYMENTS, type: 'add', value: payment },
+    { store: STORES.TRANSACTIONS, type: 'add', value: tx },
+    ...(after ? [{ store: STORES.DEBTS, type: 'put', value: after }] : []),
+  ]);
+  await logAudit({ entityType: 'debtPayment', entityId: payment.id, action: 'create', after: payment });
+  await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'create', after: tx, note: tr('Remboursement de dette/créance') });
+  if (after) await logAudit({ entityType: 'debt', entityId: debt.id, action: 'update', before: debt, after, note: tr('Soldée') });
+  return { payment, tx, settled: settles, debtBefore: debt };
+}
+
+/** Annule un remboursement fait par recordSimplePayment : retire le versement et sa transaction, et rouvre la dette si ce
+    versement l'avait soldée. */
+export async function undoSimplePayment(result) {
+  await dbWriteBatch([
+    { store: STORES.DEBT_PAYMENTS, type: 'delete', value: result.payment.id },
+    { store: STORES.TRANSACTIONS, type: 'delete', value: result.tx.id },
+    ...(result.settled ? [{ store: STORES.DEBTS, type: 'put', value: result.debtBefore }] : []),
+  ]);
+  await logAudit({ entityType: 'debtPayment', entityId: result.payment.id, action: 'delete', before: result.payment, note: tr('Remboursement (annulation)') });
+  await logAudit({ entityType: 'transaction', entityId: result.tx.id, action: 'delete', before: result.tx, note: tr('Remboursement (annulation)') });
+}
+
 /** Fiche à exporter (PDF/Excel) pour cette dette/créance : voir proof-export.js pour le format.
     Le tableau part de l'ouverture et suit le restant dû après chaque remboursement. */
 async function buildDebtProof(d) {

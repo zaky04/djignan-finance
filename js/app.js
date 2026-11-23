@@ -51,6 +51,7 @@ import { openSmsImportModal } from './modules/sms-import.js';
 import { getUiMode, setUiMode, applyUiMode, SIMPLE_MORE_VIEWS } from './ui-mode.js';
 import { syncNativeReminders } from './native-reminders.js';
 import { initEasyHome, applyEasyHome, renderEasyHome, setEasyHome, openAddEntry } from './easy-home.js';
+import { openEasyDebts } from './easy-debts.js';
 import { maybeRunMonthlyBackupCheck } from './backup-verify.js';
 import { queueSharedSms } from './sms-queue.js';
 import { isSpeechSupported } from './speech-out.js';
@@ -1001,7 +1002,7 @@ async function onUnlocked({ role = 'owner' } = {}) {
     initSettingsModule();
     initSearchModule();
     wireGlobalChrome();
-    initEasyHome({ navigateTo });
+    initEasyHome({ navigateTo, openDebts: openEasyDebts });
 
     appState.theme = await getSetting('theme', 'auto');
     applyTheme(appState.theme);

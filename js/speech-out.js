@@ -166,6 +166,28 @@ export function buildTransferSavedSpeech(info) {
   return parts.join(' ');
 }
 
+/** Prêt ou remboursement (saisie guidée « On me doit » / « Je dois »). `action` : lend (j'ai prêté), borrow (j'ai emprunté),
+    collect (on me rend), repay (je rends). Avant l'enregistrement (`saved` faux) : la phrase puis la consigne du bouton vert ;
+    après : « C'est noté », ce qui reste à régler (`left`, pour un remboursement) et le solde du portefeuille touché (`balance`). */
+export function buildDebtSpeech(info) {
+  const { action, amount, currency, name = '', left = null, saved = false, balance = null, walletName = '' } = info;
+  const say = spokenAmount(amount, currency);
+  const head = action === 'lend' ? t('Vous avez prêté {amount} à {name}', { amount: say, name })
+    : action === 'borrow' ? t("{name} vous a prêté {amount}", { amount: say, name })
+      : action === 'collect' ? t('{name} vous rend {amount}', { amount: say, name })
+        : t('Vous rendez {amount} à {name}', { amount: say, name });
+  if (!saved) return t('{head}. Pour enregistrer, touchez le bouton vert.', { head });
+  const parts = [t("C'est noté : {head}.", { head })];
+  if (left !== null && left !== undefined) parts.push(left > 0.004 ? t('Il reste {amount}.', { amount: spokenAmount(left, currency) }) : t('Tout est réglé.'));
+  if (balance !== null && balance !== undefined && walletName) {
+    if (balance < -0.004) parts.push(t('Attention : {wallet} est en négatif, il manque {amount}.', { wallet: walletName, amount: spokenAmount(balance, currency) }));
+    else parts.push(action === 'lend' || action === 'repay'
+      ? t('Il vous reste {amount} sur {wallet}.', { amount: spokenAmount(balance, currency), wallet: walletName })
+      : t('Vous avez maintenant {amount} sur {wallet}.', { amount: spokenAmount(balance, currency), wallet: walletName }));
+  }
+  return parts.join(' ');
+}
+
 /** Réglage « lire à voix haute les confirmations » (clé speakConfirmations, désactivé par défaut). */
 export async function isSpeakConfirmationsEnabled() {
   return isSpeechSupported() && !!(await getSetting('speakConfirmations', false));

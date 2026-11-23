@@ -506,7 +506,7 @@ export function openAddEntry(openClassic) {
 /* ---------- Câblage (une seule fois) ---------- */
 
 /** `navigateTo` vient d'app.js (qui importe ce module : l'importer ici ferait un cycle). */
-export function initEasyHome({ navigateTo }) {
+export function initEasyHome({ navigateTo, openDebts = null }) {
   document.getElementById('easy-home')?.addEventListener('click', (event) => {
     const speakBtn = event.target.closest('#easy-speak-btn');
     if (speakBtn) { speakBalance(); return; }
@@ -514,6 +514,7 @@ export function initEasyHome({ navigateTo }) {
     if (!tile) return;
     const kind = tile.dataset.easy;
     if (kind === 'income' || kind === 'expense' || kind === 'transfer') openEasyEntry(kind);
+    else if (openDebts) openDebts(kind); // « On me doit » / « Je dois » : saisie guidée (easy-debts.js, branchée par app.js)
     else navigateTo('debts');
   });
   // Bouton « Écouter » du tableau de bord habituel (carte « Reste à vivre ») : utile même hors accueil facile.

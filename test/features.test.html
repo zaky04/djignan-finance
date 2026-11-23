@@ -666,6 +666,116 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   ok('déplacement : choisir « Je déplace de l\'argent » ouvre la saisie guidée de déplacement', !modalRoot.querySelector('.easy-chooser') && modalRoot.querySelector('.modal-header h3')?.textContent.includes('déplace'));
   await renderEasyHome();
   ok('déplacement : l\'accueil facile a son bouton pleine largeur sous les tuiles', !!easyHost.querySelector('.easy-move[data-easy="transfer"]'));
+  // « On me doit » / « Je dois » : saisie guidée des prêts et remboursements (easy-debts.js)
+  {
+    const { openEasyEntry: _unused, initEasyHome } = await import('../js/easy-home.js');
+    const { openEasyDebts, debtAction, debtMoneyLeaves } = await import('../js/easy-debts.js');
+    const { isSimpleDebt, listOpenDebts, createSimpleDebt, recordSimplePayment, undoSimplePayment, deleteDebtCascade } = await import('../js/modules/debts.js');
+    const { buildDebtSpeech } = await import('../js/speech-out.js');
+    const wait = (ms = 450) => new Promise((r) => setTimeout(r, ms));
+    const typeName = (v) => { const el = modalRoot.querySelector('#easy-who-input'); el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+    eq('prêts : l\'action dépend de la touche et du geste', [debtAction('owed', 'new'), debtAction('owed', 'repay'), debtAction('owe', 'new'), debtAction('owe', 'repay')], ['lend', 'collect', 'borrow', 'repay']);
+    eq('prêts : l\'argent sort en prêtant ou en rendant, il entre sinon', ['lend', 'repay', 'borrow', 'collect'].map(debtMoneyLeaves), [true, true, false, false]);
+    eq('prêts : textes à voix haute (avant / après enregistrement)', [
+      buildDebtSpeech({ action: 'lend', amount: 5000, currency: 'XOF', name: 'Awa' }),
+      buildDebtSpeech({ action: 'collect', amount: 3000, currency: 'XOF', name: 'Awa', saved: true, left: 2000, balance: 91500, walletName: 'Orange Money' }),
+      buildDebtSpeech({ action: 'repay', amount: 2000, currency: 'XOF', name: 'Bob', saved: true, left: 0 })],
+    ['Vous avez prêté cinq mille francs CFA à Awa. Pour enregistrer, touchez le bouton vert.',
+      "C'est noté : Awa vous rend trois mille francs CFA. Il reste deux mille francs CFA. Vous avez maintenant quatre-vingt-onze mille cinq cents francs CFA sur Orange Money.",
+      "C'est noté : Vous rendez deux mille francs CFA à Bob. Tout est réglé."]);
+    ok('prêts : un prêt avec intérêts, participants ou compte gardé n\'est pas « simple »', isSimpleDebt({ interestRate: 0 }) && !isSimpleDebt({ interestRate: 5 }) && !isSimpleDebt({ participants: [{ id: 'p' }] }) && !isSimpleDebt({ keptAccountId: 'k' }) && !isSimpleDebt({ investmentId: 'i' }) && !isSimpleDebt(null));
+
+    // 1. Nouvelle créance (« j'ai prêté »), sans aucun prêt en cours : on commence par le nom
+    modalRoot.innerHTML = '';
+    await openEasyDebts('owed');
+    ok('prêts : sans prêt en cours, « On me doit » commence directement par le nom', !!modalRoot.querySelector('#easy-who-input') && !modalRoot.querySelector('[data-debt]') && modalRoot.querySelector('#easy-next').disabled);
+    typeName('Awa');
+    ok('prêts : « Suivant » s\'active dès qu\'un nom est écrit', !modalRoot.querySelector('#easy-next').disabled);
+    press('#easy-next');
+    eq('prêts : le portefeuille est demandé (courants seulement) avec « pas de mouvement »', [...modalRoot.querySelectorAll('[data-wallet]')].map((b) => b.dataset.wallet).sort(), ['', 'w-e1', 'w-t-cash', 'w-t-eur']);
+    const walletBefore = await balanceOf('w-e1');
+    press('[data-wallet="w-e1"]');
+    press('[data-key="5"]'); press('[data-key="000"]'); press('#easy-next');
+    const sum1 = modalRoot.querySelector('.easy-summary').textContent;
+    ok('prêts : le récapitulatif dit Prêté, la personne et le portefeuille', sum1.includes('Prêté') && sum1.includes('Awa') && sum1.includes('Orange Money'));
+    press('#easy-save'); await wait();
+    const debtsAfter = await dbGetAll(STORES.DEBTS);
+    const awa = debtsAfter.find((d) => d.personName === 'Awa');
+    eq('prêts : la créance est enregistrée (5 000 F, sans intérêts, active)', [awa?.type, awa?.principal, awa?.currency, awa?.interestRate, awa?.status], ['receivable', 5000, 'XOF', 0, 'active']);
+    const openTx = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.debtId === awa?.id);
+    eq('prêts : l\'argent sort du portefeuille (dépense liée à la créance, catégorie Créance)', [openTx?.type, openTx?.amount, openTx?.walletId, awa?.openingTransactionId === openTx?.id, (await dbGetAll(STORES.CATEGORIES)).find((c) => c.id === openTx?.categoryId)?.name], ['expense', 5000, 'w-e1', true, 'Créance']);
+    eq('prêts : le portefeuille a perdu 5 000 F', walletBefore - await balanceOf('w-e1'), 5000);
+
+    // 2. Rembourser : « On me doit » montre maintenant Awa
+    modalRoot.innerHTML = '';
+    await openEasyDebts('owed');
+    ok('prêts : la liste montre Awa avec ce qu\'elle doit encore', modalRoot.querySelectorAll('[data-debt]').length === 1 && /Awa/.test(modalRoot.querySelector('[data-debt]').textContent) && /5\D*000/.test(modalRoot.querySelector('[data-debt]').textContent) && !!modalRoot.querySelector('#easy-new'));
+    press('[data-debt="0"]');
+    ok('prêts : toucher Awa ouvre le montant, avec un bouton « Tout »', !!modalRoot.querySelector('#easy-amount-num') && /Tout/.test(modalRoot.querySelector('#easy-all').textContent));
+    press('[data-key="9"]'); press('[data-key="000"]');
+    ok('prêts : plus que le reste dû → message et « Suivant » bloqué', !modalRoot.querySelector('#easy-too-much').hidden && modalRoot.querySelector('#easy-next').disabled);
+    press('#easy-clear'); press('[data-key="3"]'); press('[data-key="000"]');
+    ok('prêts : un montant permis débloque « Suivant »', !modalRoot.querySelector('#easy-next').disabled && modalRoot.querySelector('#easy-too-much').hidden);
+    press('#easy-next');
+    eq('prêts : plusieurs portefeuilles dans la devise → on demande lequel (pas d\'option « pas de mouvement »)', [...modalRoot.querySelectorAll('[data-wallet]')].map((b) => b.dataset.wallet).sort(), ['w-e1', 'w-t-cash']);
+    const walletBefore2 = await balanceOf('w-t-cash');
+    press('[data-wallet="w-t-cash"]');
+    ok('prêts : le récapitulatif annonce ce qui restera', /Il restera/.test(modalRoot.querySelector('.easy-summary').textContent) && modalRoot.querySelector('.easy-summary').textContent.includes('Récupéré'));
+    press('#easy-save'); await wait();
+    const pays = await dbGetAll(STORES.DEBT_PAYMENTS);
+    const payTx = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.debtPaymentId === pays[0]?.id);
+    eq('prêts : le versement de 3 000 F est enregistré, avec sa recette liée sur le portefeuille choisi', [pays.length, pays[0]?.amount, pays[0]?.debtId === awa.id, payTx?.type, payTx?.amount, payTx?.walletId, payTx?.debtId === awa.id], [1, 3000, true, 'income', 3000, 'w-t-cash', true]);
+    eq('prêts : le portefeuille a gagné 3 000 F, la créance reste active à 2 000 F', [(await balanceOf('w-t-cash')) - walletBefore2, (await listOpenDebts('receivable')).map((x) => [x.debt.personName, x.owed])], [3000, [['Awa', 2000]]]);
+
+    // 3. Solder puis annuler ; refus d'un trop-versé, d'un prêt avec intérêts, d'un mauvais portefeuille
+    const awaNow = (await dbGetAll(STORES.DEBTS)).find((d) => d.id === awa.id);
+    eq('prêts : un remboursement supérieur au reste est refusé', await recordSimplePayment(awaNow, { amount: 2500, walletId: 'w-e1' }), null);
+    eq('prêts : un portefeuille d\'une autre devise est refusé', await recordSimplePayment(awaNow, { amount: 100, walletId: 'w-t-eur' }), null);
+    eq('prêts : un prêt avec intérêts n\'est pas remboursé par la saisie guidée', await recordSimplePayment({ ...awaNow, interestRate: 4 }, { amount: 100, walletId: 'w-e1' }), null);
+    const last = await recordSimplePayment(awaNow, { amount: 2000, walletId: 'w-e1' });
+    eq('prêts : solder la créance la marque « soldée »', [last.settled, (await dbGetAll(STORES.DEBTS)).find((d) => d.id === awa.id).status, (await listOpenDebts('receivable')).length], [true, 'paid', 0]);
+    await undoSimplePayment(last);
+    eq('prêts : annuler ce versement rouvre la créance (2 000 F, active) et retire sa transaction', [(await dbGetAll(STORES.DEBTS)).find((d) => d.id === awa.id).status, (await listOpenDebts('receivable'))[0]?.owed, (await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.debtPaymentId === last.payment.id)], ['active', 2000, false]);
+
+    // 4. « Je dois » : j'ai emprunté, sans mouvement de portefeuille
+    modalRoot.innerHTML = '';
+    await openEasyDebts('owe');
+    typeName('Bob'); press('#easy-next');
+    press('[data-wallet=""]');
+    press('[data-key="2"]'); press('[data-key="000"]'); press('#easy-next');
+    ok('prêts : sans portefeuille, le récapitulatif le dit', modalRoot.querySelector('.easy-summary').textContent.includes('Emprunté') && modalRoot.querySelector('.easy-summary').textContent.includes('Aucun portefeuille ne bouge'));
+    const txCountBefore = (await dbGetAll(STORES.TRANSACTIONS)).length;
+    press('#easy-save'); await wait();
+    const bob = (await dbGetAll(STORES.DEBTS)).find((d) => d.personName === 'Bob');
+    eq('prêts : la dette est enregistrée dans la devise de base, sans transaction', [bob?.type, bob?.principal, bob?.currency, bob?.openingTransactionId, (await dbGetAll(STORES.TRANSACTIONS)).length], ['debt', 2000, 'XOF', null, txCountBefore]);
+    // Emprunter AVEC portefeuille : l'argent entre ; annuler efface tout
+    const loan = await createSimpleDebt({ type: 'debt', personName: 'Cora', principal: 1000, currency: 'XOF', walletId: 'w-e1' });
+    eq('prêts : emprunter avec portefeuille = recette liée (argent reçu)', [loan.openingTx.type, loan.openingTx.walletId, loan.debt.openingTransactionId === loan.openingTx.id], ['income', 'w-e1', true]);
+    await deleteDebtCascade(loan.debt.id);
+    ok('prêts : l\'annulation d\'un nouveau prêt efface la dette et sa transaction', !(await dbGetAll(STORES.DEBTS)).some((d) => d.id === loan.debt.id) && !(await dbGetAll(STORES.TRANSACTIONS)).some((x) => x.id === loan.openingTx.id));
+    eq('prêts : nom vide, montant nul, mauvais type ou portefeuille d\'épargne sont refusés', [
+      await createSimpleDebt({ type: 'debt', personName: '  ', principal: 10, currency: 'XOF' }),
+      await createSimpleDebt({ type: 'debt', personName: 'X', principal: 0, currency: 'XOF' }),
+      await createSimpleDebt({ type: 'autre', personName: 'X', principal: 10, currency: 'XOF' }),
+      await createSimpleDebt({ type: 'debt', personName: 'X', principal: 10, currency: 'XOF', walletId: 'w-t-save' })], [null, null, null, null]);
+    // 5. Un prêt avec intérêts ouvre la fenêtre complète
+    await dbAdd(STORES.DEBTS, { id: 'd-int', type: 'receivable', personName: 'Dan', principal: 4000, currency: 'XOF', interestRate: 5, startDate: '2026-01-01', status: 'active', createdAt: '2026-01-01T00:00:00.000Z' });
+    modalRoot.innerHTML = '';
+    await openEasyDebts('owed');
+    [...modalRoot.querySelectorAll('[data-debt]')].find((b) => b.textContent.includes('Dan')).click(); await wait();
+    ok('prêts : un prêt avec intérêts ouvre la fenêtre de remboursement complète (formulaire classique)', !!modalRoot.querySelector('#payment-form') && !modalRoot.querySelector('#easy-step'));
+    modalRoot.innerHTML = '';
+    // 6. Accueil facile : « On me doit » / « Je dois » appellent la saisie guidée
+    {
+      const calls = [];
+      await renderEasyHome();
+      initEasyHome({ navigateTo: (v) => calls.push(['nav', v]), openDebts: (k) => calls.push(['debts', k]) });
+      easyHost.querySelector('.easy-tile[data-easy="owed"]').click();
+      easyHost.querySelector('.easy-tile[data-easy="owe"]').click();
+      eq('prêts : les deux touches de l\'accueil ouvrent la saisie guidée des prêts (plus l\'écran Dettes)', calls, [['debts', 'owed'], ['debts', 'owe']]);
+    }
+    for (const store of [STORES.DEBTS, STORES.DEBT_PAYMENTS]) for (const row of await dbGetAll(store)) await (await import('../js/db.js')).dbDelete(store, row.id);
+  }
   await dbm_cleanup2();
   async function dbm_cleanup2() { const m = await import('../js/db.js'); for (const id of ['w-t-eur', 'w-t-cash', 'w-t-save', 'w-t-old']) await m.dbDelete(STORES.WALLETS, id); delete document.body.dataset.easyHome; modalRoot.innerHTML = ''; }
   await dbm_cleanup();
