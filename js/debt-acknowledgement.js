@@ -11,7 +11,7 @@
    ========================================================================== */
 
 import { formatCurrency, formatDate, escapeHtml, openModal, showToast, todayISO, ZERO_DECIMAL_CURRENCIES } from './utils.js';
-import { getSetting } from './db.js';
+import { getSetting, assertOwner } from './db.js';
 import { getLanguage, t } from './i18n.js';
 import { buildSchedule } from './loan-schedule.js';
 
@@ -230,6 +230,7 @@ function fileNameFor(debt) {
 
 /** Fenêtre de préparation : lieu, motif, modalités, témoins — puis télécharger / partager / imprimer le PDF. */
 export async function openDebtAcknowledgementModal(debt, payments = []) {
+  assertOwner(); // un aidant ne sort pas de reconnaissance de dette de l'appareil
   if (!window.jspdf) { showToast(t("La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant).")); return null; }
   const profile = await getSetting('userProfile', {});
   const meName = [profile.firstName, profile.lastName].filter(Boolean).join(' ') || t('Utilisateur');

@@ -1671,6 +1671,19 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   eq('aidant : ne peut rien vider, tout effacer, ni supprimer en lot', [await rejects(() => dbm.dbClear(STORES.TRANSACTIONS)), await rejects(() => wipeAllData()), await rejects(() => dbm.dbWriteBatch([{ store: STORES.TRANSACTIONS, type: 'delete', value: 'tx-owner' }]))], [true, true, true]);
   eq('aidant : ne peut pas importer ou restaurer', await rejects(() => dbm.importAllData({ stores: { [STORES.WALLETS]: [] } })), true);
   ok('aidant : peut en revanche vérifier une sauvegarde (validation à blanc, rien n\'est écrit)', !!(await dbm.importAllData({ stores: { [STORES.WALLETS]: [] } }, { dryRun: true })));
+  {
+    // Sortir des données de l'appareil (fichiers CSV / JSON / PDF / fiches) est réservé au propriétaire : l'aidant voit, il n'emporte pas
+    const bk = await import('../js/backup.js');
+    const pe = await import('../js/proof-export.js');
+    const da = await import('../js/debt-acknowledgement.js');
+    eq('aidant : ne peut exporter ni CSV (opérations, investissements) ni sauvegarde JSON, claire ou chiffrée', [
+      await rejects(() => bk.exportTransactionsCsv()), await rejects(() => bk.exportTransactionsCsv('2026-10')), await rejects(() => bk.exportInvestmentEntriesCsv()),
+      await rejects(() => bk.exportJsonBackup()), await rejects(() => bk.exportEncryptedBackup('secret')),
+    ], [true, true, true, true, true]);
+    eq('aidant : ne peut pas sortir de fiche PDF/Excel ni de reconnaissance de dette', [
+      await rejects(() => pe.openProofExportModal(() => ({}))), await rejects(() => pe.generateProof({}, 'pdf')), await rejects(() => da.openDebtAcknowledgementModal({ id: 'd-x' })),
+    ], [true, true, true]);
+  }
   await dbm.dbWriteBatch([{ store: STORES.TRANSACTIONS, type: 'add', value: { id: 'tx-helper-b', walletId: 'w-h1', type: 'expense', amount: 5, date: '2026-10-03' } }]);
   eq('aidant : une écriture groupée est marquée aussi', (await getAll(STORES.TRANSACTIONS)).find((x) => x.id === 'tx-helper-b').enteredBy, 'helper');
   // Écrasement (dbPut / lots « put ») : créer oui, réécrire l'existant du propriétaire non

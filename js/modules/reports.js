@@ -11,7 +11,7 @@ import {
 } from '../ledger.js';
 import { formatCurrency, formatMonthLabel, currentMonthKey, monthKeyOffset, localISODate, showToast, escapeHtml, intlLocale } from '../utils.js';
 import { exportTransactionsCsv, exportInvestmentEntriesCsv } from '../backup.js';
-import { STORES, dbGetAll, getSetting } from '../db.js';
+import { STORES, dbGetAll, getSetting, assertOwner } from '../db.js';
 import { healthScorePanelHtml, calendarPanelHtml, wireCalendarPanel } from './reports-extras.js';
 import { renderExpensesByCategoryChart, renderNetWorthTrendChart, renderBudgetVsActualChart, renderMultiTrendChart, renderNetSavingsBarChart, trimLeadingZeros } from '../charts.js';
 import { loadMonthlyRecap, recapHighlights, recapAsText, shareRecapImage } from '../monthly-recap.js';
@@ -220,6 +220,7 @@ async function renderBudgetCharts(container) {
 }
 
 async function generatePdfReport() {
+  assertOwner(); // un aidant ne sort pas de rapport de l'appareil
   if (!window.jspdf) { showToast(t("La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant).")); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
@@ -304,6 +305,7 @@ async function generatePdfReport() {
 }
 
 async function generateAnnualPdfReport() {
+  assertOwner(); // un aidant ne sort pas de rapport de l'appareil
   if (!window.jspdf) { showToast(t("La bibliothèque PDF n'est pas chargée (vendor/jspdf.umd.min.js manquant).")); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();

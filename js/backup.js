@@ -4,7 +4,7 @@
    distante hebdomadaire) + rappel hebdomadaire de sauvegarde.
    ========================================================================== */
 
-import { STORES, dbGetAll, dbAdd, dbPut, dbBulkPut, exportAllData, importAllData, getSetting, setSetting } from './db.js';
+import { STORES, dbGetAll, dbAdd, dbPut, dbBulkPut, exportAllData, importAllData, getSetting, setSetting, assertOwner } from './db.js';
 import { getEnrichedTransactions, guessCategoryId } from './ledger.js';
 import { ASSET_CLASSES, ENTRY_TYPE_LABELS } from './modules/investments.js';
 import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast, safeNumber, compressImageBlob, intlLocale } from './utils.js';
@@ -221,6 +221,7 @@ export class BackupIntegrityError extends Error {
 }
 
 export async function exportJsonBackup() {
+  assertOwner(); // un aidant voit les données mais ne les sort pas de l'appareil
   const data = await exportAllData();
   await serializeReceiptsForExport(data);
   data.integrity = await computeIntegrity(data.stores); // APRÈS la sérialisation des photos : c'est le contenu du fichier
@@ -298,6 +299,7 @@ export const gzipBytes = (bytes) => pipeBytes(bytes, new CompressionStream('gzip
 export const gunzipBytes = (bytes) => pipeBytes(bytes, new DecompressionStream('gzip'));
 
 export async function exportEncryptedBackup(passphrase) {
+  assertOwner(); // un aidant voit les données mais ne les sort pas de l'appareil
   const payload = await buildEncryptedPayload(passphrase);
   // Relecture immédiate : une sauvegarde qu'on ne saurait pas rouvrir ne vaut rien. Déchiffre avec le même mot de passe et
   // recompare l'empreinte AVANT de proposer le fichier — mieux vaut une erreur maintenant qu'une surprise le jour de la restauration.
@@ -337,6 +339,7 @@ function csvEscape(value) {
 
 /** Exporte les transactions en CSV. Sans monthKey : historique complet. */
 export async function exportTransactionsCsv(monthKey = null) {
+  assertOwner(); // un aidant voit les données mais ne les sort pas de l'appareil
   const rows = await getEnrichedTransactions(monthKey ? { monthKey } : {});
   const header = GEOFINANCE_CSV_HEADER_FR.map(tr);
   const lines = [header.join(';')];
@@ -360,6 +363,7 @@ const INVESTMENT_CSV_HEADER_FR = ['Date', 'Investissement', "Classe d'actif", 'T
     toutes classes d'actif confondues) en CSV — un investissement supprimé entre-temps laisse ses
     entrées orphelines de côté plutôt que de planter l'export. */
 export async function exportInvestmentEntriesCsv() {
+  assertOwner(); // un aidant voit les données mais ne les sort pas de l'appareil
   const [entries, investments, wallets] = await Promise.all([
     dbGetAll(STORES.INVESTMENT_ENTRIES), dbGetAll(STORES.INVESTMENTS), dbGetAll(STORES.WALLETS),
   ]);

@@ -224,7 +224,7 @@ export function getAccessRole() { return accessRole; }
 export class HelperRestrictedError extends Error {
   constructor() { super('Action réservée au propriétaire.'); this.name = 'HelperRestrictedError'; }
 }
-function assertOwner() { if (accessRole === 'helper') throw new HelperRestrictedError(); }
+export function assertOwner() { if (accessRole === 'helper') throw new HelperRestrictedError(); }
 
 /** Réglages que l'aidant ne peut pas réécrire : des données du propriétaire rangées dans la table des réglages. */
 const HELPER_BLOCKED_SETTINGS = new Set(['groupProjects', 'baseCurrency', 'userProfile']);

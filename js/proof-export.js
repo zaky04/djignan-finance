@@ -31,7 +31,7 @@
    ========================================================================== */
 
 import { formatCurrency, formatDate, escapeHtml, openModal, showToast, localISODate, ZERO_DECIMAL_CURRENCIES } from './utils.js';
-import { getSetting } from './db.js';
+import { getSetting, assertOwner } from './db.js';
 import { t } from './i18n.js';
 import { icon as svgIcon } from './icons.js';
 
@@ -389,6 +389,7 @@ function buildXlsx(model) {
    Interface : petite modale PDF / Imprimer / Excel
    ========================================================================== */
 export async function generateProof(model, kind) {
+  assertOwner(); // un aidant ne sort pas de fiche de l'appareil
   const prepared = await prepareModel(model);
   const base = filenameBase(prepared);
   if (kind === 'xlsx') {
@@ -410,6 +411,7 @@ export async function generateProof(model, kind) {
 
 /** `buildDocument` est appelée à l'ouverture (données fraîches) et renvoie le modèle de document. */
 export async function openProofExportModal(buildDocument) {
+  assertOwner(); // un aidant ne sort pas de fiche de l'appareil
   let model;
   try {
     model = await buildDocument();
