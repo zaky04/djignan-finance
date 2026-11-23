@@ -4222,7 +4222,12 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
-### 23 novembre 2026 (suite 8) — Corriger une erreur depuis l'accueil facile : toucher une dernière opération (`CACHE_VERSION` `v195`, non commité au moment d'écrire)
+### 23 novembre 2026 (suite 9) — Échéance d'un nouveau prêt en saisie guidée (`CACHE_VERSION` `v196`, non commité au moment d'écrire)
+
+Écran « C'est bon ? » d'un **nouveau** prêt (`easy-debts.js`) : sous le récapitulatif, « Quand doit-il vous rendre ? » / « Quand devez-vous rendre ? » — **Pas de date** (par défaut), 1 semaine, 2 semaines, 1 mois, ou Autre jour (calendrier, jamais dans le passé) ; le choix s'ajoute au récapitulatif (« À rendre le … »).
+`createSimpleDebt` (`debts.js`) accepte `dueDate` et l'**ignore** si elle est absurde ou antérieure à la date du prêt (sinon la dette serait « en retard » dès sa création). L'échéance alimente les rappels existants (notifications, Dettes & créances). Pas pour un remboursement. Tests : 4 nouveaux (518). Vérifié sur 375 px.
+
+### 23 novembre 2026 (suite 8) — Corriger une erreur depuis l'accueil facile : toucher une dernière opération (`CACHE_VERSION` `v195`, poussé en `cac8609`)
 
 Jusqu'ici une erreur de saisie en accueil facile ne se corrigeait que dans l'écran Transactions. Les trois « Dernières opérations » sont maintenant des **boutons** (`.easy-recent-row[data-tx]`) : toucher une ligne ouvre `openEasyTxDetail` (`easy-home.js`) — nature, montant (chiffres et lettres),
 catégorie ou « De / Vers », portefeuille, jour, note — avec un gros bouton **« Supprimer cette opération »** et « Fermer ». La suppression passe par `confirmDialog({ danger, requirePin })` (code PIN s'il y en a un ; refusée à un aidant, comme partout), est inscrite au journal d'audit et **annulable** par le toast.

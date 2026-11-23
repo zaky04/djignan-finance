@@ -22,7 +22,7 @@ import { openPersonReminder } from './modules/person-ledger.js';
 import {
   isSpeechSupported, speak, stopSpeaking, primeSpeech, spokenAmount, buildDebtSpeech, isSpeakConfirmationsEnabled,
 } from './speech-out.js';
-import { formatCurrency, escapeHtml, openModal, showToast, intlLocale, todayISO, ZERO_DECIMAL_CURRENCIES } from './utils.js';
+import { formatCurrency, formatDate, escapeHtml, openModal, showToast, intlLocale, todayISO, localISODate, ZERO_DECIMAL_CURRENCIES } from './utils.js';
 import { notifyDataChanged } from './state.js';
 import { t, getLanguage } from './i18n.js';
 import { isVoiceSupported, listenOnce } from './voice-input.js';
@@ -49,7 +49,9 @@ export async function openEasyDebts(kind) {
   const dailyWallets = allWallets.filter(isDailyWallet);
   const names = [...new Set(allDebts.slice().sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '')).map((d) => d.personName).filter(Boolean))].slice(0, 5);
 
-  const state = { step: open.length ? 'list' : 'who', mode: 'new', debt: null, owed: 0, name: '', amount: '', walletId: null, noWallet: false };
+  const state = { step: open.length ? 'list' : 'who', mode: 'new', debt: null, owed: 0, name: '', amount: '', walletId: null, noWallet: false, due: '' };
+  /** Date locale dans `days` jours (AAAA-MM-JJ). */
+  const isoInDays = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return localISODate(d); };
   const hasList = open.length > 0;
   const action = () => debtAction(kind, state.mode);
   const walletsForNow = () => (state.mode === 'repay' ? dailyWallets.filter((w) => w.currency === state.debt.currency) : dailyWallets);
@@ -109,7 +111,7 @@ export async function openEasyDebts(kind) {
       const [debts, payments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
       openPersonReminder(picked.debt.personName, debts, payments);
     }));
-    body.querySelector('#easy-new').addEventListener('click', () => { Object.assign(state, { mode: 'new', debt: null, amount: '', walletId: null, noWallet: false }); go('who'); });
+    body.querySelector('#easy-new').addEventListener('click', () => { Object.assign(state, { mode: 'new', debt: null, amount: '', walletId: null, noWallet: false, due: '' }); go('who'); });
   }
 
   /** Nouveau prêt : avec qui ? (écrit ou dicté, ou un nom déjà utilisé) */
@@ -222,6 +224,21 @@ export async function openEasyDebts(kind) {
     return { action: action(), amount: Number(state.amount) || 0, currency: currency(), name: state.mode === 'repay' ? state.debt.personName : state.name, ...extra };
   }
 
+  /** « Quand doit-il rendre ? » : choix d'une échéance facultative (nouveau prêt). */
+  function dueChooserHtml() {
+    const presets = [['', t('Pas de date')], [isoInDays(7), t('1 semaine')], [isoInDays(14), t('2 semaines')], [isoInDays(30), t('1 mois')]];
+    const isOther = !!state.due && !presets.some(([iso]) => iso === state.due);
+    const label = kind === 'owed' ? t('Quand doit-il vous rendre ?') : t('Quand devez-vous rendre ?');
+    return `<div class="easy-date" role="group" aria-label="${escapeHtml(label)}">
+        <span class="easy-note-label">${escapeHtml(label)}</span>
+        <div class="easy-date-row">
+          ${presets.map(([iso, text]) => `<button type="button" class="btn easy-day ${state.due === iso ? 'is-on' : 'btn-ghost'}" data-due="${iso}" aria-pressed="${state.due === iso}">${escapeHtml(text)}</button>`).join('')}
+          <button type="button" class="btn easy-day ${isOther ? 'is-on' : 'btn-ghost'}" id="easy-due-other" aria-pressed="${isOther}">${escapeHtml(isOther ? formatDate(state.due) : t('Autre jour'))}</button>
+        </div>
+        <input type="date" id="easy-due-input" class="easy-day-input" min="${todayISO()}" value="${state.due}" hidden aria-label="${escapeHtml(t('Choisir le jour'))}">
+      </div>`;
+  }
+
   function renderConfirm(body) {
     const n = Number(state.amount) || 0;
     const repay = state.mode === 'repay';
@@ -239,7 +256,9 @@ export async function openEasyDebts(kind) {
         <div class="easy-summary-line">${icon('person', 22)} ${escapeHtml(person)}</div>
         <div class="easy-summary-line">${w ? `${icon('wallet', 22)} ${escapeHtml(w.name)}` : `${icon('history', 22)} ${escapeHtml(t("Aucun portefeuille ne bouge"))}`}</div>
         ${repay ? `<div class="easy-summary-line">${icon('ledger', 22)} ${escapeHtml(left > 0.005 ? t('Il restera {amount}', { amount: formatCurrency(left, currency()) }) : t('Tout sera réglé'))}</div>` : ''}
+        ${!repay && state.due ? `<div class="easy-summary-line">${icon('history', 22)} ${escapeHtml(t('À rendre le {date}', { date: formatDate(state.due) }))}</div>` : ''}
       </div>
+      ${repay ? '' : dueChooserHtml()}
       <div class="easy-warning" id="easy-warning" hidden></div>
       <div class="easy-actions easy-actions-stack">
         <button type="button" class="btn easy-btn easy-save" id="easy-save">${icon('check', 28)} ${t('Oui, enregistrer')}</button>
@@ -256,6 +275,12 @@ export async function openEasyDebts(kind) {
         warnEl.hidden = false;
       }).catch(() => {});
     }
+    // Échéance (nouveau prêt seulement) : pas de date, dans 1 ou 2 semaines, dans 1 mois, ou un autre jour (jamais dans le passé).
+    const dueInput = body.querySelector('#easy-due-input');
+    const chooseDue = (iso) => { state.due = /^\d{4}-\d{2}-\d{2}$/.test(iso || '') && iso >= todayISO() ? iso : ''; renderConfirm(body); };
+    body.querySelectorAll('[data-due]').forEach((b) => b.addEventListener('click', () => chooseDue(b.dataset.due)));
+    body.querySelector('#easy-due-other')?.addEventListener('click', () => { dueInput.hidden = false; if (dueInput.showPicker) { try { dueInput.showPicker(); } catch { dueInput.focus(); } } else dueInput.focus(); });
+    dueInput?.addEventListener('change', () => { if (dueInput.value) chooseDue(dueInput.value); });
     body.querySelector('#easy-say')?.addEventListener('click', () => { primeSpeech(); speak(buildDebtSpeech(sentenceInfo({ left }))); });
     body.querySelector('#easy-fix').addEventListener('click', () => go('amount'));
     body.querySelector('#easy-save').addEventListener('click', async (e) => {
@@ -270,7 +295,7 @@ export async function openEasyDebts(kind) {
         if (!result) { saveBtn.disabled = false; showToast(t("Impossible d'enregistrer : vérifiez le montant et le portefeuille.")); return; }
         undo = () => undoSimplePayment(result);
       } else {
-        const result = await createSimpleDebt({ type: debtType, personName: state.name, principal: n, currency: currency(), walletId: state.walletId, date });
+        const result = await createSimpleDebt({ type: debtType, personName: state.name, principal: n, currency: currency(), walletId: state.walletId, date, dueDate: state.due || null });
         if (!result) { saveBtn.disabled = false; showToast(t("Impossible d'enregistrer : ce portefeuille n'est plus disponible.")); return; }
         undo = () => deleteDebtCascade(result.debt.id);
       }

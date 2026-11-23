@@ -710,10 +710,21 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     press('[data-key="5"]'); press('[data-key="000"]'); press('#easy-next');
     const sum1 = modalRoot.querySelector('.easy-summary').textContent;
     ok('prêts : le récapitulatif dit Prêté, la personne et le portefeuille', sum1.includes('Prêté') && sum1.includes('Awa') && sum1.includes('Orange Money'));
+    eq('prêts : une échéance facultative est proposée (pas de date par défaut, 1 semaine, 2 semaines, 1 mois, autre jour)', [[...modalRoot.querySelectorAll('[data-due]')].map((b) => b.dataset.due), modalRoot.querySelector('[data-due=""]').getAttribute('aria-pressed'), !!modalRoot.querySelector('#easy-due-other')], [['', isoAgo(-7), isoAgo(-14), isoAgo(-30)], 'true', true]);
+    press(`[data-due="${isoAgo(-14)}"]`);
+    ok('prêts : choisir « 2 semaines » le montre au récapitulatif et garde le choix', modalRoot.querySelector('.easy-summary').textContent.includes('À rendre le') && modalRoot.querySelector(`[data-due="${isoAgo(-14)}"]`).getAttribute('aria-pressed') === 'true');
     press('#easy-save'); await wait();
     const debtsAfter = await dbGetAll(STORES.DEBTS);
     const awa = debtsAfter.find((d) => d.personName === 'Awa');
     eq('prêts : la créance est enregistrée (5 000 F, sans intérêts, active)', [awa?.type, awa?.principal, awa?.currency, awa?.interestRate, awa?.status], ['receivable', 5000, 'XOF', 0, 'active']);
+    eq('prêts : l\'échéance choisie (2 semaines) est enregistrée', awa?.dueDate, isoAgo(-14));
+    {
+      const past = await createSimpleDebt({ type: 'debt', personName: 'Eve', principal: 10, currency: 'XOF', dueDate: isoAgo(3) });
+      const junk = await createSimpleDebt({ type: 'debt', personName: 'Fay', principal: 10, currency: 'XOF', dueDate: 'demain' });
+      const ok2 = await createSimpleDebt({ type: 'debt', personName: 'Gus', principal: 10, currency: 'XOF', dueDate: isoAgo(-5) });
+      eq('prêts : une échéance passée ou absurde est ignorée, une échéance valide gardée', [past.debt.dueDate, junk.debt.dueDate, ok2.debt.dueDate], [null, null, isoAgo(-5)]);
+      for (const r of [past, junk, ok2]) await deleteDebtCascade(r.debt.id);
+    }
     const openTx = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.debtId === awa?.id);
     eq('prêts : l\'argent sort du portefeuille (dépense liée à la créance, catégorie Créance)', [openTx?.type, openTx?.amount, openTx?.walletId, awa?.openingTransactionId === openTx?.id, (await dbGetAll(STORES.CATEGORIES)).find((c) => c.id === openTx?.categoryId)?.name], ['expense', 5000, 'w-e1', true, 'Créance']);
     eq('prêts : le portefeuille a perdu 5 000 F', walletBefore - await balanceOf('w-e1'), 5000);

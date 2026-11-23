@@ -2189,6 +2189,14 @@ const EN = {
   "Attention : {wallet} ne contient que {balance}. Ce déplacement le ferait passer en négatif.": 'Careful: {wallet} only holds {balance}. This transfer would make it negative.',
   "Déplacement de {amount}, de {from} vers {to}. Pour enregistrer, touchez le bouton vert.": 'Transfer of {amount}, from {from} to {to}. To save, tap the green button.',
   "C'est noté : {amount} déplacés de {from} vers {to}.": 'Noted: {amount} moved from {from} to {to}.',
+  /* ---- Échéance d'un nouveau prêt (easy-debts.js) ---- */
+  'Quand doit-il vous rendre ?': 'When should he pay you back?',
+  'Quand devez-vous rendre ?': 'When do you have to pay back?',
+  'Pas de date': 'No date',
+  '1 semaine': '1 week',
+  '2 semaines': '2 weeks',
+  '1 mois': '1 month',
+  'À rendre le {date}': 'Due on {date}',
   /* ---- Toucher une dernière opération de l'accueil facile : détail et suppression ---- */
   'Cette opération': 'This operation',
   'Supprimer cette opération': 'Delete this operation',
