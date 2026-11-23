@@ -24,7 +24,7 @@ import {
 import { recordTemplateNow, undoRecordedTemplate, pastOrTodayISO } from './quick-templates.js';
 import {
   isSpeechSupported, speak, stopSpeaking, primeSpeech, spokenAmount,
-  buildBalanceSpeech, buildSavedSpeech, buildConfirmSpeech, isSpeakConfirmationsEnabled,
+  buildBalanceSpeech, buildSavedSpeech, buildConfirmSpeech, buildTransferSavedSpeech, buildTransferConfirmSpeech, isSpeakConfirmationsEnabled,
 } from './speech-out.js';
 import { formatCurrency, formatDate, escapeHtml, openModal, showToast, intlLocale, todayISO, localISODate, compressImageBlob, ZERO_DECIMAL_CURRENCIES } from './utils.js';
 import { notifyDataChanged } from './state.js';
@@ -150,6 +150,7 @@ export async function renderEasyHome() {
       <button type="button" class="easy-tile easy-owed" data-easy="owed">${icon('people', 44)}<span class="easy-tile-label">${t('On me doit')}</span><span class="easy-tile-amount amount" data-value="${snap.receivables}">${escapeHtml(formatCurrency(snap.receivables, cur))}</span></button>
       <button type="button" class="easy-tile easy-owe" data-easy="owe">${icon('ledger', 44)}<span class="easy-tile-label">${t('Je dois')}</span><span class="easy-tile-amount amount" data-value="${snap.debts}">${escapeHtml(formatCurrency(snap.debts, cur))}</span></button>
     </div>
+    <button type="button" class="btn btn-ghost easy-move" data-easy="transfer">${icon('swap', 28)} <span>${t("Je déplace de l'argent")}</span></button>
     ${recent.length ? `<h3 class="easy-section-title">${t('Dernières opérations')}</h3><div class="easy-recent">${recent.map(recentRowHtml).join('')}</div>` : ''}`;
 }
 
@@ -170,8 +171,17 @@ const KEYPAD_ROWS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 export async function openEasyEntry(type) {
   primeSpeech(); // dans le geste du clic, avant tout await (voir primeSpeech)
   const [allWallets, allCategories, allTx] = await Promise.all([dbGetAll(STORES.WALLETS), dbGetAll(STORES.CATEGORIES), dbGetAll(STORES.TRANSACTIONS)]);
-  const wallets = allWallets.filter(isDailyWallet);
-  if (!wallets.length) { showToast(t("Créez d'abord un portefeuille (menu Plus, puis Portefeuilles).")); return; }
+  const isTransfer = type === 'transfer';
+  // Déplacer de l'argent : tous les portefeuilles non archivés (l'épargne aussi), mais seulement vers un autre de la MÊME devise.
+  const pool = allWallets.filter((w) => !w.archived);
+  const peersOf = (w) => pool.filter((o) => o.id !== w.id && o.currency === w.currency);
+  const wallets = isTransfer ? pool.filter((w) => peersOf(w).length > 0) : allWallets.filter(isDailyWallet);
+  if (!wallets.length) {
+    showToast(isTransfer
+      ? t("Pour déplacer de l'argent, il faut deux portefeuilles dans la même devise (menu Plus, puis Portefeuilles).")
+      : t("Créez d'abord un portefeuille (menu Plus, puis Portefeuilles)."));
+    return;
+  }
 
   // Le portefeuille le plus utilisé récemment passe en premier.
   const lastUse = new Map();
@@ -184,20 +194,21 @@ export async function openEasyEntry(type) {
   const categories = allCategories.filter((c) => c.type === type && !c.parentId)
     .sort((a, b) => (usage.get(b.id) || 0) - (usage.get(a.id) || 0) || a.name.localeCompare(b.name));
 
-  const state = { step: wallets.length > 1 ? 'wallet' : 'amount', walletId: wallets[0].id, amount: '', categoryId: null, note: '', date: todayISO(), photo: null, photoUrl: '' };
+  const state = { step: (wallets.length > 1 || isTransfer) ? 'wallet' : 'amount', walletId: wallets[0].id, targetId: null, amount: '', categoryId: null, note: '', date: todayISO(), photo: null, photoUrl: '' };
   const MAX_PHOTO_BYTES = 15 * 1024 * 1024; // même plafond que le partage entrant (sw.js) : au-delà, la photo n'est pas gardée
   const setPhoto = (blob) => { if (state.photoUrl) URL.revokeObjectURL(state.photoUrl); state.photo = blob; state.photoUrl = blob ? URL.createObjectURL(blob) : ''; };
   const wallet = () => wallets.find((w) => w.id === state.walletId);
   const currency = () => wallet().currency;
   const allowDecimal = () => !ZERO_DECIMAL_CURRENCIES.has(currency());
-  const title = type === 'income' ? t("J'ai reçu de l'argent") : t("J'ai dépensé de l'argent");
+  const target = () => pool.find((w) => w.id === state.targetId) || null;
+  const title = isTransfer ? t("Je déplace de l'argent") : type === 'income' ? t("J'ai reçu de l'argent") : t("J'ai dépensé de l'argent");
 
   const modal = openModal('<div id="easy-step"></div>', { title, onClose: () => { stopSpeaking(); setPhoto(null); } });
   modal.el.querySelector('.modal-card').classList.add('easy-modal');
   const stepEl = modal.el.querySelector('#easy-step');
 
   function stepDots() {
-    const order = wallets.length > 1 ? ['wallet', 'amount', 'category', 'confirm'] : ['amount', 'category', 'confirm'];
+    const order = isTransfer ? ['wallet', 'target', 'amount', 'confirm'] : wallets.length > 1 ? ['wallet', 'amount', 'category', 'confirm'] : ['amount', 'category', 'confirm'];
     return `<div class="easy-dots" aria-hidden="true">${order.map((s) => `<span class="${s === state.step ? 'is-current' : (order.indexOf(s) < order.indexOf(state.step) ? 'is-done' : '')}"></span>`).join('')}</div>`;
   }
 
@@ -205,6 +216,7 @@ export async function openEasyEntry(type) {
     stepEl.innerHTML = stepDots() + `<div id="easy-body"></div>`;
     const body = stepEl.querySelector('#easy-body');
     if (state.step === 'wallet') renderWalletStep(body);
+    else if (state.step === 'target') renderTargetStep(body);
     else if (state.step === 'amount') renderAmountStep(body);
     else if (state.step === 'category') renderCategoryStep(body);
     else renderConfirmStep(body);
@@ -213,15 +225,33 @@ export async function openEasyEntry(type) {
 
   function renderWalletStep(body) {
     body.innerHTML = `
-      <p class="easy-question">${t('Sur quel portefeuille ?')}</p>
+      <p class="easy-question">${isTransfer ? t("D'où part l'argent ?") : t('Sur quel portefeuille ?')}</p>
       <div class="easy-wallets">
         ${wallets.map((w) => `<button type="button" class="easy-wallet" data-wallet="${escapeHtml(w.id)}">${icon(w.type === 'mobile_money' ? 'phone' : w.type === 'cash' ? 'banknote' : w.type === 'bank' ? 'bank' : 'wallet', 30)}<span class="easy-wallet-name">${escapeHtml(w.name)}</span><span class="easy-wallet-cur">${escapeHtml(w.currency)}</span></button>`).join('')}
       </div>`;
     body.querySelectorAll('[data-wallet]').forEach((btn) => btn.addEventListener('click', () => {
       if (state.walletId !== btn.dataset.wallet) state.amount = ''; // la devise peut changer : on repart d'un montant vide
       state.walletId = btn.dataset.wallet;
+      if (isTransfer) {
+        if (state.targetId && !peersOf(wallet()).some((o) => o.id === state.targetId)) state.targetId = null; // l'ancienne destination n'est plus possible
+        go('target');
+        return;
+      }
       go('amount');
     }));
+  }
+
+  /** Déplacement : vers quel portefeuille ? (seulement ceux de la même devise que celui d'où part l'argent) */
+  function renderTargetStep(body) {
+    const peers = peersOf(wallet());
+    body.innerHTML = `
+      <p class="easy-question">${t("Où va l'argent ?")}</p>
+      <div class="easy-wallets">
+        ${peers.map((w) => `<button type="button" class="easy-wallet" data-target="${escapeHtml(w.id)}">${icon(w.type === 'mobile_money' ? 'phone' : w.type === 'cash' ? 'banknote' : w.type === 'bank' ? 'bank' : 'wallet', 30)}<span class="easy-wallet-name">${escapeHtml(w.name)}</span><span class="easy-wallet-cur">${escapeHtml(w.currency)}</span></button>`).join('')}
+      </div>
+      <div class="easy-actions"><button type="button" class="btn btn-ghost easy-btn" id="easy-back">${t('Retour')}</button></div>`;
+    body.querySelectorAll('[data-target]').forEach((btn) => btn.addEventListener('click', () => { state.targetId = btn.dataset.target; go('amount'); }));
+    body.querySelector('#easy-back').addEventListener('click', () => go('wallet'));
   }
 
   function renderAmountStep(body) {
@@ -262,7 +292,7 @@ export async function openEasyEntry(type) {
     }));
     body.querySelector('#easy-clear').addEventListener('click', () => { state.amount = keypadPress(state.amount, 'clear'); refresh(); });
     sayBtn?.addEventListener('click', () => { primeSpeech(); speak(spokenAmount(Number(state.amount) || 0, currency())); });
-    nextBtn.addEventListener('click', () => go('category'));
+    nextBtn.addEventListener('click', () => go(isTransfer ? 'confirm' : 'category')); // un déplacement n'a pas de catégorie
     refresh();
   }
 
@@ -293,11 +323,14 @@ export async function openEasyEntry(type) {
     body.innerHTML = `
       <p class="easy-question">${t("C'est bon ?")}</p>
       <div class="easy-summary">
-        <div class="easy-summary-kind ${type === 'income' ? 'pos' : 'neg'}">${icon(type === 'income' ? 'arrowDown' : 'arrowUp', 30)} ${type === 'income' ? t('Reçu') : t('Dépensé')}</div>
+        <div class="easy-summary-kind ${isTransfer ? '' : type === 'income' ? 'pos' : 'neg'}">${isTransfer ? `${icon('swap', 30)} ${t('Déplacé')}` : `${icon(type === 'income' ? 'arrowDown' : 'arrowUp', 30)} ${type === 'income' ? t('Reçu') : t('Dépensé')}`}</div>
         <div class="easy-summary-amount amount" data-value="${n}">${escapeHtml(formatCurrency(n, currency()))}</div>
         <div class="easy-summary-words">${escapeHtml(spokenAmount(n, currency()))}</div>
-        <div class="easy-summary-line"><span style="color:${look.color};">${icon(look.icon, 22)}</span> ${escapeHtml(catName)}</div>
-        <div class="easy-summary-line">${icon('wallet', 22)} ${escapeHtml(wallet().name)}</div>
+        ${isTransfer
+          ? `<div class="easy-summary-line">${icon('wallet', 22)} ${escapeHtml(t('De {name}', { name: wallet().name }))}</div>
+        <div class="easy-summary-line">${icon('wallet', 22)} ${escapeHtml(t('Vers {name}', { name: target() ? target().name : '' }))}</div>`
+          : `<div class="easy-summary-line"><span style="color:${look.color};">${icon(look.icon, 22)}</span> ${escapeHtml(catName)}</div>
+        <div class="easy-summary-line">${icon('wallet', 22)} ${escapeHtml(wallet().name)}</div>`}
       </div>
       <div class="easy-date" role="group" aria-label="${escapeHtml(t('Quel jour ?'))}">
         <span class="easy-note-label">${t('Quel jour ?')}</span>
@@ -307,7 +340,7 @@ export async function openEasyEntry(type) {
         </div>
         <input type="date" id="easy-day-input" class="easy-day-input" max="${todayISO()}" value="${state.date}" hidden aria-label="${escapeHtml(t('Choisir le jour'))}">
       </div>
-      <div class="easy-extras">
+      <div class="easy-extras ${isTransfer ? 'is-single' : ''}">
       <div class="easy-note">
         <button type="button" class="btn btn-ghost easy-btn" id="easy-note-toggle" ${state.note ? 'hidden' : ''}>${icon('edit', 22)} ${t('Ajouter une note')}</button>
         <div class="easy-note-box" id="easy-note-box" ${state.note ? '' : 'hidden'}>
@@ -318,14 +351,14 @@ export async function openEasyEntry(type) {
           </div>
         </div>
       </div>
-      <div class="easy-photo">
+      ${isTransfer ? '' : `<div class="easy-photo">
         <button type="button" class="btn btn-ghost easy-btn" id="easy-photo-toggle" ${state.photo ? 'hidden' : ''}>${icon('receipt', 22)} ${t('Ajouter une photo')}</button>
         <input type="file" id="easy-photo-input" accept="image/*" capture="environment" hidden>
         <div class="easy-photo-box" id="easy-photo-box" ${state.photo ? '' : 'hidden'}>
           <img id="easy-photo-img" alt="${escapeHtml(t('Photo du justificatif'))}" src="${escapeHtml(state.photoUrl)}">
           <button type="button" class="btn btn-ghost easy-btn" id="easy-photo-remove">${icon('trash', 20)} ${t('Retirer la photo')}</button>
         </div>
-      </div>
+      </div>`}
       </div>
       <div class="easy-warning" id="easy-warning" hidden></div>
       <div class="easy-actions easy-actions-stack">
@@ -347,13 +380,13 @@ export async function openEasyEntry(type) {
       warnEl.appendChild(line);
       warnEl.hidden = false;
     };
-    if (type === 'expense') {
+    if (type === 'expense' || isTransfer) {
       getWalletBalance(state.walletId).then((balance) => {
         if (n > balance + 0.005) {
-          addWarning(t("Attention : {wallet} ne contient que {balance}. Cette dépense le ferait passer en négatif.", { wallet: wallet().name, balance: formatCurrency(Math.max(balance, 0), currency()) }));
+          addWarning(t(isTransfer ? "Attention : {wallet} ne contient que {balance}. Ce déplacement le ferait passer en négatif." : "Attention : {wallet} ne contient que {balance}. Cette dépense le ferait passer en négatif.", { wallet: wallet().name, balance: formatCurrency(Math.max(balance, 0), currency()) }));
         }
       }).catch(() => {});
-      if (state.categoryId) {
+      if (!isTransfer && state.categoryId) {
         checkUnusualExpense(state.categoryId, n, state.walletId).then((unusual) => {
           if (!unusual) return;
           addWarning(t("Attention : c'est environ {ratio} fois plus que d'habitude pour « {category} » (en moyenne {average}). Vérifiez le montant.", {
@@ -365,7 +398,9 @@ export async function openEasyEntry(type) {
 
     body.querySelector('#easy-say')?.addEventListener('click', () => {
       primeSpeech();
-      speak(buildConfirmSpeech({ type, amount: n, currency: currency(), categoryName: cat ? cat.name : '', walletName: wallet().name }));
+      speak(isTransfer
+        ? buildTransferConfirmSpeech({ amount: n, currency: currency(), fromName: wallet().name, toName: target() ? target().name : '' })
+        : buildConfirmSpeech({ type, amount: n, currency: currency(), categoryName: cat ? cat.name : '', walletName: wallet().name }));
     });
     // Jour de l'opération : aujourd'hui par défaut ; hier, avant-hier, ou un autre jour (jamais dans le futur). On note souvent en fin de journée,
     // ou le lendemain : sans ça, la dépense d'hier était enregistrée à la date d'aujourd'hui.
@@ -377,8 +412,8 @@ export async function openEasyEntry(type) {
     // Photo facultative du justificatif (ticket, facture) : prise avec l'appareil photo ou choisie dans la galerie, réduite avant d'être gardée.
     // Comme la note, elle reste si l'on change le jour ou corrige le montant, et rien n'apparaît pour qui n'en veut pas.
     const photoInput = body.querySelector('#easy-photo-input');
-    body.querySelector('#easy-photo-toggle').addEventListener('click', () => photoInput.click());
-    photoInput.addEventListener('change', async () => {
+    body.querySelector('#easy-photo-toggle')?.addEventListener('click', () => photoInput.click());
+    photoInput?.addEventListener('change', async () => {
       const file = photoInput.files[0];
       photoInput.value = '';
       if (!file) return;
@@ -387,7 +422,7 @@ export async function openEasyEntry(type) {
       try { setPhoto(await compressImageBlob(file)); } catch { showToast(t('Impossible de lire cette photo.')); return; }
       if (body.isConnected) { renderConfirmStep(body); body.querySelector('#easy-photo-box')?.scrollIntoView?.({ block: 'nearest' }); } // l'aperçu ne doit pas rester sous le bouton « Enregistrer »
     });
-    body.querySelector('#easy-photo-remove').addEventListener('click', () => { setPhoto(null); renderConfirmStep(body); });
+    body.querySelector('#easy-photo-remove')?.addEventListener('click', () => { setPhoto(null); renderConfirmStep(body); });
     // Note facultative : au clavier, ou dictée (micro) pour qui n'écrit pas facilement. Gardée si l'on corrige le montant puis revient ici.
     const noteInput = body.querySelector('#easy-note-input');
     body.querySelector('#easy-note-toggle').addEventListener('click', (e) => {
@@ -414,13 +449,17 @@ export async function openEasyEntry(type) {
       primeSpeech(); // avant tout await : la lecture de confirmation suit l'enregistrement
       const saveBtn = e.currentTarget; // e.currentTarget vaut null après un await : on le garde avant
       saveBtn.disabled = true; // un seul enregistrement, même en cas de double toucher
-      const record = await recordTemplateNow({ type, walletId: state.walletId, categoryId: state.categoryId, amount: n, note: state.note.trim(), date: state.date, receiptBlob: state.photo });
+      const record = await recordTemplateNow({
+        type, walletId: state.walletId, targetWalletId: isTransfer ? state.targetId : null, categoryId: isTransfer ? null : state.categoryId,
+        amount: n, note: state.note.trim(), date: state.date, receiptBlob: isTransfer ? null : state.photo,
+      });
       if (!record) {
         saveBtn.disabled = false;
         showToast(t("Impossible d'enregistrer : ce portefeuille n'est plus disponible."));
         return;
       }
       const walletName = wallet().name;
+      const targetName = target() ? target().name : '';
       const cur = currency();
       const walletId = state.walletId;
       modal.close();
@@ -430,7 +469,9 @@ export async function openEasyEntry(type) {
         onAction: async () => { stopSpeaking(); await undoRecordedTemplate(record); notifyDataChanged('transactions'); showToast(t('Annulé.')); },
       });
       if (await isSpeakConfirmationsEnabled()) {
-        speak(buildSavedSpeech({ type, amount: n, currency: cur, categoryName: cat ? cat.name : '', walletName, balance: await getWalletBalance(walletId) }));
+        speak(isTransfer
+          ? buildTransferSavedSpeech({ amount: n, currency: cur, fromName: walletName, toName: targetName, balance: await getWalletBalance(walletId) })
+          : buildSavedSpeech({ type, amount: n, currency: cur, categoryName: cat ? cat.name : '', walletName, balance: await getWalletBalance(walletId) }));
       }
     });
   }
@@ -444,6 +485,7 @@ export function openEasyChooser() {
   const modal = openModal(`<div class="easy-tiles easy-chooser">
       <button type="button" class="easy-tile easy-in" data-easy="income">${icon('arrowDown', 44)}<span class="easy-tile-label">${escapeHtml(t("J'ai reçu"))}</span></button>
       <button type="button" class="easy-tile easy-out" data-easy="expense">${icon('arrowUp', 44)}<span class="easy-tile-label">${escapeHtml(t("J'ai dépensé"))}</span></button>
+      <button type="button" class="easy-tile easy-move-tile" data-easy="transfer">${icon('swap', 44)}<span class="easy-tile-label">${escapeHtml(t("Je déplace de l'argent"))}</span></button>
     </div>`, { title: t('Que voulez-vous noter ?') });
   modal.el.querySelector('.modal-card').classList.add('easy-modal');
   modal.el.querySelector('.easy-chooser').addEventListener('click', (event) => {
@@ -471,7 +513,7 @@ export function initEasyHome({ navigateTo }) {
     const tile = event.target.closest('[data-easy]');
     if (!tile) return;
     const kind = tile.dataset.easy;
-    if (kind === 'income' || kind === 'expense') openEasyEntry(kind);
+    if (kind === 'income' || kind === 'expense' || kind === 'transfer') openEasyEntry(kind);
     else navigateTo('debts');
   });
   // Bouton « Écouter » du tableau de bord habituel (carte « Reste à vivre ») : utile même hors accueil facile.

@@ -149,6 +149,23 @@ export function buildConfirmSpeech(info) {
     : t('{head}. Pour enregistrer, touchez le bouton vert.', { head });
 }
 
+/** Déplacement d'argent entre deux portefeuilles : lu avant l'enregistrement. */
+export function buildTransferConfirmSpeech(info) {
+  const { amount, currency, fromName = '', toName = '' } = info;
+  return t("Déplacement de {amount}, de {from} vers {to}. Pour enregistrer, touchez le bouton vert.", { amount: spokenAmount(amount, currency), from: fromName, to: toName });
+}
+
+/** Déplacement enregistré : ce qui a été fait, et ce qui reste sur le portefeuille d'où part l'argent. */
+export function buildTransferSavedSpeech(info) {
+  const { amount, currency, fromName = '', toName = '', balance = null } = info;
+  const parts = [t("C'est noté : {amount} déplacés de {from} vers {to}.", { amount: spokenAmount(amount, currency), from: fromName, to: toName })];
+  if (balance !== null && balance !== undefined && fromName) {
+    if (balance < -0.004) parts.push(t('Attention : {wallet} est en négatif, il manque {amount}.', { wallet: fromName, amount: spokenAmount(balance, currency) }));
+    else parts.push(t('Il vous reste {amount} sur {wallet}.', { amount: spokenAmount(balance, currency), wallet: fromName }));
+  }
+  return parts.join(' ');
+}
+
 /** Réglage « lire à voix haute les confirmations » (clé speakConfirmations, désactivé par défaut). */
 export async function isSpeakConfirmationsEnabled() {
   return isSpeechSupported() && !!(await getSetting('speakConfirmations', false));

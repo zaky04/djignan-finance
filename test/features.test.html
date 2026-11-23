@@ -529,7 +529,7 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     document.body.dataset.easyHome = 'on';
     openAddEntry(() => { classicCalls++; });
     const chooser = document.querySelector('.easy-chooser');
-    eq('« + » en accueil facile : deux gros choix (reçu / dépensé), saisie classique non ouverte', [classicCalls, chooser && [...chooser.querySelectorAll('[data-easy]')].map((b) => b.dataset.easy)], [1, ['income', 'expense']]);
+    eq('« + » en accueil facile : trois gros choix (reçu / dépensé / déplacer), saisie classique non ouverte', [classicCalls, chooser && [...chooser.querySelectorAll('[data-easy]')].map((b) => b.dataset.easy)], [1, ['income', 'expense', 'transfer']]);
     chooser?.querySelector('[data-easy="expense"]').click();
     await new Promise((r) => setTimeout(r, 250));
     eq('« + » : choisir « dépensé » ouvre la saisie guidée à la place du choix', [!!document.querySelector('.easy-chooser'), !!document.querySelector('#easy-step')], [false, true]);
@@ -622,6 +622,52 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   press('#easy-save'); await new Promise((r) => setTimeout(r, 400));
   const without = await rowOf(8);
   eq('saisie guidée (photo) : photo retirée ou jamais ajoutée → aucune photo enregistrée', [without.receiptBlob, without.receiptOptimized], [undefined, undefined]);
+  // Déplacer de l'argent entre deux portefeuilles (saisie guidée)
+  const { getWalletBalance: balanceOf } = await import('../js/ledger.js');
+  const { recordTemplateNow: record } = await import('../js/quick-templates.js');
+  const { buildTransferConfirmSpeech, buildTransferSavedSpeech } = await import('../js/speech-out.js');
+  await dbAdd(STORES.WALLETS, { id: 'w-t-eur', name: 'Compte euro', type: 'bank', currency: 'EUR', initialBalance: 500, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  toastBox.textContent = '';
+  await openEasyEntry('transfer');
+  ok('déplacement : sans deux portefeuilles de la même devise, rien ne s\'ouvre et un message l\'explique', !modalRoot.querySelector('.modal-backdrop') && toastBox.textContent.includes('deux portefeuilles dans la même devise'));
+  await dbAdd(STORES.WALLETS, { id: 'w-t-cash', name: 'Espèces', type: 'cash', currency: 'XOF', initialBalance: 0, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.WALLETS, { id: 'w-t-save', name: 'Tirelire', type: 'savings', currency: 'XOF', initialBalance: 0, archived: false, usage: 'savings', createdAt: '2026-01-01T00:00:00.000Z' });
+  await openEasyEntry('transfer');
+  eq('déplacement : on part d\'un portefeuille qui a un « jumeau » de même devise (épargne comprise, euro exclu)', [...modalRoot.querySelectorAll('[data-wallet]')].map((b) => b.dataset.wallet).sort(), ['w-e1', 'w-t-cash', 'w-t-save']);
+  press('[data-wallet="w-e1"]');
+  eq('déplacement : la destination ne propose ni le portefeuille de départ ni une autre devise', [...modalRoot.querySelectorAll('[data-target]')].map((b) => b.dataset.target).sort(), ['w-t-cash', 'w-t-save']);
+  press('#easy-back');
+  ok('déplacement : « Retour » revient au choix du portefeuille de départ', !!modalRoot.querySelector('[data-wallet="w-e1"]') && !modalRoot.querySelector('[data-target]'));
+  press('[data-wallet="w-e1"]'); press('[data-target="w-t-cash"]');
+  press('[data-key="3"]'); press('[data-key="000"]'); press('#easy-next');
+  const summary = modalRoot.querySelector('.easy-summary').textContent;
+  ok('déplacement : le récapitulatif dit « De … » et « Vers … », sans catégorie ni photo', summary.includes('De Orange Money') && summary.includes('Vers Espèces') && !modalRoot.querySelector('[data-cat]') && !modalRoot.querySelector('#easy-photo-toggle') && !!modalRoot.querySelector('#easy-note-toggle') && !!modalRoot.querySelector('[data-day]'));
+  const before = [await balanceOf('w-e1'), await balanceOf('w-t-cash')];
+  press(`[data-day="${isoAgo(1)}"]`); press('#easy-save'); await new Promise((r) => setTimeout(r, 500));
+  const moved = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.type === 'transfer');
+  eq('déplacement : un virement de 3 000 F enregistré, à la date choisie, sans catégorie ni photo', [moved.walletId, moved.targetWalletId, moved.amount, moved.date, moved.categoryId, moved.receiptBlob], ['w-e1', 'w-t-cash', 3000, isoAgo(1), null, undefined]);
+  eq('déplacement : le départ perd 3 000 F, la destination les gagne (rien ne se perd)', [before[0] - await balanceOf('w-e1'), (await balanceOf('w-t-cash')) - before[1]], [3000, 3000]);
+  eq('déplacement : un virement ne compte ni comme dépense ni comme recette du mois', (await (await import('../js/ledger.js')).computeMonthSummary(isoAgo(1).slice(0, 7))).expenses >= 0, true);
+  // Refus au moment d'enregistrer : même portefeuille, autre devise, archivé, destination absente
+  await dbAdd(STORES.WALLETS, { id: 'w-t-old', name: 'Ancien', type: 'cash', currency: 'XOF', initialBalance: 0, archived: true, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
+  const refused = [];
+  for (const target of ['w-e1', 'w-t-eur', 'w-t-old', 'inconnu', null]) refused.push(await record({ type: 'transfer', walletId: 'w-e1', targetWalletId: target, amount: 10 }));
+  eq('déplacement : refusé vers soi-même, une autre devise, un portefeuille archivé ou inexistant', refused, [null, null, null, null, null]);
+  eq('déplacement : un montant nul est refusé', await record({ type: 'transfer', walletId: 'w-e1', targetWalletId: 'w-t-cash', amount: 0 }), null);
+  const toSavings = await record({ type: 'transfer', walletId: 'w-e1', targetWalletId: 'w-t-save', amount: 10 });
+  ok('déplacement : vers un portefeuille d\'épargne (mettre de côté) est permis', !!toSavings && toSavings.targetWalletId === 'w-t-save');
+  eq('déplacement : textes à voix haute', [buildTransferConfirmSpeech({ amount: 3000, currency: 'XOF', fromName: 'Orange Money', toName: 'Espèces' }), buildTransferSavedSpeech({ amount: 3000, currency: 'XOF', fromName: 'Orange Money', toName: 'Espèces', balance: 91500 })],
+    ['Déplacement de trois mille francs CFA, de Orange Money vers Espèces. Pour enregistrer, touchez le bouton vert.', "C'est noté : trois mille francs CFA déplacés de Orange Money vers Espèces. Il vous reste quatre-vingt-onze mille cinq cents francs CFA sur Orange Money."]);
+  // Points d'entrée : bouton « + » (3e choix) et accueil facile (bouton pleine largeur)
+  const { openEasyChooser: chooser3 } = await import('../js/easy-home.js');
+  modalRoot.innerHTML = ''; chooser3();
+  eq('déplacement : le bouton « + » propose reçu, dépensé ET déplacer', [...modalRoot.querySelectorAll('.easy-chooser [data-easy]')].map((b) => b.dataset.easy), ['income', 'expense', 'transfer']);
+  modalRoot.querySelector('.easy-chooser [data-easy="transfer"]').click(); await new Promise((r) => setTimeout(r, 400));
+  ok('déplacement : choisir « Je déplace de l\'argent » ouvre la saisie guidée de déplacement', !modalRoot.querySelector('.easy-chooser') && modalRoot.querySelector('.modal-header h3')?.textContent.includes('déplace'));
+  await renderEasyHome();
+  ok('déplacement : l\'accueil facile a son bouton pleine largeur sous les tuiles', !!easyHost.querySelector('.easy-move[data-easy="transfer"]'));
+  await dbm_cleanup2();
+  async function dbm_cleanup2() { const m = await import('../js/db.js'); for (const id of ['w-t-eur', 'w-t-cash', 'w-t-save', 'w-t-old']) await m.dbDelete(STORES.WALLETS, id); delete document.body.dataset.easyHome; modalRoot.innerHTML = ''; }
   await dbm_cleanup();
   async function dbm_cleanup() { for (const row of (await dbGetAll(STORES.TRANSACTIONS))) if (row.amount !== 5500) await (await import('../js/db.js')).dbDelete(STORES.TRANSACTIONS, row.id); }
 
@@ -639,7 +685,7 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   await applyEasyHome();
   await renderEasyHome();
   eq('accueil facile : panneau visible et attribut posé', [easyHost.hidden, document.body.dataset.easyHome], [false, 'on']);
-  eq('accueil facile : quatre grosses touches', [...easyHost.querySelectorAll('[data-easy]')].map((b) => b.dataset.easy), ['income', 'expense', 'owed', 'owe']);
+  eq('accueil facile : quatre grosses touches, et le bouton « déplacer » en dessous', [[...easyHost.querySelectorAll('.easy-tile')].map((b) => b.dataset.easy), [...easyHost.querySelectorAll('.easy-move')].map((b) => b.dataset.easy)], [['income', 'expense', 'owed', 'owe'], ['transfer']]);
   ok('accueil facile : solde 94 500 (100 000 − 5 500)', /94\D*500/.test(easyHost.querySelector('.easy-balance-value').textContent), easyHost.querySelector('.easy-balance-value').textContent);
   ok('accueil facile : dernière opération affichée', easyHost.querySelector('.easy-recent-title')?.textContent === 'Transport');
   await setSetting('easyHome', false);

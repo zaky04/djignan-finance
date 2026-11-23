@@ -4222,6 +4222,15 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
+### 23 novembre 2026 (suite 4) — Déplacer de l'argent en gros boutons (`CACHE_VERSION` `v191`, non commité au moment d'écrire)
+
+Manque suivant de la saisie guidée (recommandé à l'auteur, qui a choisi la photo d'abord) : le **virement entre portefeuilles** (typiquement Mobile Money → espèces, ou « mettre de côté »). `openEasyEntry('transfer')` (`easy-home.js`) :
+**départ → destination → montant → « C'est bon ? »** (jour et note comme les autres saisies, ni catégorie ni photo). Départ : tout portefeuille non archivé qui a au moins un « jumeau » de **même devise** (l'épargne est permise) ; destination :
+ces jumeaux seulement, avec « Retour » ; message si aucune paire de même devise. Résumé « Déplacé / De X / Vers Y », avertissement si le départ deviendrait négatif, voix (`buildTransferConfirmSpeech`, `buildTransferSavedSpeech`), annulation par le
+toast. `recordTemplateNow` (`quick-templates.js`) accepte `type: 'transfer'` + `targetWalletId` et **refuse** vers soi-même, une autre devise, un portefeuille archivé ou inexistant. Points d'entrée : bouton pleine largeur « Je déplace de l'argent »
+sous les quatre tuiles de l'accueil facile, et 3e choix du bouton « + ». Vérifié en réel (patrimoine net inchangé, annulation). Tests : 15 nouveaux (467 ; deux anciens attendus mis à jour : 3 choix au « + », bouton sous les tuiles).
+**Toujours absent** de la saisie guidée : « On me doit / Je dois » (ouvrent encore l'écran classique des dettes), étiquettes, dépense « exceptionnelle », division en catégories, virement entre devises différentes.
+
 ### 23 novembre 2026 (suite 3) — Boutons du haut en couleur, « Afficher » quand les montants sont cachés (`CACHE_VERSION` `v190`, non commité au moment d'écrire)
 
 Demande de l'auteur : une fois les sommes cachées, un utilisateur novice ne voyait rien pour les réafficher (les trois icônes du haut étaient grises et discrètes). `css/styles.css` : **recherche en bleu, montants en vert, thème en doré** (fond teinté +

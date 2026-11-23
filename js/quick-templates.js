@@ -94,20 +94,28 @@ export async function computeFrequentSuggestions({ limit = 4, today = new Date()
     .slice(0, limit);
 }
 
-/** Enregistre un favori comme transaction d'aujourd'hui, en un geste. Renvoie l'enregistrement créé,
-    ou `null` si le favori n'a pas de montant ou si son portefeuille n'existe plus / n'est plus courant. */
 /** Date d'une saisie rapide : celle demandée si c'est un jour valide qui n'est pas dans le futur, sinon aujourd'hui. */
 export function pastOrTodayISO(date) {
   const today = todayISO();
   return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(new Date(date + 'T00:00:00').getTime()) && date <= today ? date : today;
 }
 
+/** Enregistre un favori / une saisie guidée comme transaction, en un geste. Renvoie l'enregistrement créé, ou `null` si le montant manque
+    ou si un portefeuille n'existe plus. Dépense / recette : portefeuille COURANT seulement. Déplacement (`type: 'transfer'`) : deux
+    portefeuilles non archivés, différents, de la MÊME devise (l'épargne est permise : « mettre de côté » est un déplacement). */
 export async function recordTemplateNow(template) {
   if (!(template.amount > 0)) return null;
-  const wallet = (await dbGetAll(STORES.WALLETS)).find((w) => w.id === template.walletId);
-  if (!wallet || !isDailyWallet(wallet)) return null;
+  const allWallets = await dbGetAll(STORES.WALLETS);
+  const wallet = allWallets.find((w) => w.id === template.walletId);
+  const isTransfer = template.type === 'transfer';
+  let targetWalletId = null;
+  if (isTransfer) {
+    const target = allWallets.find((w) => w.id === template.targetWalletId);
+    if (!wallet || wallet.archived || !target || target.archived || target.id === wallet.id || target.currency !== wallet.currency) return null;
+    targetWalletId = target.id;
+  } else if (!wallet || !isDailyWallet(wallet)) return null;
   const record = {
-    id: uuid(), type: template.type, walletId: template.walletId, targetWalletId: null,
+    id: uuid(), type: template.type, walletId: template.walletId, targetWalletId,
     categoryId: template.categoryId || null, amount: template.amount, date: pastOrTodayISO(template.date),
     note: template.note || '', tags: [], reconciled: false, createdAt: new Date().toISOString(),
   };
