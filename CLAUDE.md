@@ -4199,6 +4199,14 @@ la restauration réapparaît) ; séquence de démarrage en boucle `langue ⇄ re
 (3 allers-retours sans écran fantôme) → formulaires de restauration → PIN (saisie, confirmation, retour) → assistant de configuration (retour d'étape, retour du téléphone qui ferme l'assistant). Tests : 2 nouveaux (430).
 Reste : le vrai bouton Retour d'un téléphone, l'APK/EXE ; l'aidant peut toujours exporter en CSV (lecture seule, non corrigé).
 
+### 23 novembre 2026 — Note facultative dans la saisie guidée (gros boutons) (`CACHE_VERSION` `v187`, non commité au moment d'écrire)
+
+Demande de l'auteur : la saisie guidée de l'accueil facile n'avait aucun moyen d'ajouter une note. À l'étape « C'est bon ? » (`easy-home.js` `renderConfirmStep`) : gros bouton **« Ajouter une note »** qui ouvre un champ (140 caractères,
+`state.note`, gardée si l'on corrige le montant puis revient) et, quand le navigateur a la reconnaissance vocale (`isVoiceSupported`), un bouton **micro** pour la dicter (`listenOnce`, `voice-input.js` ; la voix de l'application
+est coupée avant l'écoute ; refus du micro ou silence → message clair). La note part avec l'opération (`recordTemplateNow`, déjà prévu pour `note`) et apparaît dans la liste. Aucun champ ni bouton en plus pour qui n'en veut pas :
+la zone reste cachée tant qu'on ne touche pas « Ajouter une note ». Tests : 6 nouveaux (436) ; vérifié en réel (tablette 768 px, note enregistrée et visible dans Transactions). **La dictée réelle n'a pas été essayée** (pas de micro dans
+l'environnement de test).
+
 **Vérifié sans rien à corriger** : intervalles et écouteurs globaux enregistrés une seule fois, aucun `eval`/`document.write`, précache complet, pas de rendu de liste non borné (Transactions filtre par mois).
 **Reste à surveiller à long terme** : la base grossit surtout avec les photos (~150-400 Ko chacune, l'estimation est dans Paramètres) ; la sauvegarde cloud chiffrée d'un très gros historique avec photos
 reste lourde (découpée en morceaux, voir §6 du 18 octobre) ; sur un téléphone d'entrée de gamme les temps mesurés ici sont à multiplier (non mesuré).

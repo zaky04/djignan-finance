@@ -1084,6 +1084,15 @@ body[data-easy-home="on"] #panel-recent-transactions { display: none !important;
 .easy-summary-kind.neg { color: var(--neg); }
 .easy-summary-amount { font-size: 38px; font-weight: 700; margin: 6px 0 2px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .easy-summary-words { font-size: 14px; color: var(--text-muted); margin-bottom: 10px; }
+.easy-note { margin-top: 12px; }
+.easy-note > .btn { width: 100%; justify-content: center; }
+.easy-note-label { display: block; font-size: 15px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+.easy-note-row { display: flex; gap: 8px; align-items: stretch; }
+.easy-note-row input { flex: 1; min-width: 0; font-size: 18px; padding: 12px 14px; }
+.easy-note-row .easy-mic { flex: 0 0 64px; min-width: 64px; padding-left: 0; padding-right: 0; justify-content: center; }
+.easy-mic.is-listening { background: var(--neg-soft, #fde8e8); border-color: var(--neg, #c0392b); color: var(--neg, #c0392b); animation: easyMicPulse 1.2s ease-in-out infinite; }
+@keyframes easyMicPulse { 50% { opacity: .65; } }
+@media (prefers-reduced-motion: reduce) { .easy-mic.is-listening { animation: none; } }
 .easy-summary-line { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 18px; margin-top: 6px; }
 .easy-warning { background: var(--warn-soft); color: var(--warn-text); border: 2px solid var(--warn); border-radius: var(--radius-md); padding: 12px 14px; font-size: 16px; font-weight: 600; margin-bottom: 12px; }
 /* Code aidant : les réglages lui sont fermés (settings.js l'explique), on ne lui montre même pas l'entrée du menu latéral. */

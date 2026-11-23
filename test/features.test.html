@@ -554,6 +554,32 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   eq('saisie guidée : une dépense de 5 500 enregistrée sur le bon portefeuille', savedTx.map((x) => [x.type, x.amount, x.walletId, x.categoryId]), [['expense', 5500, 'w-e1', 'c-e1']]);
   ok('saisie guidée : fenêtre fermée et toast « Enregistré »', !modalRoot.querySelector('.modal-backdrop') && toastBox.textContent.includes('Enregistré'));
 
+  eq('saisie guidée : sans note, la note enregistrée est vide', savedTx[0].note, '');
+
+  // Note facultative dans la saisie guidée (clavier)
+  await openEasyEntry('expense');
+  press('[data-key="2"]'); press('[data-key="000"]'); press('#easy-next'); press('[data-cat="c-e1"]');
+  ok('saisie guidée : bouton « Ajouter une note », zone cachée au départ', !modalRoot.querySelector('#easy-note-toggle').hidden && modalRoot.querySelector('#easy-note-box').hidden);
+  press('#easy-note-toggle');
+  ok('saisie guidée : la zone de note s\'ouvre', modalRoot.querySelector('#easy-note-toggle').hidden && !modalRoot.querySelector('#easy-note-box').hidden);
+  const noteInput = modalRoot.querySelector('#easy-note-input');
+  noteInput.value = 'Taxi pour l\'aéroport'; noteInput.dispatchEvent(new Event('input', { bubbles: true }));
+  press('#easy-fix'); press('[data-add="500"]'); press('#easy-next'); press('[data-cat="c-e1"]');
+  eq('saisie guidée : la note est gardée quand on corrige le montant puis qu\'on revient', [modalRoot.querySelector('#easy-note-input').value, modalRoot.querySelector('#easy-note-box').hidden], ['Taxi pour l\'aéroport', false]);
+  press('#easy-save');
+  await new Promise((r) => setTimeout(r, 400));
+  const noted = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.note);
+  eq('saisie guidée : la note est enregistrée avec l\'opération (2 500 F)', [noted?.note, noted?.amount, noted?.type], ['Taxi pour l\'aéroport', 2500, 'expense']);
+  // Une note trop longue est bornée à 140 caractères, les espaces autour sont retirés
+  await openEasyEntry('expense');
+  press('[data-key="3"]'); press('#easy-next'); press('[data-cat="c-e1"]'); press('#easy-note-toggle');
+  const longInput = modalRoot.querySelector('#easy-note-input'); longInput.removeAttribute('maxlength'); longInput.value = '  ' + 'x'.repeat(200); longInput.dispatchEvent(new Event('input', { bubbles: true }));
+  press('#easy-save');
+  await new Promise((r) => setTimeout(r, 400));
+  eq('saisie guidée : note bornée à 140 caractères, sans espaces autour', (await dbGetAll(STORES.TRANSACTIONS)).filter((x) => x.amount === 3).map((x) => x.note.length), [138]);
+  await dbm_cleanup();
+  async function dbm_cleanup() { for (const row of (await dbGetAll(STORES.TRANSACTIONS))) if (row.amount !== 5500) await (await import('../js/db.js')).dbDelete(STORES.TRANSACTIONS, row.id); }
+
   await dbAdd(STORES.WALLETS, { id: 'w-e2', name: 'Wave', type: 'mobile_money', currency: 'XOF', initialBalance: 0, archived: false, usage: 'current', createdAt: '2026-01-01T00:00:00.000Z' });
   await dbAdd(STORES.WALLETS, { id: 'w-e3', name: 'Épargne', type: 'savings', currency: 'XOF', initialBalance: 0, archived: false, usage: 'savings', createdAt: '2026-01-01T00:00:00.000Z' });
   await openEasyEntry('income');

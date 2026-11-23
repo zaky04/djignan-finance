@@ -29,6 +29,7 @@ import {
 import { formatCurrency, escapeHtml, openModal, showToast, intlLocale, ZERO_DECIMAL_CURRENCIES } from './utils.js';
 import { notifyDataChanged } from './state.js';
 import { t, getLanguage } from './i18n.js';
+import { isVoiceSupported, listenOnce } from './voice-input.js';
 import { icon, categoryLook } from './icons.js';
 
 /* ---------- Pavé numérique (fonctions pures) ---------- */
@@ -174,7 +175,7 @@ export async function openEasyEntry(type) {
   const categories = allCategories.filter((c) => c.type === type && !c.parentId)
     .sort((a, b) => (usage.get(b.id) || 0) - (usage.get(a.id) || 0) || a.name.localeCompare(b.name));
 
-  const state = { step: wallets.length > 1 ? 'wallet' : 'amount', walletId: wallets[0].id, amount: '', categoryId: null };
+  const state = { step: wallets.length > 1 ? 'wallet' : 'amount', walletId: wallets[0].id, amount: '', categoryId: null, note: '' };
   const wallet = () => wallets.find((w) => w.id === state.walletId);
   const currency = () => wallet().currency;
   const allowDecimal = () => !ZERO_DECIMAL_CURRENCIES.has(currency());
@@ -287,6 +288,16 @@ export async function openEasyEntry(type) {
         <div class="easy-summary-line"><span style="color:${look.color};">${icon(look.icon, 22)}</span> ${escapeHtml(catName)}</div>
         <div class="easy-summary-line">${icon('wallet', 22)} ${escapeHtml(wallet().name)}</div>
       </div>
+      <div class="easy-note">
+        <button type="button" class="btn btn-ghost easy-btn" id="easy-note-toggle" ${state.note ? 'hidden' : ''}>${icon('edit', 22)} ${t('Ajouter une note')}</button>
+        <div class="easy-note-box" id="easy-note-box" ${state.note ? '' : 'hidden'}>
+          <label class="easy-note-label" for="easy-note-input">${t('Note (facultatif)')}</label>
+          <div class="easy-note-row">
+            <input type="text" id="easy-note-input" maxlength="140" value="${escapeHtml(state.note)}" placeholder="${escapeHtml(t('Ex : taxi, marché, cadeau…'))}" autocomplete="off">
+            ${isVoiceSupported() ? `<button type="button" class="btn btn-ghost easy-btn easy-mic" id="easy-note-mic" aria-pressed="false" aria-label="${escapeHtml(t('Dicter la note'))}">${icon('mic', 26)}</button>` : ''}
+          </div>
+        </div>
+      </div>
       <div class="easy-warning" id="easy-warning" hidden></div>
       <div class="easy-actions easy-actions-stack">
         <button type="button" class="btn easy-btn easy-save" id="easy-save">${icon('check', 28)} ${t('Oui, enregistrer')}</button>
@@ -327,12 +338,32 @@ export async function openEasyEntry(type) {
       primeSpeech();
       speak(buildConfirmSpeech({ type, amount: n, currency: currency(), categoryName: cat ? cat.name : '', walletName: wallet().name }));
     });
-    body.querySelector('#easy-fix').addEventListener('click', () => go('amount'));
+    // Note facultative : au clavier, ou dictée (micro) pour qui n'écrit pas facilement. Gardée si l'on corrige le montant puis revient ici.
+    const noteInput = body.querySelector('#easy-note-input');
+    body.querySelector('#easy-note-toggle').addEventListener('click', (e) => {
+      e.currentTarget.hidden = true;
+      body.querySelector('#easy-note-box').hidden = false;
+      noteInput.focus();
+    });
+    noteInput.addEventListener('input', () => { state.note = noteInput.value.slice(0, 140); });
+    const micBtn = body.querySelector('#easy-note-mic');
+    let listening = null;
+    micBtn?.addEventListener('click', () => {
+      if (listening) { listening.controller.stop(); return; }
+      stopSpeaking(); // la voix de l'application ne doit pas être captée par le micro
+      listening = listenOnce({ lang: getLanguage(), onInterim: (text) => { noteInput.value = text.slice(0, 140); } });
+      micBtn.classList.add('is-listening');
+      micBtn.setAttribute('aria-pressed', 'true');
+      listening.promise.then((text) => { noteInput.value = text.slice(0, 140); state.note = noteInput.value; })
+        .catch((err) => showToast(err?.code === 'not-allowed' ? t("Le micro n'est pas autorisé : autorisez-le dans les réglages du navigateur.") : t("Je n'ai rien entendu. Réessayez ou écrivez la note.")))
+        .finally(() => { listening = null; micBtn.classList.remove('is-listening'); micBtn.setAttribute('aria-pressed', 'false'); });
+    });
+    body.querySelector('#easy-fix').addEventListener('click', () => { listening?.controller.stop(); go('amount'); });
     body.querySelector('#easy-save').addEventListener('click', async (e) => {
       primeSpeech(); // avant tout await : la lecture de confirmation suit l'enregistrement
       const saveBtn = e.currentTarget; // e.currentTarget vaut null après un await : on le garde avant
       saveBtn.disabled = true; // un seul enregistrement, même en cas de double toucher
-      const record = await recordTemplateNow({ type, walletId: state.walletId, categoryId: state.categoryId, amount: n, note: '' });
+      const record = await recordTemplateNow({ type, walletId: state.walletId, categoryId: state.categoryId, amount: n, note: state.note.trim() });
       if (!record) {
         saveBtn.disabled = false;
         showToast(t("Impossible d'enregistrer : ce portefeuille n'est plus disponible."));
