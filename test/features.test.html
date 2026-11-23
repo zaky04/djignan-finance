@@ -710,6 +710,11 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     modalRoot.innerHTML = '';
     await openEasyDebts('owed');
     ok('prêts : la liste montre Awa avec ce qu\'elle doit encore', modalRoot.querySelectorAll('[data-debt]').length === 1 && /Awa/.test(modalRoot.querySelector('[data-debt]').textContent) && /5\D*000/.test(modalRoot.querySelector('[data-debt]').textContent) && !!modalRoot.querySelector('#easy-new'));
+    eq('prêts : « On me doit » propose « Relancer » à côté de chaque personne', [modalRoot.querySelectorAll('[data-remind]').length, modalRoot.querySelector('[data-remind="0"]').getAttribute('aria-label')], [1, 'Relancer Awa']);
+    press('[data-remind="0"]'); await wait(400);
+    ok('prêts : « Relancer » ouvre le message prêt à envoyer (nom et montant), sans fermer la liste', /Awa/.test(modalRoot.querySelector('#rem-msg')?.value || '') && /5\D*000/.test(modalRoot.querySelector('#rem-msg')?.value || '') && !!modalRoot.querySelector('[data-debt]') && !!modalRoot.querySelector('#rem-wa'));
+    modalRoot.querySelectorAll('.modal-close').forEach((b, i, all) => { if (i === all.length - 1) b.click(); });
+    await wait(300);
     press('[data-debt="0"]');
     ok('prêts : toucher Awa ouvre le montant, avec un bouton « Tout »', !!modalRoot.querySelector('#easy-amount-num') && /Tout/.test(modalRoot.querySelector('#easy-all').textContent));
     press('[data-key="9"]'); press('[data-key="000"]');
@@ -748,6 +753,10 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     press('#easy-save'); await wait();
     const bob = (await dbGetAll(STORES.DEBTS)).find((d) => d.personName === 'Bob');
     eq('prêts : la dette est enregistrée dans la devise de base, sans transaction', [bob?.type, bob?.principal, bob?.currency, bob?.openingTransactionId, (await dbGetAll(STORES.TRANSACTIONS)).length], ['debt', 2000, 'XOF', null, txCountBefore]);
+    modalRoot.innerHTML = '';
+    await openEasyDebts('owe');
+    eq('prêts : « Je dois » montre Bob mais ne propose pas de relance (on ne relance pas ses propres créanciers)', [modalRoot.querySelectorAll('[data-debt]').length, modalRoot.querySelectorAll('[data-remind]').length], [1, 0]);
+    modalRoot.innerHTML = '';
     // Emprunter AVEC portefeuille : l'argent entre ; annuler efface tout
     const loan = await createSimpleDebt({ type: 'debt', personName: 'Cora', principal: 1000, currency: 'XOF', walletId: 'w-e1' });
     eq('prêts : emprunter avec portefeuille = recette liée (argent reçu)', [loan.openingTx.type, loan.openingTx.walletId, loan.debt.openingTransactionId === loan.openingTx.id], ['income', 'w-e1', true]);

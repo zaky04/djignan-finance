@@ -4222,7 +4222,13 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
-### 23 novembre 2026 (suite 5) — « On me doit » / « Je dois » en gros boutons (`CACHE_VERSION` `v192`, non commité au moment d'écrire)
+### 23 novembre 2026 (suite 6) — « Relancer » dans la saisie guidée de « On me doit » (`CACHE_VERSION` `v193`, non commité au moment d'écrire)
+
+Dans la liste des personnes qui doivent encore de l'argent (`easy-debts.js`), un bouton **« Relancer »** (icône message + mot, 84 px) à côté de chaque ligne ouvre la fenêtre de relance existante (`openPersonReminder`, `person-ledger.js` : message prêt avec le nom et le
+total dû, numéro mémorisé, WhatsApp / SMS / copier) par-dessus la liste, qui reste ouverte. Absent côté « Je dois » (on ne relance pas ses propres créanciers). La ligne montre maintenant le nom puis le montant en dessous (avant : un nom comme « Cousin Amadou » se coupait au milieu
+d'un mot à 375 px). Tests : 3 nouveaux (501). Vérifié sur 375 px. Non testé : l'envoi réel par WhatsApp/SMS.
+
+### 23 novembre 2026 (suite 5) — « On me doit » / « Je dois » en gros boutons (`CACHE_VERSION` `v192`, poussé en `f76f377`)
 
 Dernier gros manque de la saisie guidée : les deux tuiles de prêts ouvraient encore l'écran classique des dettes. Nouveau `js/easy-debts.js` (`openEasyDebts('owed'|'owe')`, branché par `app.js` via `initEasyHome({ openDebts })` : `easy-home.js` n'importe pas ce
 fichier, pas de cycle ; `easy-debts.js` réutilise le pavé de `easy-home.js`). Deux gestes par touche : **nouveau prêt** (nom écrit ou dicté + noms déjà utilisés → portefeuille, avec « Pas de mouvement : c'était avant » → montant → « C'est bon ? ») et

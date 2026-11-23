@@ -18,6 +18,7 @@ import { keypadPress, addToAmount, quickAmounts } from './easy-home.js';
 import {
   isSimpleDebt, listOpenDebts, createSimpleDebt, recordSimplePayment, undoSimplePayment, deleteDebtCascade, openPaymentModal,
 } from './modules/debts.js';
+import { openPersonReminder } from './modules/person-ledger.js';
 import {
   isSpeechSupported, speak, stopSpeaking, primeSpeech, spokenAmount, buildDebtSpeech, isSpeakConfirmationsEnabled,
 } from './speech-out.js';
@@ -85,7 +86,10 @@ export async function openEasyDebts(kind) {
     body.innerHTML = `
       <p class="easy-question">${kind === 'owed' ? t('Qui vous doit encore de l\'argent ?') : t('À qui devez-vous encore de l\'argent ?')}</p>
       <div class="easy-wallets">
-        ${open.map((x, i) => `<button type="button" class="easy-wallet" data-debt="${i}">${icon('person', 30)}<span class="easy-wallet-name">${escapeHtml(x.debt.personName)}</span><span class="easy-wallet-cur amount" data-value="${x.owed}">${escapeHtml(formatCurrency(x.owed, x.debt.currency))}</span></button>`).join('')}
+        ${open.map((x, i) => `<div class="easy-debt-row">
+          <button type="button" class="easy-wallet" data-debt="${i}">${icon('person', 30)}<span class="easy-debt-text"><span class="easy-wallet-name">${escapeHtml(x.debt.personName)}</span><span class="easy-wallet-cur amount" data-value="${x.owed}">${escapeHtml(formatCurrency(x.owed, x.debt.currency))}</span></span></button>
+          ${kind === 'owed' ? `<button type="button" class="easy-wallet easy-remind" data-remind="${i}" aria-label="${escapeHtml(t('Relancer {name}', { name: x.debt.personName }))}" title="${escapeHtml(t('Relancer {name}', { name: x.debt.personName }))}">${icon('message', 26)}<span class="easy-remind-label">${escapeHtml(t('Relancer'))}</span></button>` : ''}
+        </div>`).join('')}
       </div>
       <div class="easy-actions easy-actions-stack">
         <button type="button" class="btn btn-ghost easy-btn easy-move" id="easy-new">${icon('plus', 26)} <span>${kind === 'owed' ? t("J'ai prêté de l'argent") : t("J'ai emprunté de l'argent")}</span></button>
@@ -98,6 +102,12 @@ export async function openEasyDebts(kind) {
       const usable = walletsForNow();
       if (usable.length === 1) state.walletId = usable[0].id;
       go('amount');
+    }));
+    // « Relancer » : message WhatsApp / SMS prêt à envoyer (fenêtre de person-ledger.js, la même que sur l'écran Dettes), posée par-dessus.
+    body.querySelectorAll('[data-remind]').forEach((btn) => btn.addEventListener('click', async () => {
+      const picked = open[Number(btn.dataset.remind)];
+      const [debts, payments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
+      openPersonReminder(picked.debt.personName, debts, payments);
     }));
     body.querySelector('#easy-new').addEventListener('click', () => { Object.assign(state, { mode: 'new', debt: null, amount: '', walletId: null, noWallet: false }); go('who'); });
   }
