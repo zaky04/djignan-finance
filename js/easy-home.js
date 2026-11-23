@@ -141,6 +141,20 @@ export function isLinkedTransaction(tx) {
   return !!tx && !!(tx.debtId || tx.debtInterestId || tx.investmentId || tx.tontineId || tx.sharedExpenseId || tx.projectId);
 }
 
+/** Écran d'origine d'une opération liée : où la corriger ou la supprimer (`view` = clé du routeur d'app.js, `name` = titre de l'écran). Pure.
+    Les prêts et leurs intérêts → Dettes & créances ; les projets collectifs vivent dans Partage de dépenses. `null` pour une opération libre. */
+export function linkedOrigin(tx) {
+  if (!tx) return null;
+  if (tx.debtId || tx.debtInterestId) return { view: 'debts', name: 'Dettes & créances' };
+  if (tx.investmentId) return { view: 'investments', name: 'Investissements' };
+  if (tx.tontineId) return { view: 'tontines', name: 'Tontines' };
+  if (tx.sharedExpenseId || tx.projectId) return { view: 'shared', name: 'Partage de dépenses' };
+  return null;
+}
+
+/** `navigateTo` d'app.js, donné par initEasyHome (importer app.js d'ici ferait un cycle). */
+let goToView = null;
+
 /** Toucher une des dernières opérations de l'accueil : ce qu'elle est (montant, catégorie, portefeuille, jour, note) et, si elle est
     une erreur, un gros bouton « Supprimer » (avec code PIN s'il y en a un, annulable d'un toucher). */
 export async function openEasyTxDetail(id, { onChange = null } = {}) {
@@ -155,6 +169,7 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
   const look = isTransfer ? { icon: 'swap', color: 'var(--accent)' } : categoryLook(cat);
   const kind = isTransfer ? t('Déplacé') : tx.type === 'income' ? t('Reçu') : t('Dépensé');
   const linked = isLinkedTransaction(tx);
+  const origin = linked && goToView ? linkedOrigin(tx) : null;
   const modal = openModal(`
     <div class="easy-summary">
       <div class="easy-summary-kind ${isTransfer ? '' : tx.type === 'income' ? 'pos' : 'neg'}">${icon(isTransfer ? 'swap' : tx.type === 'income' ? 'arrowDown' : 'arrowUp', 30)} ${escapeHtml(kind)}</div>
@@ -177,10 +192,17 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
       ${linked ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-day">${icon('history', 24)} ${escapeHtml(t('Corriger le jour'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-ghost easy-btn" id="easy-tx-note">${icon('edit', 24)} ${escapeHtml(tx.note ? t('Corriger la note') : t('Ajouter une note'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-danger easy-btn" id="easy-tx-delete">${icon('trash', 24)} ${escapeHtml(t('Supprimer cette opération'))}</button>`}
+      ${origin ? `<button type="button" class="btn btn-primary easy-btn" id="easy-tx-origin">${icon('ledger', 24)} ${escapeHtml(t('Aller à « {name} »', { name: t(origin.name) }))}</button>` : ''}
       <button type="button" class="btn btn-ghost easy-btn" id="easy-tx-close">${escapeHtml(t('Fermer'))}</button>
     </div>`, { title: t('Cette opération') });
   modal.el.querySelector('.modal-card').classList.add('easy-modal');
   modal.el.querySelector('#easy-tx-close').addEventListener('click', () => modal.close());
+  modal.el.querySelector('#easy-tx-origin')?.addEventListener('click', () => {
+    // Ferme aussi la liste des opérations si le détail vient d'elle, puis ouvre l'écran où l'opération d'origine se gère.
+    document.querySelectorAll('#modal-root .modal-close').forEach((b) => b.click());
+    modal.close();
+    goToView(origin.view);
+  });
   modal.el.querySelector('#easy-tx-fix')?.addEventListener('click', () => { modal.close(); openEasyAmountFix(tx, cur, { onChange }); });
   modal.el.querySelector('#easy-tx-cat')?.addEventListener('click', () => { modal.close(); openEasyCategoryFix(tx, { onChange }); });
   modal.el.querySelector('#easy-tx-wallet')?.addEventListener('click', () => { modal.close(); openEasyWalletFix(tx, { onChange }); });
@@ -912,6 +934,7 @@ export function openAddEntry(openClassic) {
 
 /** `navigateTo` vient d'app.js (qui importe ce module : l'importer ici ferait un cycle). */
 export function initEasyHome({ navigateTo, openDebts = null }) {
+  goToView = navigateTo;
   document.getElementById('easy-home')?.addEventListener('click', (event) => {
     const speakBtn = event.target.closest('#easy-speak-btn');
     if (speakBtn) { speakBalance(); return; }

@@ -862,7 +862,7 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
       const calls = [];
       await renderEasyHome();
       ok('mon mois : l\'accueil facile a ses deux boutons « Écouter » et « Mon mois » (si la voix est possible)', !!easyHost.querySelector('#easy-speak-btn') === !!easyHost.querySelector('#easy-month-btn'));
-      initEasyHome({ navigateTo: (v) => calls.push(['nav', v]), openDebts: (k) => calls.push(['debts', k]) });
+      initEasyHome({ navigateTo: (v) => { calls.push(['nav', v]); (window.__navCalls ||= []).push(v); }, openDebts: (k) => calls.push(['debts', k]) });
       easyHost.querySelector('.easy-tile[data-easy="owed"]').click();
       easyHost.querySelector('.easy-tile[data-easy="owe"]').click();
       eq('prêts : les deux touches de l\'accueil ouvrent la saisie guidée des prêts (plus l\'écran Dettes)', calls, [['debts', 'owed'], ['debts', 'owe']]);
@@ -922,6 +922,18 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     const { openEasyTxDetail } = await import('../js/easy-home.js');
     await openEasyTxDetail('tx-lien'); await wait(200);
     ok('opérations récentes : une opération liée à un prêt s\'affiche sans bouton « Supprimer », avec une explication', !modalRoot.querySelector('#easy-tx-delete') && !!modalRoot.querySelector('.easy-hint') && modalRoot.querySelector('.easy-summary').textContent.includes('Prêt'));
+    // Une opération liée n'est plus une impasse : un gros bouton mène à l'écran où l'élément d'origine se gère
+    {
+      const { linkedOrigin } = await import('../js/easy-home.js');
+      eq('opérations liées : l\'écran d\'origine selon le lien (prêt, intérêts, investissement, tontine, partage, projet) ; rien pour une opération libre', [
+        { debtId: 'x' }, { debtInterestId: 'x' }, { investmentId: 'x' }, { tontineId: 'x' }, { sharedExpenseId: 'x' }, { projectId: 'x' }, {}, null,
+      ].map((tx) => linkedOrigin(tx)?.view ?? null), ['debts', 'debts', 'investments', 'tontines', 'shared', 'shared', null, null]);
+      const originBtn = modalRoot.querySelector('#easy-tx-origin');
+      ok('opérations liées : le détail propose « Aller à « Dettes & créances » »', !!originBtn && originBtn.textContent.includes('Dettes & créances'));
+      window.__navCalls = [];
+      originBtn.click(); await wait(200);
+      eq('opérations liées : toucher le bouton ferme la fenêtre et ouvre l\'écran Dettes & créances', [!!modalRoot.querySelector('.easy-summary'), window.__navCalls], [false, ['debts']]);
+    }
     modalRoot.innerHTML = '';
     await (await import('../js/db.js')).dbDelete(STORES.TRANSACTIONS, 'tx-lien');
     // « Voir toutes mes opérations » : liste par jour, 30 à la fois
