@@ -16,7 +16,7 @@
    pures et testées hors navigateur.
    ========================================================================== */
 
-import { STORES, dbGetAll, dbAdd, dbDelete, logAudit, getSetting, setSetting } from './db.js';
+import { STORES, dbGetAll, dbAdd, dbPut, dbDelete, logAudit, getSetting, setSetting } from './db.js';
 import {
   computeNetWorthComposition, computeEndOfMonthForecast, computeBudgetVsActual, computeSafeToSpend,
   getWalletBalance, checkUnusualExpense, isDailyWallet, getEnrichedTransactions,
@@ -170,11 +170,13 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
     </div>
     ${linked ? `<p class="easy-hint">${escapeHtml(t("Cette opération est liée à un prêt, un investissement, une tontine ou une dépense partagée : pour la supprimer, supprimez l'élément d'origine."))}</p>` : ''}
     <div class="easy-actions easy-actions-stack">
+      ${linked ? '' : `<button type="button" class="btn btn-primary easy-btn" id="easy-tx-fix">${icon('edit', 24)} ${escapeHtml(t('Corriger le montant'))}</button>`}
       ${linked ? '' : `<button type="button" class="btn btn-danger easy-btn" id="easy-tx-delete">${icon('trash', 24)} ${escapeHtml(t('Supprimer cette opération'))}</button>`}
       <button type="button" class="btn btn-ghost easy-btn" id="easy-tx-close">${escapeHtml(t('Fermer'))}</button>
     </div>`, { title: t('Cette opération') });
   modal.el.querySelector('.modal-card').classList.add('easy-modal');
   modal.el.querySelector('#easy-tx-close').addEventListener('click', () => modal.close());
+  modal.el.querySelector('#easy-tx-fix')?.addEventListener('click', () => { modal.close(); openEasyAmountFix(tx, cur, { onChange }); });
   modal.el.querySelector('#easy-tx-delete')?.addEventListener('click', async () => {
     const ok = await confirmDialog(t('Supprimer cette opération ? ({amount})', { amount: formatCurrency(tx.amount, cur) }), { danger: true, requirePin: true, confirmText: t('Supprimer') });
     if (!ok) return;
@@ -194,6 +196,70 @@ export async function openEasyTxDetail(id, { onChange = null } = {}) {
       },
     });
   });
+}
+
+/** « Corriger le montant » : le pavé numérique avec le montant actuel déjà écrit ; seul le montant change (le reste de l'opération
+    ne bouge pas), la modification est inscrite au journal d'audit et annulable. Renvoie le nouveau montant, ou null si rien n'a changé. */
+export function openEasyAmountFix(tx, cur, { onChange = null } = {}) {
+  const allowDecimal = !ZERO_DECIMAL_CURRENCIES.has(cur);
+  let amount = String(tx.amount);
+  const keys = [...KEYPAD_ROWS, allowDecimal ? '.' : '000', '0', 'back'];
+  const modal = openModal(`
+    <p class="easy-question">${escapeHtml(t('Quel est le bon montant ?'))}</p>
+    <div class="easy-amount" aria-live="polite"><span id="easy-fix-num"></span></div>
+    <div class="easy-amount-words" id="easy-fix-words"></div>
+    <div class="easy-keypad">
+      ${keys.map((k) => `<button type="button" class="easy-key ${k === 'back' ? 'is-back' : ''}" data-key="${k}" ${k === 'back' ? `aria-label="${escapeHtml(t('Effacer le dernier chiffre'))}"` : ''}>${k === 'back' ? icon('backspace', 26) : k === '.' ? (getLanguage() === 'en' ? '.' : ',') : k}</button>`).join('')}
+    </div>
+    <div class="easy-actions easy-actions-stack">
+      <button type="button" class="btn btn-primary easy-btn easy-save" id="easy-fix-save">${icon('check', 28)} ${escapeHtml(t('Enregistrer'))}</button>
+      <div class="easy-actions">
+        <button type="button" class="btn btn-ghost easy-btn" id="easy-fix-clear">${escapeHtml(t('Tout effacer'))}</button>
+        <button type="button" class="btn btn-ghost easy-btn" id="easy-fix-cancel">${escapeHtml(t('Fermer'))}</button>
+      </div>
+    </div>`, { title: t('Corriger le montant') });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  const numEl = modal.el.querySelector('#easy-fix-num');
+  const wordsEl = modal.el.querySelector('#easy-fix-words');
+  const saveBtn = modal.el.querySelector('#easy-fix-save');
+  function refresh() {
+    const n = Number(amount) || 0;
+    numEl.textContent = formatCurrency(n, cur);
+    wordsEl.textContent = n > 0 ? spokenAmount(n, cur) : '';
+    saveBtn.disabled = !(n > 0) || n === Number(tx.amount);
+  }
+  modal.el.querySelectorAll('[data-key]').forEach((btn) => btn.addEventListener('click', () => { amount = keypadPress(amount, btn.dataset.key, { allowDecimal }); refresh(); }));
+  modal.el.querySelector('#easy-fix-clear').addEventListener('click', () => { amount = ''; refresh(); });
+  modal.el.querySelector('#easy-fix-cancel').addEventListener('click', () => modal.close());
+  saveBtn.addEventListener('click', async () => {
+    const n = Number(amount) || 0;
+    if (!(n > 0) || n === Number(tx.amount)) return;
+    const before = { ...tx };
+    const after = { ...tx, amount: n };
+    try {
+      await dbPut(STORES.TRANSACTIONS, after);
+    } catch (err) {
+      modal.close();
+      showToast(err?.name === 'HelperRestrictedError' ? t('Action réservée au propriétaire.') : t("Le montant n'a pas pu être changé."));
+      return;
+    }
+    modal.close();
+    await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'update', before, after, note: t("Montant corrigé depuis l'accueil facile") });
+    notifyDataChanged('transactions');
+    onChange?.();
+    showToast(t('Montant corrigé.'), {
+      actionLabel: t('Annuler'),
+      onAction: async () => {
+        await dbPut(STORES.TRANSACTIONS, before);
+        await logAudit({ entityType: 'transaction', entityId: tx.id, action: 'update', before: after, after: before, note: t('Restaurée (annulation)') });
+        notifyDataChanged('transactions');
+        onChange?.();
+        showToast(t('Annulé.'));
+      },
+    });
+  });
+  refresh();
+  return modal;
 }
 
 const HISTORY_PAGE = 30;

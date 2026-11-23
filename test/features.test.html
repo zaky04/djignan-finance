@@ -888,6 +888,26 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     openEasyHistory(); await wait(400);
     ok('historique : la liste est utilisable', modalRoot.querySelectorAll('#easy-history [data-tx]').length > 0);
     modalRoot.innerHTML = '';
+    // « Corriger le montant » : seul le montant change, journal d'audit, annulable
+    const keyTap = (k) => modalRoot.querySelector(`.easy-keypad [data-key="${k}"]`).click();
+    const fixId = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.amount === 5500).id;
+    const beforeFix = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    await openEasyTxDetail(fixId); await wait(200);
+    ok('correction : le détail propose « Corriger le montant »', !!modalRoot.querySelector('#easy-tx-fix'));
+    modalRoot.querySelector('#easy-tx-fix').click(); await wait(300);
+    eq('correction : le pavé montre le montant actuel, « Enregistrer » est grisé tant que rien ne change', [/5\D*500/.test(modalRoot.querySelector('#easy-fix-num').textContent), modalRoot.querySelector('#easy-fix-save').disabled], [true, true]);
+    modalRoot.querySelector('#easy-fix-clear').click();
+    eq('correction : tout effacer grise « Enregistrer » (montant nul interdit)', modalRoot.querySelector('#easy-fix-save').disabled, true);
+    ['6', '0', '0', '0'].forEach(keyTap);
+    ok('correction : le nouveau montant est écrit en chiffres et en lettres', /6\D*000/.test(modalRoot.querySelector('#easy-fix-num').textContent) && modalRoot.querySelector('#easy-fix-words').textContent.length > 3 && !modalRoot.querySelector('#easy-fix-save').disabled);
+    toastBox.textContent = '';
+    modalRoot.querySelector('#easy-fix-save').click(); await wait(600);
+    const afterFix = (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId);
+    eq('correction : seul le montant change (catégorie, portefeuille, jour, note intacts)', [afterFix.amount, { ...afterFix, amount: 0 }], [6000, { ...beforeFix, amount: 0 }]);
+    ok('correction : message affiché et trace « update » au journal d\'audit', toastBox.textContent.includes('Montant corrigé') && (await dbGetAll(STORES.AUDIT_LOG)).some((a) => a.action === 'update' && a.entityId === fixId && a.before?.amount === 5500 && a.after?.amount === 6000));
+    [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
+    eq('correction : « Annuler » remet l\'ancien montant', (await dbGetAll(STORES.TRANSACTIONS)).find((x) => x.id === fixId).amount, 5500);
+    modalRoot.innerHTML = '';
   }
   await setSetting('easyHome', false);
   await applyEasyHome();

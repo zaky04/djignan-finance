@@ -4222,7 +4222,12 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
-### 23 novembre 2026 (suite 10) — « Voir toutes mes opérations » en accueil facile (`CACHE_VERSION` `v197`, non commité au moment d'écrire)
+### 23 novembre 2026 (suite 11) — « Corriger le montant » depuis le détail d'une opération (`CACHE_VERSION` `v198`, non commité au moment d'écrire)
+
+Le détail d'une opération (accueil ou liste complète) a un gros bouton **« Corriger le montant »** (absent pour une opération liée à un prêt, etc., comme « Supprimer ») : `openEasyAmountFix(tx, cur, { onChange })` (`easy-home.js`) ouvre le pavé numérique avec le montant actuel déjà écrit (chiffres et lettres). « Enregistrer » reste grisé tant que le montant est nul ou inchangé. Seul le **montant** change (le reste de l'opération est recopié tel quel), avec une trace `update` (avant/après) au journal d'audit et un toast **annulable**. Pour changer autre chose (catégorie, portefeuille, jour) : supprimer puis ressaisir, ou l'écran Transactions.
+Aidant : `dbPut` ne lui permet de corriger que ce qu'il a saisi lui-même ; sur une opération du propriétaire il reçoit « Action réservée au propriétaire. ». Piège de traduction : le bouton de sortie s'appelle « Fermer », pas « Annuler » (cette clé est « Undo » en anglais, réservée aux toasts). Tests : 7 nouveaux (532). Vérifié sur 375 px.
+
+### 23 novembre 2026 (suite 10) — « Voir toutes mes opérations » en accueil facile (`CACHE_VERSION` `v197`, poussé en `bd1fe45`)
 
 L'accueil facile ne montrait que 3 opérations, donc seules ces 3 pouvaient être corrigées. Sous « Dernières opérations », un bouton **« Voir toutes mes opérations »** (`#easy-history-btn`, classe `.easy-more`, pas `.easy-move` : un test compte les boutons `.easy-move`) ouvre `openEasyHistory()` (`easy-home.js`) : toutes les opérations, **par jour** (titres « Aujourd'hui », « Hier », sinon la date ; `groupByDay`, `historyDayLabel`), 30 à la fois avec **« Voir plus »**. Chaque ligne reprend `recentRowHtml` et ouvre `openEasyTxDetail`, qui accepte maintenant `{ onChange }` : après une suppression (ou son annulation) la liste se recharge sans se fermer.
 Tests : 7 nouveaux (525). Vérifié sur 375 px avec les données de démonstration. Piège du navigateur de test : un port déjà utilisé les jours précédents sert d'anciens fichiers (cache), il faut un port neuf à chaque vérification.
