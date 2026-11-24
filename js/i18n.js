@@ -2232,6 +2232,16 @@ const EN = {
   '2 semaines': '2 weeks',
   '1 mois': '1 month',
   'À rendre le {date}': 'Due on {date}',
+  /* ---- Corriger la note ou la date de retour d'un prêt (easy-debts.js : « Modifier ») ---- */
+  'Modifier {name}': 'Edit {name}',
+  'Ajouter une date de retour': 'Add a return date',
+  'Corriger la date de retour': 'Fix the return date',
+  'La date de retour ne peut pas être avant le prêt.': 'The return date cannot be before the loan.',
+  'Date de retour corrigée.': 'Return date corrected.',
+  'Date de retour effacée.': 'Return date cleared.',
+  "Date de retour corrigée depuis l'accueil facile": 'Return date corrected from the easy home',
+  "La date de retour n'a pas pu être changée.": 'The return date could not be changed.',
+  "Note du prêt corrigée depuis l'accueil facile": 'Loan note corrected from the easy home',
   /* ---- Toucher une dernière opération de l'accueil facile : détail et suppression ---- */
   'Cette opération': 'This operation',
   'Supprimer cette opération': 'Delete this operation',

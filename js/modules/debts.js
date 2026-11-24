@@ -197,6 +197,42 @@ export async function listOpenDebts(type) {
     .sort((a, b) => (a.debt.startDate || '').localeCompare(b.debt.startDate || ''));
 }
 
+/** Corrige la NOTE et/ou l'ÉCHÉANCE d'un prêt simple encore actif (accueil facile). `patch` : `{ note }` et/ou `{ dueDate }` (`''` ou `null` = pas de date).
+    Refuse (renvoie `null`) un prêt non simple, un prêt qui n'est plus actif, une date qui n'est pas un vrai jour, ou une échéance AVANT le début du prêt.
+    Écrit avec `dbPut` : l'aidant reçoit `HelperRestrictedError` (le prêt existe déjà). Trace `update` au journal d'audit (avant/après).
+    Renvoie `{ before, after, keys }` : `revertDebtDetails` s'en sert pour annuler. */
+export async function updateSimpleDebtDetails(debt, patch, { auditNote = '' } = {}) {
+  if (!isSimpleDebt(debt) || debt.status !== 'active') return null;
+  const after = { ...debt };
+  const keys = [];
+  if ('note' in patch) { after.note = String(patch.note || '').trim().slice(0, 140); keys.push('note'); }
+  if ('dueDate' in patch) {
+    const due = patch.dueDate || null;
+    if (due) {
+      const real = /^\d{4}-\d{2}-\d{2}$/.test(due) && !Number.isNaN(Date.parse(`${due}T00:00:00Z`)) && new Date(`${due}T00:00:00Z`).toISOString().slice(0, 10) === due;
+      if (!real || (debt.startDate && due < debt.startDate)) return null;
+    }
+    after.dueDate = due;
+    keys.push('dueDate');
+  }
+  if (!keys.length) return null;
+  await dbPut(STORES.DEBTS, after);
+  await logAudit({ entityType: 'debt', entityId: debt.id, action: 'update', before: debt, after, note: auditNote || undefined });
+  return { before: debt, after, keys };
+}
+
+/** Annule `updateSimpleDebtDetails` : remet SEULEMENT les champs corrigés (relus sur le prêt tel qu'il est maintenant, pour ne pas défaire un
+    remboursement fait entre-temps). Ne fait rien si le prêt a disparu. */
+export async function revertDebtDetails(result) {
+  const current = (await dbGetAll(STORES.DEBTS)).find((d) => d.id === result.after.id);
+  if (!current) return null;
+  const restored = { ...current };
+  for (const key of result.keys) restored[key] = result.before[key];
+  await dbPut(STORES.DEBTS, restored);
+  await logAudit({ entityType: 'debt', entityId: current.id, action: 'update', before: current, after: restored, note: tr('Restaurée (annulation)') });
+  return restored;
+}
+
 /** Nouvelle dette (`type: 'debt'`, j'ai emprunté) ou créance (`'receivable'`, j'ai prêté). Avec `walletId`, l'argent entre
     dans (dette) ou sort de (créance) ce portefeuille aujourd'hui ; sans, rien ne bouge (le prêt date d'avant l'appli).
     Renvoie `{ debt, openingTx }` (ou `null` si le portefeuille ne convient pas) ; on l'annule par deleteDebtCascade(debt.id). */

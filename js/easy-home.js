@@ -375,12 +375,24 @@ export async function openEasyWalletFix(tx, { onChange = null } = {}) {
 /** « Corriger la note » (ou « Ajouter une note ») : un grand champ avec le texte actuel, au clavier ou dicté avec le micro (comme à la saisie).
     Seule la note change ; la vider l'efface. Inscrit au journal d'audit et annulable comme les autres corrections. */
 export function openEasyNoteFix(tx, { onChange = null } = {}) {
-  const current = (tx.note || '').trim();
+  return openEasyNoteEditor({
+    current: tx.note,
+    onSave: (note) => saveTxCorrection(tx, { note }, {
+      auditNote: t("Note corrigée depuis l'accueil facile"), doneMsg: note ? t('Note corrigée.') : t('Note effacée.'), failMsg: t("La note n'a pas pu être changée."), onChange,
+    }),
+  });
+}
+
+/** La fenêtre « Quelle note ? » elle-même (champ prérempli, micro, « Effacer la note », « Enregistrer » grisé tant que rien ne change), indépendante de ce que
+    l'on corrige : `onSave(note)` est appelé APRÈS la fermeture, avec la note nettoyée (140 caractères, vide = effacée). Partagée par les opérations
+    (`openEasyNoteFix`) et les prêts (`easy-debts.js`). */
+export function openEasyNoteEditor({ current: currentRaw = '', placeholder = t('Ex : taxi, marché, cadeau…'), onSave }) {
+  const current = (currentRaw || '').trim();
   let listening = null;
   const modal = openModal(`
     <p class="easy-question">${escapeHtml(t('Quelle note ?'))}</p>
     <div class="easy-note-row">
-      <input type="text" id="easy-notefix-input" maxlength="140" value="${escapeHtml(current)}" placeholder="${escapeHtml(t('Ex : taxi, marché, cadeau…'))}" aria-label="${escapeHtml(t('Note (facultatif)'))}" autocomplete="off">
+      <input type="text" id="easy-notefix-input" maxlength="140" value="${escapeHtml(current)}" placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(t('Note (facultatif)'))}" autocomplete="off">
       ${isVoiceSupported() ? `<button type="button" class="btn btn-ghost easy-btn easy-mic" id="easy-notefix-mic" aria-pressed="false" aria-label="${escapeHtml(t('Dicter la note'))}">${icon('mic', 26)}</button>` : ''}
     </div>
     <div class="easy-actions easy-actions-stack">
@@ -412,9 +424,7 @@ export function openEasyNoteFix(tx, { onChange = null } = {}) {
     const note = input.value.trim().slice(0, 140);
     if (note === current) return;
     modal.close();
-    await saveTxCorrection(tx, { note }, {
-      auditNote: t("Note corrigée depuis l'accueil facile"), doneMsg: note ? t('Note corrigée.') : t('Note effacée.'), failMsg: t("La note n'a pas pu être changée."), onChange,
-    });
+    await onSave(note);
   });
   return modal;
 }

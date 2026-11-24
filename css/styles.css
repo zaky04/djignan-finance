@@ -1100,7 +1100,8 @@ body[data-easy-home="on"] #panel-recent-transactions { display: none !important;
 /* Saisie guidée des prêts : noms déjà utilisés (un toucher pour les reprendre) et message « trop » sous le pavé. */
 .easy-debt-row { display: flex; gap: 10px; }
 .easy-debt-row .easy-wallet:first-child { flex: 1; min-width: 0; }
-.easy-debt-row .easy-remind { flex: 0 0 84px; flex-direction: column; gap: 2px; justify-content: center; padding: 0 4px; color: var(--accent); }
+.easy-debt-row .easy-remind, .easy-debt-row .easy-edit { flex: 0 0 76px; flex-direction: column; gap: 2px; justify-content: center; padding: 0 4px; color: var(--accent); }
+.easy-fix-current { overflow-wrap: anywhere; font-weight: 600; line-height: 1.25; }
 .easy-debt-text { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .easy-debt-text .easy-wallet-name { flex: none; max-width: 100%; overflow-wrap: break-word; line-height: 1.15; }
 .easy-remind-label { font-size: 13px; font-weight: 700; }

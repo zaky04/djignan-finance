@@ -857,6 +857,90 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
     [...modalRoot.querySelectorAll('[data-debt]')].find((b) => b.textContent.includes('Dan')).click(); await wait();
     ok('prêts : un prêt avec intérêts ouvre la fenêtre de remboursement complète (formulaire classique)', !!modalRoot.querySelector('#payment-form') && !modalRoot.querySelector('#easy-step'));
     modalRoot.innerHTML = '';
+    // 5 bis. « Modifier » : corriger la note et la date de retour d'un prêt (prêts simples seulement)
+    {
+      const dbm2 = await import('../js/db.js');
+      const { updateSimpleDebtDetails, revertDebtDetails } = await import('../js/modules/debts.js');
+      const noa = (await createSimpleDebt({ type: 'receivable', personName: 'Noa', principal: 3000, currency: 'XOF', date: isoAgo(10), note: 'Vieille note' })).debt;
+      const getNoa = async () => (await dbGetAll(STORES.DEBTS)).find((d) => d.id === noa.id);
+      const rowOf = (name) => [...modalRoot.querySelectorAll('.easy-debt-row')].find((r) => r.textContent.includes(name));
+      modalRoot.innerHTML = '';
+      await openEasyDebts('owed');
+      ok('prêts : « Modifier » est proposé à côté d\'un prêt simple, pas d\'un prêt avec intérêts (Dan)', !!rowOf('Noa').querySelector('[data-edit]') && !rowOf('Dan').querySelector('[data-edit]'));
+      rowOf('Noa').querySelector('[data-edit]').click(); await wait(200);
+      eq('prêts : « Modifier » propose deux gros boutons qui montrent la valeur actuelle', [
+        modalRoot.querySelector('#easy-debtfix-note .easy-wallet-name').textContent, modalRoot.querySelector('#easy-debtfix-note .easy-fix-current').textContent,
+        modalRoot.querySelector('#easy-debtfix-due .easy-wallet-name').textContent, !!modalRoot.querySelector('#easy-debtfix-due .easy-fix-current'), !!modalRoot.querySelector('[data-debt]')],
+      ['Corriger la note', 'Vieille note', 'Ajouter une date de retour', false, true]);
+      // La note : même fenêtre que pour une opération, champ prérempli, « Enregistrer » grisé tant que rien ne change
+      press('#easy-debtfix-note'); await wait(300);
+      const dNote = modalRoot.querySelector('#easy-notefix-input');
+      eq('prêts : « Corriger la note » montre la note actuelle, « Enregistrer » grisé', [dNote.value, modalRoot.querySelector('#easy-notefix-save').disabled], ['Vieille note', true]);
+      dNote.value = '  Pour le loyer  '; dNote.dispatchEvent(new Event('input', { bubbles: true }));
+      toastBox.textContent = '';
+      press('#easy-notefix-save'); await wait(600);
+      const noaA = await getNoa();
+      eq('prêts : seule la note change (espaces retirés), le reste du prêt est intact', [noaA.note, { ...noaA, note: '' }], ['Pour le loyer', { ...noa, note: '' }]);
+      ok('prêts : message « Note corrigée » et trace « update » (type debt, avant/après) au journal d\'audit', toastBox.textContent.includes('Note corrigée') && (await dbGetAll(STORES.AUDIT_LOG)).some((a) => a.entityType === 'debt' && a.action === 'update' && a.entityId === noa.id && a.before?.note === 'Vieille note' && a.after?.note === 'Pour le loyer'));
+      ok('prêts : la liste se recharge derrière (le bouton « Modifier » est toujours là, sans fenêtre de correction)', !!rowOf('Noa').querySelector('[data-edit]') && !modalRoot.querySelector('#easy-notefix-input'));
+      [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
+      eq('prêts : « Annuler » remet l\'ancienne note', (await getNoa()).note, 'Vieille note');
+      // La date de retour : mêmes choix que pour un nouveau prêt, enregistrée dès qu'on en touche un
+      rowOf('Noa').querySelector('[data-edit]').click(); await wait(200);
+      press('#easy-debtfix-due'); await wait(300);
+      eq('prêts : « Ajouter une date de retour » propose pas de date (choisi), 1 semaine, 2 semaines, 1 mois, autre jour ; calendrier limité au début du prêt', [
+        [...modalRoot.querySelectorAll('[data-due]')].map((b) => b.dataset.due), modalRoot.querySelector('[data-due=""]').getAttribute('aria-pressed'), !!modalRoot.querySelector('#easy-due-other'), modalRoot.querySelector('#easy-due-input').min],
+      [['', isoAgo(-7), isoAgo(-14), isoAgo(-30)], 'true', true, isoAgo(10)]);
+      toastBox.textContent = '';
+      press(`[data-due="${isoAgo(-14)}"]`); await wait(600);
+      eq('prêts : toucher « 2 semaines » enregistre l\'échéance, sans fenêtre restante ni autre champ changé', [(await getNoa()).dueDate, (await getNoa()).note, !!modalRoot.querySelector('#easy-due-input')], [isoAgo(-14), 'Vieille note', false]);
+      ok('prêts : message « Date de retour corrigée » et trace au journal d\'audit (avant/après)', toastBox.textContent.includes('Date de retour corrigée') && (await dbGetAll(STORES.AUDIT_LOG)).some((a) => a.entityType === 'debt' && a.action === 'update' && a.entityId === noa.id && !a.before?.dueDate && a.after?.dueDate === isoAgo(-14)));
+      [...toastBox.querySelectorAll('button')].find((b) => b.textContent.includes('Annuler'))?.click(); await wait(500);
+      eq('prêts : « Annuler » retire l\'échéance ajoutée', (await getNoa()).dueDate || null, null);
+      // Avec une échéance : le bouton dit « Corriger », « Pas de date » l'efface, toucher le choix actuel n'écrit rien
+      await dbm2.dbPut(STORES.DEBTS, { ...(await getNoa()), dueDate: isoAgo(-7) });
+      const auditBefore = (await dbGetAll(STORES.AUDIT_LOG)).length;
+      modalRoot.innerHTML = ''; await openEasyDebts('owed');
+      rowOf('Noa').querySelector('[data-edit]').click(); await wait(200);
+      ok('prêts : avec une échéance, le bouton dit « Corriger la date de retour » et la montre', modalRoot.querySelector('#easy-debtfix-due .easy-wallet-name').textContent === 'Corriger la date de retour' && modalRoot.querySelector('#easy-debtfix-due .easy-fix-current').textContent.includes('À rendre le'));
+      press('#easy-debtfix-due'); await wait(300);
+      press(`[data-due="${isoAgo(-7)}"]`); await wait(300);
+      eq('prêts : toucher l\'échéance actuelle ferme sans rien écrire ni tracer', [(await getNoa()).dueDate, (await dbGetAll(STORES.AUDIT_LOG)).length], [isoAgo(-7), auditBefore]);
+      modalRoot.innerHTML = ''; await openEasyDebts('owed');
+      rowOf('Noa').querySelector('[data-edit]').click(); await wait(200); press('#easy-debtfix-due'); await wait(300);
+      press('[data-due=""]'); await wait(500);
+      eq('prêts : « Pas de date » efface l\'échéance', (await getNoa()).dueDate, null);
+      // Une échéance ne peut pas précéder le début du prêt ; un jour inventé est refusé ; un prêt avec intérêts ou soldé n'est pas touché
+      const cur = await getNoa();
+      eq('prêts : échéance avant le début du prêt, jour inventé, prêt avec intérêts ou soldé → refusés (null), rien d\'écrit', [
+        await updateSimpleDebtDetails(cur, { dueDate: isoAgo(11) }), await updateSimpleDebtDetails(cur, { dueDate: '2026-02-30' }), await updateSimpleDebtDetails(cur, { dueDate: 'demain' }),
+        await updateSimpleDebtDetails({ ...cur, interestRate: 5 }, { note: 'x' }), await updateSimpleDebtDetails({ ...cur, status: 'paid' }, { note: 'x' }), await updateSimpleDebtDetails(cur, {}), (await getNoa()).dueDate],
+      [null, null, null, null, null, null, null]);
+      eq('prêts : une échéance le jour même du prêt est permise', (await updateSimpleDebtDetails(cur, { dueDate: isoAgo(10) }))?.after.dueDate, isoAgo(10));
+      // L'annulation ne remet que le champ corrigé : un remboursement fait entre-temps n'est pas défait
+      const r1 = await updateSimpleDebtDetails(await getNoa(), { note: 'Autre' });
+      await dbm2.dbPut(STORES.DEBTS, { ...(await getNoa()), status: 'paid' });
+      await revertDebtDetails(r1);
+      eq('prêts : annuler une note ne rouvre pas un prêt soldé entre-temps', [(await getNoa()).note, (await getNoa()).status], ['Vieille note', 'paid']);
+      await dbm2.dbPut(STORES.DEBTS, { ...(await getNoa()), status: 'active' });
+      // Aidant : le prêt existe déjà, la correction est refusée avec « Action réservée au propriétaire. »
+      modalRoot.innerHTML = ''; await openEasyDebts('owed');
+      rowOf('Noa').querySelector('[data-edit]').click(); await wait(200); press('#easy-debtfix-due'); await wait(300);
+      dbm2.setAccessRole('helper');
+      toastBox.textContent = '';
+      press(`[data-due="${isoAgo(-30)}"]`); await wait(500);
+      dbm2.setAccessRole('owner');
+      eq('prêts : l\'aidant ne peut pas corriger l\'échéance (message, rien d\'écrit)', [toastBox.textContent.includes('Action réservée au propriétaire'), (await getNoa()).dueDate || null], [true, isoAgo(10)]);
+      rowOf('Noa').querySelector('[data-edit]').click(); await wait(200); press('#easy-debtfix-note'); await wait(300);
+      const dn2 = modalRoot.querySelector('#easy-notefix-input'); dn2.value = 'Par l\'aidant'; dn2.dispatchEvent(new Event('input', { bubbles: true }));
+      dbm2.setAccessRole('helper');
+      toastBox.textContent = '';
+      press('#easy-notefix-save'); await wait(500);
+      dbm2.setAccessRole('owner');
+      eq('prêts : l\'aidant ne peut pas corriger la note (message, rien d\'écrit)', [toastBox.textContent.includes('Action réservée au propriétaire'), (await getNoa()).note], [true, 'Vieille note']);
+      modalRoot.innerHTML = '';
+      await deleteDebtCascade(noa.id);
+    }
     // 6. Accueil facile : « On me doit » / « Je dois » appellent la saisie guidée
     {
       const calls = [];

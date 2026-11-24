@@ -14,10 +14,11 @@
 
 import { STORES, dbGetAll, getSetting } from './db.js';
 import { getWalletBalance, isDailyWallet } from './ledger.js';
-import { keypadPress, addToAmount, quickAmounts, isoDaysAgo, dayLabel } from './easy-home.js';
+import { keypadPress, addToAmount, quickAmounts, isoDaysAgo, dayLabel, openEasyNoteEditor } from './easy-home.js';
 import { pastOrTodayISO } from './quick-templates.js';
 import {
   isSimpleDebt, listOpenDebts, createSimpleDebt, recordSimplePayment, undoSimplePayment, deleteDebtCascade, openPaymentModal,
+  updateSimpleDebtDetails, revertDebtDetails,
 } from './modules/debts.js';
 import { openPersonReminder } from './modules/person-ledger.js';
 import {
@@ -42,6 +43,106 @@ export function debtAction(kind, mode) {
 /** L'argent sort-il du portefeuille ? (prêter, ou rendre) — sinon il y entre. Pure. */
 export function debtMoneyLeaves(action) { return action === 'lend' || action === 'repay'; }
 
+/** Date locale dans `days` jours (AAAA-MM-JJ). */
+const isoInDays = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return localISODate(d); };
+
+/** « Quand doit-il rendre ? » : pas de date, 1 semaine, 2 semaines, 1 mois, ou un autre jour. Commun à la saisie d'un nouveau prêt et à « Corriger la date de
+    retour ». `due` : l'échéance actuelle (`''` = aucune) ; `min` : plus petit jour du calendrier « Autre jour ». */
+function dueChooserHtml(kind, due, min) {
+  const presets = [['', t('Pas de date')], [isoInDays(7), t('1 semaine')], [isoInDays(14), t('2 semaines')], [isoInDays(30), t('1 mois')]];
+  const isOther = !!due && !presets.some(([iso]) => iso === due);
+  const label = kind === 'owed' ? t('Quand doit-il vous rendre ?') : t('Quand devez-vous rendre ?');
+  return `<div class="easy-date" role="group" aria-label="${escapeHtml(label)}">
+        <span class="easy-note-label">${escapeHtml(label)}</span>
+        <div class="easy-date-row">
+          ${presets.map(([iso, text]) => `<button type="button" class="btn easy-day ${due === iso ? 'is-on' : 'btn-ghost'}" data-due="${iso}" aria-pressed="${due === iso}">${escapeHtml(text)}</button>`).join('')}
+          <button type="button" class="btn easy-day ${isOther ? 'is-on' : 'btn-ghost'}" id="easy-due-other" aria-pressed="${isOther}">${escapeHtml(isOther ? formatDate(due) : t('Autre jour'))}</button>
+        </div>
+        <input type="date" id="easy-due-input" class="easy-day-input" min="${escapeHtml(min)}" value="${escapeHtml(due)}" hidden aria-label="${escapeHtml(t('Choisir le jour'))}">
+      </div>`;
+}
+
+/** Branche les boutons de `dueChooserHtml` (présents dans `root`) : `onChoose(iso)` reçoit `''` (pas de date) ou un jour AAAA-MM-JJ. */
+function bindDueChooser(root, onChoose) {
+  const input = root.querySelector('#easy-due-input');
+  root.querySelectorAll('[data-due]').forEach((b) => b.addEventListener('click', () => onChoose(b.dataset.due)));
+  root.querySelector('#easy-due-other')?.addEventListener('click', () => { input.hidden = false; if (input.showPicker) { try { input.showPicker(); } catch { input.focus(); } } else input.focus(); });
+  input?.addEventListener('change', () => { if (input.value) onChoose(input.value); });
+}
+
+/** Enregistre la correction d'un prêt, la trace au journal d'audit et propose « Annuler » d'un toucher. L'aidant ne peut pas modifier un prêt existant
+    (`HelperRestrictedError`). Renvoie true si la correction est faite. */
+async function saveDebtCorrection(debt, patch, { auditNote, doneMsg, failMsg, onChange = null }) {
+  let result;
+  try {
+    result = await updateSimpleDebtDetails(debt, patch, { auditNote });
+  } catch (err) {
+    showToast(err?.name === 'HelperRestrictedError' ? t('Action réservée au propriétaire.') : failMsg);
+    return false;
+  }
+  if (!result) { showToast(failMsg); return false; }
+  notifyDataChanged('all');
+  onChange?.();
+  showToast(doneMsg, {
+    actionLabel: t('Annuler'),
+    onAction: async () => {
+      try { await revertDebtDetails(result); } catch { showToast(t('Action réservée au propriétaire.')); return; }
+      notifyDataChanged('all');
+      onChange?.();
+      showToast(t('Annulé.'));
+    },
+  });
+  return true;
+}
+
+/** « Modifier » d'un prêt de la liste : deux gros boutons, « Corriger la note » et « Corriger la date de retour » (ou « Ajouter… » s'il n'y en a pas),
+    qui montrent la valeur actuelle. La note ouvre la même fenêtre (champ + micro) que pour une opération ; la date reprend les choix de la saisie d'un
+    nouveau prêt (pas de date, 1 semaine, 2 semaines, 1 mois, autre jour) et s'enregistre dès qu'on en touche un. Réservé aux prêts simples (sans intérêts
+    ni participants…) ; annulable d'un toucher ; `onChange` est appelé après chaque correction ou annulation. */
+export function openEasyDebtFix(debt, kind, { onChange = null } = {}) {
+  if (!isSimpleDebt(debt) || debt.status !== 'active') return null;
+  const note = (debt.note || '').trim();
+  const due = debt.dueDate || '';
+  const optionHtml = (id, name, current) => `<button type="button" class="easy-wallet" id="${id}">${icon('edit', 30)}<span class="easy-debt-text"><span class="easy-wallet-name">${escapeHtml(name)}</span>${current ? `<span class="easy-wallet-cur easy-fix-current">${escapeHtml(current)}</span>` : ''}</span></button>`;
+  const modal = openModal(`
+    <p class="easy-question">${escapeHtml(debt.personName)}</p>
+    <div class="easy-wallets">
+      ${optionHtml('easy-debtfix-note', note ? t('Corriger la note') : t('Ajouter une note'), note)}
+      ${optionHtml('easy-debtfix-due', due ? t('Corriger la date de retour') : t('Ajouter une date de retour'), due ? t('À rendre le {date}', { date: formatDate(due) }) : '')}
+    </div>
+    <div class="easy-actions"><button type="button" class="btn btn-ghost easy-btn" id="easy-debtfix-cancel">${escapeHtml(t('Fermer'))}</button></div>`, { title: t('Modifier') });
+  modal.el.querySelector('.modal-card').classList.add('easy-modal');
+  modal.el.querySelector('#easy-debtfix-cancel').addEventListener('click', () => modal.close());
+  modal.el.querySelector('#easy-debtfix-note').addEventListener('click', () => {
+    modal.close();
+    openEasyNoteEditor({
+      current: note,
+      placeholder: t('Ex : pour le loyer, un cadeau…'),
+      onSave: (text) => saveDebtCorrection(debt, { note: text }, {
+        auditNote: t("Note du prêt corrigée depuis l'accueil facile"), doneMsg: text ? t('Note corrigée.') : t('Note effacée.'), failMsg: t("La note n'a pas pu être changée."), onChange,
+      }),
+    });
+  });
+  modal.el.querySelector('#easy-debtfix-due').addEventListener('click', () => {
+    modal.close();
+    const min = debt.startDate || '';
+    const dueModal = openModal(`
+      ${dueChooserHtml(kind, due, min)}
+      <div class="easy-actions"><button type="button" class="btn btn-ghost easy-btn" id="easy-duefix-cancel">${escapeHtml(t('Fermer'))}</button></div>`, { title: due ? t('Corriger la date de retour') : t('Ajouter une date de retour') });
+    dueModal.el.querySelector('.modal-card').classList.add('easy-modal');
+    dueModal.el.querySelector('#easy-duefix-cancel').addEventListener('click', () => dueModal.close());
+    bindDueChooser(dueModal.el, async (iso) => {
+      if (iso && min && iso < min) { showToast(t('La date de retour ne peut pas être avant le prêt.')); return; }
+      dueModal.close();
+      if (iso === due) return;
+      await saveDebtCorrection(debt, { dueDate: iso }, {
+        auditNote: t("Date de retour corrigée depuis l'accueil facile"), doneMsg: iso ? t('Date de retour corrigée.') : t('Date de retour effacée.'), failMsg: t("La date de retour n'a pas pu être changée."), onChange,
+      });
+    });
+  });
+  return modal;
+}
+
 /** `kind` : 'owed' (« On me doit », créances) ou 'owe' (« Je dois », dettes). */
 export async function openEasyDebts(kind) {
   primeSpeech(); // dans le geste du clic, avant tout await
@@ -52,8 +153,6 @@ export async function openEasyDebts(kind) {
 
   const state = { step: open.length ? 'list' : 'who', mode: 'new', debt: null, owed: 0, name: '', amount: '', walletId: null, noWallet: false, due: '', date: todayISO(), note: '' };
   let noteListening = null; // dictée de la note en cours (écran « C'est bon ? »)
-  /** Date locale dans `days` jours (AAAA-MM-JJ). */
-  const isoInDays = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return localISODate(d); };
   const hasList = open.length > 0;
   const action = () => debtAction(kind, state.mode);
   const walletsForNow = () => (state.mode === 'repay' ? dailyWallets.filter((w) => w.currency === state.debt.currency) : dailyWallets);
@@ -84,6 +183,11 @@ export async function openEasyDebts(kind) {
     else renderConfirm(body);
   }
   const go = (step) => { stopSpeaking(); state.step = step; render(); };
+  /** Relit les prêts en cours (après une correction de note ou d'échéance) et réaffiche la liste si on y est. */
+  async function reloadOpen() {
+    open.splice(0, open.length, ...await listOpenDebts(debtType));
+    if (state.step === 'list') render();
+  }
 
   /** Les prêts en cours (touchez celui à rembourser) + le bouton « nouveau ». */
   function renderList(body) {
@@ -92,6 +196,7 @@ export async function openEasyDebts(kind) {
       <div class="easy-wallets">
         ${open.map((x, i) => `<div class="easy-debt-row">
           <button type="button" class="easy-wallet" data-debt="${i}">${icon('person', 30)}<span class="easy-debt-text"><span class="easy-wallet-name">${escapeHtml(x.debt.personName)}</span><span class="easy-wallet-cur amount" data-value="${x.owed}">${escapeHtml(formatCurrency(x.owed, x.debt.currency))}</span></span></button>
+          ${isSimpleDebt(x.debt) ? `<button type="button" class="easy-wallet easy-edit" data-edit="${i}" aria-label="${escapeHtml(t('Modifier {name}', { name: x.debt.personName }))}" title="${escapeHtml(t('Modifier {name}', { name: x.debt.personName }))}">${icon('edit', 26)}<span class="easy-remind-label">${escapeHtml(t('Modifier'))}</span></button>` : ''}
           ${kind === 'owed' ? `<button type="button" class="easy-wallet easy-remind" data-remind="${i}" aria-label="${escapeHtml(t('Relancer {name}', { name: x.debt.personName }))}" title="${escapeHtml(t('Relancer {name}', { name: x.debt.personName }))}">${icon('message', 26)}<span class="easy-remind-label">${escapeHtml(t('Relancer'))}</span></button>` : ''}
         </div>`).join('')}
       </div>
@@ -112,6 +217,10 @@ export async function openEasyDebts(kind) {
       const picked = open[Number(btn.dataset.remind)];
       const [debts, payments] = await Promise.all([dbGetAll(STORES.DEBTS), dbGetAll(STORES.DEBT_PAYMENTS)]);
       openPersonReminder(picked.debt.personName, debts, payments);
+    }));
+    // « Modifier » : corriger la note ou la date de retour (fenêtre posée par-dessus) ; la liste se recharge après chaque correction ou annulation.
+    body.querySelectorAll('[data-edit]').forEach((btn) => btn.addEventListener('click', () => {
+      openEasyDebtFix(open[Number(btn.dataset.edit)].debt, kind, { onChange: reloadOpen });
     }));
     body.querySelector('#easy-new').addEventListener('click', () => { Object.assign(state, { mode: 'new', debt: null, amount: '', walletId: null, noWallet: false, due: '' }); go('who'); });
   }
@@ -243,21 +352,6 @@ export async function openEasyDebts(kind) {
       </div>`;
   }
 
-  /** « Quand doit-il rendre ? » : choix d'une échéance facultative (nouveau prêt). */
-  function dueChooserHtml() {
-    const presets = [['', t('Pas de date')], [isoInDays(7), t('1 semaine')], [isoInDays(14), t('2 semaines')], [isoInDays(30), t('1 mois')]];
-    const isOther = !!state.due && !presets.some(([iso]) => iso === state.due);
-    const label = kind === 'owed' ? t('Quand doit-il vous rendre ?') : t('Quand devez-vous rendre ?');
-    return `<div class="easy-date" role="group" aria-label="${escapeHtml(label)}">
-        <span class="easy-note-label">${escapeHtml(label)}</span>
-        <div class="easy-date-row">
-          ${presets.map(([iso, text]) => `<button type="button" class="btn easy-day ${state.due === iso ? 'is-on' : 'btn-ghost'}" data-due="${iso}" aria-pressed="${state.due === iso}">${escapeHtml(text)}</button>`).join('')}
-          <button type="button" class="btn easy-day ${isOther ? 'is-on' : 'btn-ghost'}" id="easy-due-other" aria-pressed="${isOther}">${escapeHtml(isOther ? formatDate(state.due) : t('Autre jour'))}</button>
-        </div>
-        <input type="date" id="easy-due-input" class="easy-day-input" min="${todayISO()}" value="${state.due}" hidden aria-label="${escapeHtml(t('Choisir le jour'))}">
-      </div>`;
-  }
-
   function renderConfirm(body) {
     if (earliestDay() && state.date < earliestDay()) state.date = earliestDay() <= todayISO() ? earliestDay() : todayISO(); // un autre prêt a été choisi entre-temps
     const n = Number(state.amount) || 0;
@@ -279,7 +373,7 @@ export async function openEasyDebts(kind) {
         ${!repay && state.due ? `<div class="easy-summary-line">${icon('history', 22)} ${escapeHtml(t('À rendre le {date}', { date: formatDate(state.due) }))}</div>` : ''}
       </div>
       ${dayChooserHtml()}
-      ${repay ? '' : dueChooserHtml()}
+      ${repay ? '' : dueChooserHtml(kind, state.due, todayISO())}
       <div class="easy-note">
         <button type="button" class="btn btn-ghost easy-btn" id="easy-note-toggle" ${state.note ? 'hidden' : ''}>${icon('edit', 22)} ${escapeHtml(t('Ajouter une note'))}</button>
         <div class="easy-note-box" id="easy-note-box" ${state.note ? '' : 'hidden'}>
@@ -307,11 +401,7 @@ export async function openEasyDebts(kind) {
       }).catch(() => {});
     }
     // Échéance (nouveau prêt seulement) : pas de date, dans 1 ou 2 semaines, dans 1 mois, ou un autre jour (jamais dans le passé).
-    const dueInput = body.querySelector('#easy-due-input');
-    const chooseDue = (iso) => { state.due = /^\d{4}-\d{2}-\d{2}$/.test(iso || '') && iso >= todayISO() ? iso : ''; renderConfirm(body); };
-    body.querySelectorAll('[data-due]').forEach((b) => b.addEventListener('click', () => chooseDue(b.dataset.due)));
-    body.querySelector('#easy-due-other')?.addEventListener('click', () => { dueInput.hidden = false; if (dueInput.showPicker) { try { dueInput.showPicker(); } catch { dueInput.focus(); } } else dueInput.focus(); });
-    dueInput?.addEventListener('change', () => { if (dueInput.value) chooseDue(dueInput.value); });
+    bindDueChooser(body, (iso) => { state.due = /^\d{4}-\d{2}-\d{2}$/.test(iso || '') && iso >= todayISO() ? iso : ''; renderConfirm(body); });
     // Jour de l'opération : jamais dans le futur, jamais avant le prêt que l'on rembourse (sinon on garde le jour actuel).
     const dayInput = body.querySelector('#easy-day-input');
     const chooseDay = (iso) => {
