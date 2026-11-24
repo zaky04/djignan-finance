@@ -1024,6 +1024,7 @@ const EN = {
   'Remboursement de dette/créance': 'Debt/receivable repayment',
   'Soldée': 'Paid off',
   'Remboursement enregistré.': 'Repayment recorded.',
+  'Remboursement (annulation)': 'Repayment (cancelled)',
   'Avec ce budget mensuel, les intérêts dépassent votre capacité de remboursement ({method}). Augmentez le montant mensuel.':
     'With this monthly budget, interest exceeds your repayment capacity ({method}). Increase the monthly amount.',
   "Avalanche (taux le plus élevé d'abord)": 'Avalanche (highest rate first)',
