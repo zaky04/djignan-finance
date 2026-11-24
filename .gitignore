@@ -1,3 +1,6 @@
 Thumbs.db
 .DS_Store
 *.log
+
+# Rapports de travail locaux (audits, listes d'essais) : ne jamais publier, le dépôt est public
+rapports-session/
