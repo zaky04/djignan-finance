@@ -1630,6 +1630,15 @@ const EN = {
   'Portefeuille introuvable.': 'Wallet not found.',
   'Votre navigateur ne permet pas cette fonctionnalité (Chrome/Edge sur ordinateur uniquement).': 'Your browser does not support this feature (Chrome/Edge on desktop only).',
   'Sauvegarde automatique effectuée.': 'Automatic backup completed.',
+  // Suite 22 : photo illisible à la restauration, erreur de la sauvegarde automatique dans un dossier
+  'Import réussi. {count} photo(s) de justificatifs illisible(s) ont été ignorées ; les transactions correspondantes sont conservées.': 'Import successful. {count} unreadable receipt photo(s) were skipped; the matching transactions were kept.',
+  '{count} photo(s) de justificatifs illisible(s) ont été ignorées ; les transactions correspondantes sont conservées.': '{count} unreadable receipt photo(s) were skipped; the matching transactions were kept.',
+  "La sauvegarde automatique n'a pas pu écrire : {reason}": 'The automatic backup could not write: {reason}',
+  'Réautoriser le dossier': 'Re-authorize the folder',
+  "Le dossier n'a pas pu être réautorisé.": 'The folder could not be re-authorized.',
+  "l'autorisation d'écrire dans le dossier a expiré ou été retirée": 'write permission for the folder has expired or was removed',
+  'le dossier est introuvable (supprimé ou déplacé)': 'the folder cannot be found (deleted or moved)',
+  'espace de stockage insuffisant': 'not enough storage space',
   'Sauvegarde en retard': 'Backup overdue',
   "Vous avez repoussé ce rappel plusieurs fois. Vos données ne vivent que sur cet appareil : sans export, un changement de téléphone, une réinstallation ou un nettoyage du cache les effacerait définitivement. Exportez-les maintenant.":
     "You have postponed this reminder several times. Your data only lives on this device: without an export, a phone change, a reinstall, or a cache cleanup would permanently erase it. Export it now.",

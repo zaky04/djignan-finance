@@ -12,7 +12,8 @@ import {
   exportJsonBackup, importJsonBackup, exportEncryptedBackup, importEncryptedBackup,
   analyzeTransactionsCsv, importDjignanCsvRows, importGenericCsvRows, exportTransactionsCsv,
   isFileSystemAccessSupported, chooseAutoBackupDirectory, getAutoBackupDirectory, clearAutoBackupDirectory,
-  estimateBackupSize, optimizeStoredReceipts, formatBytes,
+  estimateBackupSize, optimizeStoredReceipts, formatBytes, importDoneMessage,
+  getAutoBackupLastError, reauthorizeAutoBackupDirectory,
 } from '../backup.js';
 import { isNotificationSupported, getNotificationPermission, requestNotificationPermission, checkAndNotify } from '../notifications.js';
 import { renderCloudBackupSection } from '../firebase-sync.js';
@@ -311,14 +312,13 @@ export async function changeBaseCurrency(newCurrency) {
     continuer. Renvoie false si l'utilisateur a renoncé. Toute autre erreur est relancée à l'appelant. */
 async function runImportWithIntegrityCheck(run) {
   try {
-    await run(false);
+    return (await run(false)) ?? true;
   } catch (err) {
     if (err?.name !== 'BackupIntegrityError') throw err;
     const go = await confirmDialog(`${err.message} ${t('Importer quand même ?')}`, { danger: true, confirmText: t('Importer quand même') });
     if (!go) return false;
-    await run(true);
+    return (await run(true)) ?? true;
   }
-  return true;
 }
 
 async function renderBackupSection(container) {
@@ -354,12 +354,22 @@ async function renderBackupSection(container) {
   } catch { /* estimation indisponible : section affichée sans ces lignes */ }
 
   let autoBackupHtml;
+  let autoBackupErrorHtml = '';
   if (!isFileSystemAccessSupported()) {
     autoBackupHtml = `<span class="badge">${t('Non disponible sur ce navigateur (Chrome/Edge sur ordinateur uniquement)')}</span>`;
   } else if (autoBackupDir) {
+    const autoError = await getAutoBackupLastError();
     autoBackupHtml = `
-      <span class="badge badge-pos">${t('Dossier : {name}', { name: escapeHtml(autoBackupDir.name) })}</span>
+      <span class="badge ${autoError ? 'badge-neg' : 'badge-pos'}">${t('Dossier : {name}', { name: escapeHtml(autoBackupDir.name) })}</span>
       <button type="button" class="btn btn-ghost ml-8" id="auto-backup-disable-btn">${t('Désactiver')}</button>`;
+    if (autoError) {
+      autoBackupErrorHtml = `
+        <div role="alert" id="auto-backup-error" style="margin:8px 0 0;padding:10px 12px;border-radius:8px;border:1px solid var(--neg);">
+          <p class="fs-13 c-neg" style="margin:0 0 8px;">${escapeHtml(t("La sauvegarde automatique n'a pas pu écrire : {reason}", { reason: autoError.message }))}
+            <span class="c-faint">(${escapeHtml(formatDate(autoError.at))})</span></p>
+          <button type="button" class="btn btn-ghost" id="auto-backup-reauth-btn">${t('Réautoriser le dossier')}</button>
+        </div>`;
+    }
   } else {
     autoBackupHtml = `<button type="button" class="btn btn-ghost" id="auto-backup-choose-btn">${t('Choisir un dossier')}</button>`;
   }
@@ -375,6 +385,7 @@ async function renderBackupSection(container) {
         <span>${escapeHtml(t('Photos allégées dans les sauvegardes'))}<span class="fs-12 c-faint" style="display:block;">${escapeHtml(t("Les photos de justificatifs sont réduites dans la copie de sauvegarde (1 200 px) : environ 2 fois plus légère, tickets toujours lisibles. Vos photos sur cet appareil ne changent pas ; après une restauration, ce sont les versions allégées qui reviennent."))}</span></span>
       </label>
       <div class="stat-row mt-6"><span class="stat-row-label">${t('Sauvegarde automatique hebdomadaire')}</span><span>${autoBackupHtml}</span></div>
+      ${autoBackupErrorHtml}
       <p style="margin:6px 0 0;" class="fs-12 c-faint">${t("Si un dossier est choisi, Djignan y écrit un export JSON automatiquement à chaque rappel hebdomadaire, sans action de votre part.")}</p>
       <div style="display:flex;flex-wrap:wrap;gap:10px;" class="mt-12">
         <button type="button" class="btn btn-primary" id="export-json-btn">${t('Exporter (JSON)')}</button>
@@ -403,6 +414,13 @@ async function renderBackupSection(container) {
     } catch (err) {
       if (err.name !== 'AbortError') showToast(t('Erreur : {message}', { message: err.message || t('sélection impossible.') }));
     }
+  });
+  container.querySelector('#auto-backup-reauth-btn')?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    let ok = false;
+    try { ok = await reauthorizeAutoBackupDirectory(); } catch { ok = false; }
+    showToast(ok ? t('Sauvegarde automatique effectuée.') : t("Le dossier n'a pas pu être réautorisé."), { duration: ok ? undefined : 8000 });
+    renderBackupSection(container);
   });
   container.querySelector('#auto-backup-disable-btn')?.addEventListener('click', async () => {
     await clearAutoBackupDirectory();
@@ -438,7 +456,7 @@ async function renderBackupSection(container) {
       if (!merge && !(await confirmReplaceAllData())) return;
       try {
         const done = await runImportWithIntegrityCheck((ignoreIntegrity) => importJsonBackup(file, { merge, ignoreIntegrity }));
-        if (done) showToast(t('Import réussi.'));
+        if (done) showToast(importDoneMessage(done), { duration: done.skippedReceipts ? 9000 : undefined });
       } catch (err) { showToast(t('Erreur : {message}', { message: err.message || t('fichier invalide.') })); }
     }).click();
   });
@@ -463,7 +481,7 @@ async function renderBackupSection(container) {
       if (!merge && !(await confirmReplaceAllData())) return;
       try {
         const done = await runImportWithIntegrityCheck((ignoreIntegrity) => importEncryptedBackup(file, p, { merge, ignoreIntegrity }));
-        if (done) showToast(t('Import réussi.'));
+        if (done) showToast(importDoneMessage(done), { duration: done.skippedReceipts ? 9000 : undefined });
       } catch (err) { showToast(t('Erreur : {message}', { message: err.message || t('fichier invalide.') })); }
     }).click();
   });

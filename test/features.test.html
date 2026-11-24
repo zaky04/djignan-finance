@@ -1900,6 +1900,179 @@ ok('frais : un revenu n\'en est pas un', !isMobileMoneyFee({ type: 'income', mmF
   await wipeAllData();
 }
 
+// ---------- Suite 22 : photo illisible à la restauration, erreur de la sauvegarde automatique, pile de fenêtres ----------
+{
+  const bk = await import('../js/backup.js');
+  const dbm = await import('../js/db.js');
+  const { openModal, confirmDialog } = await import('../js/utils.js');
+  await wipeAllData();
+  await setSetting('language', 'fr');
+
+  // --- Point 19 : un justificatif corrompu ne fait plus échouer toute la restauration ---
+  const GOOD_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const BAD_PNG = 'data:image/png;base64,@@@@ pas du base64 !!!';
+  const EMPTY_PNG = 'data:image/png;base64,';
+  const mkTx = (id, extra) => ({ id, walletId: 'w-s22', type: 'expense', amount: 1000, date: '2026-10-01', categoryId: null, note: id, createdAt: '2026-10-01T10:00:00.000Z', ...extra });
+  const backupFile = new File([JSON.stringify({
+    version: 5, exportedAt: '2026-11-24T00:00:00.000Z',
+    stores: {
+      wallets: [{ id: 'w-s22', name: 'Caisse', currency: 'XOF', initialBalance: 0, createdAt: '2026-01-01T00:00:00.000Z' }],
+      transactions: [
+        mkTx('t-bad', { receiptDataUrl: BAD_PNG }),
+        mkTx('t-ok', { receiptDataUrl: GOOD_PNG }),
+        mkTx('t-empty', { receiptDataUrl: EMPTY_PNG }),
+        mkTx('t-none', {}),
+      ],
+    },
+  })], 'sauvegarde-s22.json', { type: 'application/json' });
+  let importErr = null; let imported = null;
+  try { imported = await bk.importJsonBackup(backupFile, { merge: false }); } catch (e) { importErr = e.message; }
+  ok('photo corrompue : la restauration réussit quand même (aucune exception)', importErr === null, importErr);
+  eq('photo corrompue : 2 photos illisibles comptées (base64 invalide + photo vide)', imported?.skippedReceipts, 2);
+  const txs = Object.fromEntries((await dbGetAll(STORES.TRANSACTIONS)).map((x) => [x.id, x]));
+  eq('photo corrompue : les 4 transactions sont toutes conservées', Object.keys(txs).sort(), ['t-bad', 't-empty', 't-none', 't-ok']);
+  ok('photo corrompue : la transaction fautive est gardée telle quelle, sans photo ni data URL', txs['t-bad'].amount === 1000 && txs['t-bad'].note === 't-bad' && !txs['t-bad'].receiptBlob && !('receiptDataUrl' in txs['t-bad']));
+  ok('photo corrompue : la bonne photo est bien reconvertie en Blob', txs['t-ok'].receiptBlob instanceof Blob && txs['t-ok'].receiptBlob.size > 0 && !('receiptDataUrl' in txs['t-ok']));
+  eq('photo saine seule : 0 photo ignorée', await bk.deserializeReceiptsForImport({ stores: { transactions: [{ id: 'x', receiptDataUrl: GOOD_PNG }] } }), 0);
+  eq('aucune transaction : 0 photo ignorée, sans erreur', await bk.deserializeReceiptsForImport({ stores: {} }), 0);
+  ok('message de fin d\'import : sans photo ignorée, message inchangé', bk.importDoneMessage({ skippedReceipts: 0 }) === 'Import réussi.' && bk.importDoneMessage(undefined) === 'Import réussi.');
+  const doneMsg = bk.importDoneMessage({ skippedReceipts: 2 });
+  ok('message de fin d\'import : mentionne les photos ignorées et le nombre', /Import réussi\./.test(doneMsg) && /2 photos de justificatifs illisibles/.test(doneMsg) && /conservées/.test(doneMsg), doneMsg);
+  eq('message de restauration cloud : sans problème, inchangé', cloud.restoreDoneMessage({ missingPhotos: 0, skippedReceipts: 0 }), 'Données restaurées depuis le cloud.');
+  const cloudMsg = cloud.restoreDoneMessage({ missingPhotos: 1, skippedReceipts: 3 });
+  ok('message de restauration cloud : cumule photos manquantes et photos illisibles', /1 photo de justificatifs/.test(cloudMsg) && /3 photos de justificatifs illisibles/.test(cloudMsg), cloudMsg);
+  ok('restauration cloud : message d\'alerte déclenché par une photo illisible seule', cloud.restoreHadPhotoIssues({ skippedReceipts: 1 }) && cloud.restoreHadPhotoIssues({ missingPhotos: 2 }) && !cloud.restoreHadPhotoIssues({ missingPhotos: 0, skippedReceipts: 0 }));
+  // Import chiffré : même chemin, même résultat
+  await wipeAllData();
+  await dbAdd(STORES.WALLETS, { id: 'w-s22', name: 'Caisse', currency: 'XOF', initialBalance: 0, createdAt: '2026-01-01T00:00:00.000Z' });
+  await dbAdd(STORES.TRANSACTIONS, mkTx('t-enc-bad', { receiptDataUrl: BAD_PNG })); // champ texte non converti à l'export : il part tel quel dans le fichier
+  await dbAdd(STORES.TRANSACTIONS, mkTx('t-enc-ok', {}));
+  const encFile = new File([JSON.stringify(await bk.buildEncryptedPayload('mot-de-passe-s22'))], 'chiffre-s22.json', { type: 'application/json' });
+  await wipeAllData();
+  let encErr = null; let encRes = null;
+  try { encRes = await bk.importEncryptedBackup(encFile, 'mot-de-passe-s22', { merge: false }); } catch (e) { encErr = e.message; }
+  ok('import chiffré avec photo corrompue : la restauration réussit, 1 photo ignorée', encErr === null && encRes?.skippedReceipts === 1, encErr || JSON.stringify(encRes));
+  eq('import chiffré avec photo corrompue : les 2 transactions sont conservées', (await dbGetAll(STORES.TRANSACTIONS)).map((x) => x.id).sort(), ['t-enc-bad', 't-enc-ok']);
+  await wipeAllData();
+
+  // --- Point 20 : dernière erreur de la sauvegarde automatique dans un dossier ---
+  const opfs = await navigator.storage.getDirectory();
+  const dirName = 's22-auto-backup';
+  await opfs.removeEntry(dirName, { recursive: true }).catch(() => {});
+  const dir = await opfs.getDirectoryHandle(dirName, { create: true });
+  await dbAdd(STORES.WALLETS, { id: 'w-s22b', name: 'Caisse', currency: 'XOF', initialBalance: 100, createdAt: '2026-01-01T00:00:00.000Z' });
+  await setSetting('autoBackupDirHandle', dir);
+  const HP = FileSystemHandle.prototype;
+  const origQuery = HP.queryPermission; const origRequest = HP.requestPermission;
+  let requestCalls = 0; let permAnswer = 'granted'; let queryAnswer = 'granted';
+  HP.queryPermission = async () => queryAnswer;
+  HP.requestPermission = async () => { requestCalls++; return permAnswer; };
+  try {
+    eq('sauvegarde auto : aucune erreur mémorisée au départ', await bk.getAutoBackupLastError(), null);
+    eq('sauvegarde auto : l\'écriture dans le dossier réussit', await bk.runAutoBackupIfConfigured(), true);
+    const written = []; for await (const name of dir.keys()) written.push(name);
+    ok('sauvegarde auto : le fichier du jour est bien écrit dans le dossier', written.some((n) => /^djignan-backup-\d{4}-\d{2}-\d{2}\.json$/.test(n)), written.join(','));
+
+    // dossier supprimé -> échec expliqué
+    await opfs.removeEntry(dirName, { recursive: true });
+    eq('sauvegarde auto : dossier supprimé -> renvoie false (jamais d\'exception)', await bk.runAutoBackupIfConfigured(), false);
+    const e1 = await bk.getAutoBackupLastError();
+    ok('sauvegarde auto : la raison est mémorisée (dossier introuvable) avec une date', /introuvable/.test(e1?.message || '') && !!e1?.at, JSON.stringify(e1));
+    ok('erreur de sauvegarde auto : propre à l\'appareil, absente de toute sauvegarde exportée', !(await dbm.exportAllData()).stores[STORES.SETTINGS].some((r) => r.key === 'autoBackupLastError'));
+
+    // une sauvegarde réussie dans un nouveau dossier efface l'erreur
+    const dir2 = await opfs.getDirectoryHandle(dirName, { create: true });
+    await setSetting('autoBackupDirHandle', dir2);
+    eq('sauvegarde auto : une sauvegarde réussie efface l\'erreur mémorisée', [await bk.runAutoBackupIfConfigured(), await bk.getAutoBackupLastError()], [true, null]);
+
+    // autorisation expirée : sans geste, on ne la redemande pas ; avec geste (bouton), on la redemande
+    queryAnswer = 'prompt'; requestCalls = 0;
+    eq('autorisation expirée, sans geste : échec, requestPermission jamais appelée', [await bk.runAutoBackupIfConfigured(), requestCalls], [false, 0]);
+    const e2 = await bk.getAutoBackupLastError();
+    ok('autorisation expirée : la raison mémorisée parle de l\'autorisation', /autorisation/.test(e2?.message || ''), JSON.stringify(e2));
+    permAnswer = 'denied';
+    eq('« Réautoriser le dossier » : autorisation refusée -> false, redemandée une fois, erreur gardée', [await bk.reauthorizeAutoBackupDirectory(), requestCalls, (await bk.getAutoBackupLastError())?.message === e2.message], [false, 1, true]);
+    permAnswer = 'granted'; requestCalls = 0;
+    eq('« Réautoriser le dossier » : autorisation accordée -> sauvegarde faite, erreur effacée', [await bk.reauthorizeAutoBackupDirectory(), requestCalls, await bk.getAutoBackupLastError()], [true, 1, null]);
+
+    // fenêtre de rappel : la raison de l'échec et le bouton de réautorisation y figurent
+    const mrRem = Object.assign(document.createElement('div'), { id: 'modal-root' });
+    const tplRem = Object.assign(document.createElement('template'), { id: 'tpl-modal-backup-reminder' });
+    tplRem.innerHTML = '<div class="modal-backdrop" data-modal="backup-reminder"><div class="modal-card"><h3 id="backup-title">Sauvegarde</h3><button class="modal-close"></button><div class="modal-body"><p>Rappel</p><div class="modal-actions"><button id="backup-later-btn">Plus tard</button><button id="backup-export-btn">Exporter</button></div></div></div></div>';
+    const toastRem = Object.assign(document.createElement('div'), { id: 'toast-container' });
+    document.body.append(mrRem, tplRem, toastRem);
+    bk.showBackupReminderModal(false, null);
+    ok('rappel : sans erreur mémorisée, aucun bloc d\'erreur', !mrRem.querySelector('#backup-auto-error'));
+    mrRem.querySelector('.modal-close').click();
+    bk.showBackupReminderModal(false, { message: 'le dossier est introuvable (supprimé ou déplacé)', at: new Date().toISOString() });
+    const boxText = mrRem.querySelector('#backup-auto-error')?.textContent || '';
+    ok('rappel : affiche « La sauvegarde automatique n\'a pas pu écrire : {raison} »', /La sauvegarde automatique n'a pas pu écrire : le dossier est introuvable/.test(boxText), boxText);
+    ok('rappel : bouton « Réautoriser le dossier » présent', /Réautoriser le dossier/.test(mrRem.querySelector('#backup-auto-reauth-btn')?.textContent || ''));
+    queryAnswer = 'prompt'; permAnswer = 'denied'; requestCalls = 0;
+    mrRem.querySelector('#backup-auto-reauth-btn').click();
+    await new Promise((r) => setTimeout(r, 400));
+    ok('rappel : réautorisation refusée -> fenêtre gardée, raison mise à jour, bouton réactivé', !!mrRem.querySelector('#backup-auto-error') && /autorisation/.test(mrRem.querySelector('#backup-auto-error p').textContent) && !mrRem.querySelector('#backup-auto-reauth-btn').disabled, mrRem.querySelector('#backup-auto-error')?.textContent);
+    permAnswer = 'granted';
+    mrRem.querySelector('#backup-auto-reauth-btn').click();
+    await new Promise((r) => setTimeout(r, 600));
+    ok('rappel : réautorisation acceptée -> sauvegarde faite, fenêtre fermée, erreur effacée', !mrRem.querySelector('.modal-backdrop') && (await bk.getAutoBackupLastError()) === null);
+    mrRem.remove(); tplRem.remove(); toastRem.remove();
+  } finally {
+    HP.queryPermission = origQuery; HP.requestPermission = origRequest;
+    await opfs.removeEntry(dirName, { recursive: true }).catch(() => {});
+    await setSetting('autoBackupDirHandle', null);
+    await setSetting('autoBackupLastError', null);
+  }
+
+  // --- Point 21 : Échap ne ferme que la fenêtre du dessus ---
+  const mrStack = Object.assign(document.createElement('div'), { id: 'modal-root' });
+  document.body.append(mrStack);
+  const esc = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  let closedA = 0; let closedB = 0;
+  openModal('<p>A</p>', { title: 'A', onClose: () => { closedA++; } });
+  openModal('<p>B</p>', { title: 'B', onClose: () => { closedB++; } });
+  eq('deux fenêtres empilées : deux fenêtres affichées', mrStack.querySelectorAll('.modal-backdrop').length, 2);
+  esc();
+  eq('Échap #1 : seule la fenêtre du dessus (B) est fermée', [closedA, closedB, mrStack.querySelectorAll('.modal-backdrop').length, mrStack.textContent.includes('A')], [0, 1, 1, true]);
+  esc();
+  eq('Échap #2 : la fenêtre du dessous (A) se ferme à son tour', [closedA, closedB, mrStack.querySelectorAll('.modal-backdrop').length], [1, 1, 0]);
+  let escErr = null; try { esc(); } catch (e) { escErr = e.message; }
+  ok('Échap sans fenêtre ouverte : aucune erreur', escErr === null, escErr);
+  // fermeture par la croix de B (pas Échap) : A reste, puis Échap la ferme
+  closedA = 0; closedB = 0;
+  const mA = openModal('<p>A2</p>', { title: 'A2', onClose: () => { closedA++; } });
+  const mB = openModal('<p>B2</p>', { title: 'B2', onClose: () => { closedB++; } });
+  mB.el.querySelector('.modal-close').click();
+  esc();
+  eq('B fermée par sa croix puis Échap : A se ferme (pas de pile désynchronisée)', [closedA, closedB, mrStack.querySelectorAll('.modal-backdrop').length], [1, 1, 0]);
+  // fenêtre du dessus retirée du document sans passer par close() : Échap ne reste pas « coincé » dessus
+  closedA = 0; closedB = 0;
+  openModal('<p>A3</p>', { title: 'A3', onClose: () => { closedA++; } });
+  const mB3 = openModal('<p>B3</p>', { title: 'B3', onClose: () => { closedB++; } });
+  mB3.el.remove();
+  esc();
+  eq('fenêtre du dessus retirée par un autre code : un seul Échap ferme celle du dessous', [closedA, mrStack.querySelectorAll('.modal-backdrop').length], [1, 0]);
+  // confirmDialog empilée sur une fiche : Échap ferme la confirmation (résout false), pas la fiche
+  let sheetClosed = 0;
+  openModal('<p>Fiche</p>', { title: 'Fiche', onClose: () => { sheetClosed++; } });
+  const pending = confirmDialog('Supprimer ?');
+  await new Promise((r) => setTimeout(r, 50));
+  eq('confirmation ouverte par-dessus la fiche : deux fenêtres', mrStack.querySelectorAll('.modal-backdrop').length, 2);
+  esc();
+  eq('Échap sur la confirmation : elle résout false et la fiche reste ouverte', [await pending, sheetClosed, mrStack.querySelectorAll('.modal-backdrop').length], [false, 0, 1]);
+  esc();
+  eq('second Échap : la fiche se ferme', [sheetClosed, mrStack.querySelectorAll('.modal-backdrop').length], [1, 0]);
+  // le bouton Retour du téléphone (app.js, closeTopModal) clique sur la croix de la fenêtre du dessus : même effet
+  let backA = 0; let backB = 0;
+  openModal('<p>A4</p>', { title: 'A4', onClose: () => { backA++; } });
+  openModal('<p>B4</p>', { title: 'B4', onClose: () => { backB++; } });
+  [...mrStack.children].filter((el) => el.classList.contains('modal-backdrop')).pop().querySelector('.modal-close').click();
+  eq('bouton Retour (clic sur la croix du dessus) : seule la dernière fenêtre se ferme', [backA, backB], [0, 1]);
+  esc();
+  mrStack.remove();
+  await wipeAllData();
+}
+
 // ---------- Rendu ----------
 const ul = document.getElementById('results');
 const pass = results.filter((r) => r.ok).length;

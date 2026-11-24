@@ -317,6 +317,23 @@ const CLOSE_SVG = svgIcon('close', 18);
  * Ouvre une modale générique dans #modal-root. Retourne { el, close }.
  * Fermeture via clic sur le fond, bouton "×" ou touche Échap.
  */
+/** Pile des fenêtres ouvertes par openModal (la dernière est celle du dessus). Échap ne ferme que celle du dessus :
+    avant, chaque fenêtre avait son propre écouteur et une seule frappe fermait toute la pile (une confirmation ouverte
+    par-dessus une fiche fermait les deux). Un seul écouteur partagé, posé à la première ouverture. */
+const openModalStack = [];
+let escapeListenerInstalled = false;
+function onEscapeCloseTopModal(e) {
+  if (e.key !== 'Escape') return;
+  // Une fenêtre retirée du document par un autre code (sans passer par close()) ne doit pas « manger » l'Échap :
+  // on la referme proprement (onClose) et on passe à la suivante.
+  while (openModalStack.length) {
+    const top = openModalStack[openModalStack.length - 1];
+    const visible = top.wrap.isConnected;
+    top.close();
+    if (visible) break;
+  }
+}
+
 export function openModal(bodyHtml, { title = '', onClose = null } = {}) {
   const root = document.getElementById('modal-root');
   const wrap = document.createElement('div');
@@ -335,13 +352,17 @@ export function openModal(bodyHtml, { title = '', onClose = null } = {}) {
     if (closed) return;
     closed = true;
     wrap.remove();
-    document.removeEventListener('keydown', onKey);
+    const i = openModalStack.findIndex((m) => m.close === close);
+    if (i !== -1) openModalStack.splice(i, 1);
     onClose?.();
   }
-  function onKey(e) { if (e.key === 'Escape') close(); }
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   wrap.querySelector('.modal-close')?.addEventListener('click', close);
-  document.addEventListener('keydown', onKey);
+  openModalStack.push({ close, wrap });
+  if (!escapeListenerInstalled) {
+    escapeListenerInstalled = true;
+    document.addEventListener('keydown', onEscapeCloseTopModal);
+  }
 
   return { el: wrap, close };
 }

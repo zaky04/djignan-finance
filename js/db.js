@@ -482,7 +482,7 @@ export async function setSetting(key, value) {
 const DEVICE_LOCAL_SETTING_KEYS = new Set([
   'pinSalt', 'pinHash', 'pinIterations', 'pinLength', 'failedAttempts', 'pinThrottledUntil',
   'biometricCredentialId', 'biometricPublicKeySpki',
-  'autoBackupDirHandle',
+  'autoBackupDirHandle', 'autoBackupLastError', // dernière erreur d'écriture dans le dossier (backup.js) : propre à CET appareil
   // Sauvegarde cloud automatique (firebase-sync.js) : le mot de passe de chiffrement ne doit JAMAIS
   // figurer dans la sauvegarde qu'il protège, et l'état (activée, en échec, en pause) est propre à
   // chaque appareil — un fichier de sauvegarde forgé ne doit pas non plus pouvoir l'activer.

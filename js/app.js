@@ -12,8 +12,8 @@ import { bus, EVENTS, appState, notifyDataChanged } from './state.js';
 import { createBackController } from './back-navigation.js';
 import { setAutoMasking } from './privacy.js';
 import { uuid, escapeHtml, openModal, showToast, confirmDialog, CURRENCIES, intlLocale, currentMonthKey, todayISO } from './utils.js';
-import { checkWeeklyBackupReminder, importEncryptedBackup } from './backup.js';
-import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, restoreDoneMessage, warmUpGoogleSignIn, initCloudAutoBackup } from './firebase-sync.js';
+import { checkWeeklyBackupReminder, importEncryptedBackup, importDoneMessage } from './backup.js';
+import { checkWeeklyCloudBackupReminder, checkCloudStaleness, signInWithGoogle, pullBackupFromCloud, restoreDoneMessage, restoreHadPhotoIssues,warmUpGoogleSignIn, initCloudAutoBackup } from './firebase-sync.js';
 import { seedDemoData, clearDemoData } from './demo-data.js';
 import { maybeShowInstallPrompt } from './install-prompt.js';
 import { checkAndNotify, isNotificationSupported, requestNotificationPermission } from './notifications.js';
@@ -823,7 +823,8 @@ function showRestoreScreenIfNeeded() {
         try {
           // ignoreIntegrity : sur ce premier écran il n'y a aucun moyen de « confirmer » un écart, et le fichier chiffré est déjà authentifié par
           // son mot de passe (AES-GCM) : un écart d'empreinte ne pourrait venir que d'un défaut de l'appli, qui ne doit jamais bloquer une restauration.
-          await importEncryptedBackup(file, passphrase, { merge: false, ignoreIntegrity: true });
+          const imported = await importEncryptedBackup(file, passphrase, { merge: false, ignoreIntegrity: true });
+          if (imported?.skippedReceipts) showToast(importDoneMessage(imported), { duration: 9000 });
           finish('done');
         } catch (err) {
           errorEl.textContent = err.message || t('Restauration impossible.');
@@ -854,7 +855,7 @@ function showRestoreScreenIfNeeded() {
         try {
           const restored = await pullBackupFromCloud(passphrase, { merge: false });
           await setSetting('cloudBackupWasSignedIn', true);
-          if (restored?.missingPhotos) showToast(restoreDoneMessage(restored), { duration: 9000 });
+          if (restoreHadPhotoIssues(restored)) showToast(restoreDoneMessage(restored), { duration: 9000 });
           finish('done');
         } catch (err) {
           errorEl.textContent = err.message || t('Restauration impossible.');

@@ -698,7 +698,7 @@ export async function pullBackupFromCloud(passphrase, { merge = false, onProgres
   if (data.photosExternal) missingPhotos = await restoreExternalPhotos(data, firestoreMod, user, passphrase, onProgress);
   // Des photos laissées de côté : cet appareil ne doit pas les faire supprimer du cloud à sa prochaine sauvegarde (voir phase 4 de l'envoi).
   await setSetting('cloudPhotoPruneBlocked', missingPhotos > 0);
-  await deserializeReceiptsForImport(data);
+  const skippedReceipts = await deserializeReceiptsForImport(data); // photos abîmées laissées de côté (la restauration continue sans elles)
   await importAllData(data, { merge });
   if (merge) {
     notifyDataChanged('all'); // l'union des deux jeux de données diffère du cloud : à renvoyer
@@ -728,15 +728,23 @@ export async function pullBackupFromCloud(passphrase, { merge = false, onProgres
     await markAutoBackupClean();
     await setSetting('cloudAutoBackupBlocked', null);
   }
-  return { missingPhotos };
+  return { missingPhotos, skippedReceipts };
 }
 
 /** Message à afficher après une restauration cloud (les trois endroits qui la déclenchent). */
 export function restoreDoneMessage(result) {
   const n = result?.missingPhotos || 0;
-  return n > 0
+  const bad = result?.skippedReceipts || 0;
+  let msg = n > 0
     ? t('Données restaurées depuis le cloud. {count} photo(s) de justificatifs n\'ont pas pu être récupérées : réessayez la restauration avec une bonne connexion.', { count: n })
     : t('Données restaurées depuis le cloud.');
+  if (bad > 0) msg += ' ' + t('{count} photo(s) de justificatifs illisible(s) ont été ignorées ; les transactions correspondantes sont conservées.', { count: bad });
+  return msg;
+}
+
+/** Vrai quand le message de restauration mérite d'être lu plus longtemps (des photos manquent ou ont été ignorées). */
+export function restoreHadPhotoIssues(result) {
+  return !!(result?.missingPhotos || result?.skippedReceipts);
 }
 
 /* ---------- Vérification de fraîcheur au démarrage ----------
@@ -830,7 +838,7 @@ function showCloudStalenessModal(cloudUpdatedAt) {
     if (!merge && !(await confirmReplaceAllData())) return;
     try {
       const restored = await pullBackupFromCloud(p, { merge });
-      showToast(restoreDoneMessage(restored), { duration: restored?.missingPhotos ? 9000 : undefined });
+      showToast(restoreDoneMessage(restored), { duration: restoreHadPhotoIssues(restored) ? 9000 : undefined });
     } catch (err) {
       showToast(t('Erreur : {message}', { message: err.message || t('restauration impossible.') }));
     }
@@ -1203,7 +1211,7 @@ export async function renderCloudBackupSection(container) {
     if (!merge && !(await confirmReplaceAllData())) return;
     try {
       const restored = await pullBackupFromCloud(p, { merge });
-      showToast(restoreDoneMessage(restored), { duration: restored?.missingPhotos ? 9000 : undefined });
+      showToast(restoreDoneMessage(restored), { duration: restoreHadPhotoIssues(restored) ? 9000 : undefined });
     } catch (err) {
       showToast(t('Erreur : {message}', { message: err.message || t('restauration impossible.') }));
     }

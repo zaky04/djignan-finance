@@ -2,7 +2,7 @@
 
 > Ce fichier sert de mémoire du projet pour toute personne (ou IA) qui reprend le développement.
 > À tenir à jour à chaque session de travail significative : ce qui a été fait, pourquoi, et ce qui reste ouvert.
-> Dernière mise à jour : **11 septembre 2026**.
+> Dernière mise à jour : **24 novembre 2026** (le journal §6 va jusqu'à cette date ; l'ancien « 11 septembre » n'avait pas suivi).
 
 ## 1. C'est quoi ce projet
 
@@ -120,16 +120,37 @@ Ou via `.claude/launch.json` (config `geofinance`, port 8123) avec les outils de
 
 | # | Sujet | Détail | Sévérité |
 |---|---|---|---|
-| 14 | `parseFlexibleNumber` (import CSV générique) mélit un séparateur de milliers pour une décimale | `"1,234,567"` (US, sans point) devient `1.234` — perte de magnitude silencieuse. Nécessite une vraie heuristique (ou un choix explicite du format par l'utilisateur), pas un correctif d'une ligne. | Moyenne-Haute |
-| 15 | `dbBulkPut`/`importAllData` non atomiques entre stores | Une ligne malformée en cours d'import (backup forgé/corrompu) peut laisser la base dans un état "moitié ancien, moitié nouveau" jamais voulu, sans indiquer à l'utilisateur quels stores ont réussi. | Moyenne |
-| 16 | `isDuplicateTransaction` (dédoublonnage import) : clé = portefeuille+date+type+montant | Deux dépenses identiques et légitimes le même jour (ex: deux cafés à 3,50€) sont silencieusement fusionnées à l'import ; les virements ne comparent pas `targetWalletId`. | Moyenne |
-| 17 | `upgrade()` (`db.js`) n'ajoute jamais un index à un store déjà existant | Si une future version ajoute un index sur un store existant, les utilisateurs déjà installés ne l'obtiendront jamais (`createIndex` n'est appelé que dans la branche "store tout neuf") — bombe à retardement, pas un bug actif aujourd'hui. | Info (à surveiller) |
-| 18 | `computeEnvelopeCarryover` casse la chaîne sur un mois intermédiaire sans budget | Si janvier a un budget mais février non (bien que dépensé), le report de mars ignore complètement les dépenses de février. | Faible-Moyenne |
-| 19 | Réception d'un justificatif corrompu abandonne tout l'import | `deserializeReceiptsForImport` (`backup.js`) n'a pas de `try/catch` par ligne — une seule photo corrompue fait échouer toute la restauration au lieu de sauter ce justificatif. | Faible-Moyenne |
-| 20 | Échec de sauvegarde automatique (File System Access) jamais signalé | `runAutoBackupIfConfigured` avale les erreurs d'écriture (dossier supprimé, quota) avec un simple `console.warn` — l'utilisateur peut croire être protégé alors que rien n'est écrit depuis longtemps. | Moyenne |
-| 21 | `openModal()` : une touche Échap ferme TOUTES les modales empilées, pas juste la dernière | Chaque modale enregistre son propre listener sans notion de pile — deux `confirmDialog` accidentellement superposées se ferment ensemble sur un seul Échap. | Faible |
-| 22 | `parseFlexibleDate` suppose toujours JJ/MM/AAAA | Un relevé au format US (MM/DD/YYYY) est mal interprété silencieusement pour toute date où jour et mois sont tous deux ≤ 12 — limite documentée dans le code, mais aucun signalement si un fichier non européen est importé. | Faible |
-| 23 | `verifyPin()` n'a pas de limite anti-brute-force intégrée | Le blocage de 30s n'existe que côté clavier de l'écran de verrouillage (`auth.js`, UI) — `changePin()` (Paramètres → Changer le code PIN) appelle `verifyPin()` directement, sans aucune limite sur les tentatives d'"ancien code". | Faible-Moyenne |
+| 14 | **OUVERT — attend une décision de l'auteur.** `parseFlexibleNumber` (import CSV générique, `backup.js`) prend un séparateur de milliers pour une décimale | Mesuré le 24 novembre : `1,234,567` et `1.234.567` donnent **1,234** ; surtout **`15.000` est lu 15** (et non 15 000) — une erreur ×1000 silencieuse (la ligne est comptée « importée »), fréquente dans les relevés francophones où le point sépare les milliers. Nécessite une heuristique (devise sans décimales ⇒ milliers) ou un choix explicite du format : trois questions à trancher, voir `rapports-session/AUDIT-DETTE-TECHNIQUE.md` §2 priorité 1. **Non touché.** | **Haute** |
+| 15 | ~~`dbBulkPut`/`importAllData` non atomiques entre stores~~ | **Déjà corrigé** (constaté à l'audit du 24 novembre) : `importAllData` (`db.js`) valide tous les stores d'abord, puis vide + écrit dans **une seule** transaction IndexedDB avec `t.abort()` en cas d'erreur ; `dbBulkPut` est atomique par store. **Reste** : seules 10 tables ont des champs obligatoires vérifiés (`REQUIRED_FIELDS`) ; une ligne mal formée dans `recurring`, `participants`, `keptAccounts`… passe l'import et peut faire planter un écran après coup. | — |
+| 16 | `isDuplicateTransaction` (dédoublonnage import) | **Corrigé en grande partie** : la **note** est comparée depuis le 12 août (§6, « Dédoublonnage à l'import CSV trop agressif »). **Reste ouvert** : (1) les virements ne comparent pas `targetWalletId` ; (2) deux lignes vraiment identiques **dans un même fichier** (même note comprise) sont fusionnées, car la ligne importée est ajoutée au jeu de comparaison, et deux notes vides sont toujours des doublons — **décision attendue** (« les garder toutes les deux ? » : recommandé oui) ; (3) le bilan dit seulement « N ignorées ». | Faible-Moyenne |
+| 17 | `upgrade()` (`db.js`) n'ajoute jamais un index à un store déjà existant | **Inchangé, sans effet aujourd'hui** (`DB_VERSION = 5`, aucun index ne manque ; seul `byWallet` est lu par le code, `wallets.js`). **`upgrade()` volontairement non modifié.** Gabarit prêt à l'emploi pour le jour où un index sera ajouté : voir « Ajouter un index à un store existant » juste sous ce tableau. | Info |
+| 18 | **OUVERT — attend une décision de l'auteur.** `computeEnvelopeCarryover` casse la chaîne sur un mois intermédiaire sans budget | Toujours vrai : janvier budgété, février dépensé **sans** budget → le report de mars ignore février. Deux lectures possibles (a : un mois sans budget compte pour un budget de 0 ; b : il remet le report à zéro) — c'est un choix de sens produit qui change des chiffres déjà affichés. **Non touché.** | Faible-Moyenne |
+| 19 | ~~Un justificatif corrompu abandonne tout l'import~~ | **Corrigé le 24 novembre 2026** (§6 « suite 22 ») : `deserializeReceiptsForImport` isole chaque photo (`try/catch`), garde la transaction sans sa photo et **renvoie le nombre de photos ignorées**, ajouté au message de fin (import JSON, import chiffré, restauration cloud). Vérifié par tests ; **non vérifié** sur un vrai fichier abîmé restauré sur un téléphone. | — |
+| 20 | ~~Échec de la sauvegarde automatique dans un dossier jamais signalé~~ | **Corrigé le 24 novembre 2026** (§6 « suite 22 ») : la dernière erreur est mémorisée (`autoBackupLastError`, réglage local à l'appareil) et affichée dans Paramètres et dans la fenêtre de rappel, avec un bouton **« Réautoriser le dossier »** ; `requestPermission()` n'est plus tentée sans geste de l'utilisateur. Vérifié avec un vrai dossier navigateur (OPFS) et des autorisations simulées ; **non vérifié** avec un vrai dossier choisi dans le sélecteur de Chrome/Edge sur ordinateur. | — |
+| 21 | ~~`openModal()` : une touche Échap ferme TOUTES les modales empilées~~ | **Corrigé le 24 novembre 2026** (§6 « suite 22 ») pour les fenêtres ouvertes par `openModal` (pile + un seul écouteur partagé). **Reste, d'après la lecture du code (non testé)** : la saisie express, la recherche et le rappel de sauvegarde n'utilisent pas `openModal` et gardent leur propre écouteur Échap ; une confirmation ouverte par-dessus l'une d'elles ferme donc les deux. | Faible |
+| 22 | **OUVERT — attend une décision de l'auteur.** `parseFlexibleDate` suppose toujours JJ/MM/AAAA | Toujours vrai : un relevé MM/JJ/AAAA est mal lu quand jour et mois sont tous deux ≤ 12 (une date impossible comme `13/05/2026` est au moins comptée « invalide ») ; les années à 2 chiffres sont refusées. Correctif possible : détecter le format sur la colonne entière + interrupteur dans la fenêtre de mapping. **Non touché.** | Faible |
+| 23 | ~~`verifyPin()` sans limite anti-brute-force (via `changePin()`)~~ | **Déjà corrigé** (constaté à l'audit du 24 novembre) : `changePin` passe par `verifyPinForAction` (`auth.js`), même blocage de 30 s après 5 échecs que l'écran de verrouillage ; la confirmation PIN de `confirmDialog` aussi. `verifyPin` reste exportée sans limite mais n'a plus d'appelant direct. Réserve : le compteur est dans l'IndexedDB (contournable avec les outils de développement — limite assumée, point 3). | — |
+| N1 | **OUVERT (nouveau, 24 novembre).** L'import CSV n'est pas atomique et écrit les portefeuilles créés **en dernier** | `importDjignanCsvRows` fait un `dbAdd` par ligne puis n'écrit les portefeuilles/catégories créés par l'import qu'à la fin (`importGenericCsvRows` : un `dbAdd` par ligne aussi). Si l'app est tuée ou si un `dbAdd` échoue (quota) à mi-fichier, des transactions portent un `walletId` qui n'existe pas encore en base. Même défaut que le point 15, côté CSV. Correctif prévu : écrire portefeuilles + catégories d'abord, puis toutes les transactions dans **une seule** `dbWriteBatch` (qui existe, atomique). Pas de décision requise mais **pas encore fait** ; s'enchaîne avec 14, 16 et 22 (même boucle d'import). | Faible-Moyenne |
+| A/B/C/F | **OUVERT — attendent une décision de l'auteur.** Mode aidant : chemins de sortie des données restés ouverts | A : l'image « Mon mois » / « Bilan de l'année » et la copie de texte ne sont pas gardées ; B : relevé d'une personne, relance WhatsApp/SMS, point d'un projet collectif ; C : l'empreinte digitale ouvre « propriétaire » si l'aidant a sa propre empreinte enregistrée dans le téléphone ; F : la sauvegarde cloud automatique part pendant une session aidant. Pas de garde centrale dans `downloadFile`. Règle à choisir avant de coder ; détail et correctifs proposés : `rapports-session/AUDIT-DETTE-TECHNIQUE.md` §3. **Non touché.** | Moyenne |
+
+Les chiffres et constats de ce tableau (lignes 14 à 23, N1, A/B/C/F) viennent de l'audit en lecture seule du 24 novembre 2026, `rapports-session/AUDIT-DETTE-TECHNIQUE.md` (dossier ignoré par git : il reste sur cet ordinateur). Les points 19, 20 et 21 sont corrigés par la suite 22 du §6 ; **les points 14, 16 (reste), 18, 22, N1 et A/B/C/F ne sont PAS corrigés.**
+
+**Ajouter un index à un store existant (point 17) — gabarit, à appliquer le jour où le besoin se présente.** Aujourd'hui `createIndex` n'est appelé que dans la branche « store tout neuf » de `upgrade()` ; un index ajouté là ne serait **jamais** créé chez les utilisateurs déjà installés. Il faut : (1) incrémenter `DB_VERSION` ; (2) passer la transaction de mise à jour à `upgrade` ; (3) créer l'index sur le store existant, avec garde :
+
+```js
+// db.js — openDatabase()
+req.onupgradeneeded = (e) => upgrade(e.target.result, e.target.transaction);
+
+// db.js — upgrade(db, tx) : à la FIN de la fonction, après les créations de stores
+function upgrade(db, tx) {
+  // ... créations de stores existantes, inchangées ...
+  // Index ajouté après coup (DB_VERSION N → N+1) sur un store qui existe déjà :
+  const transactionsStore = tx.objectStore(STORES.TRANSACTIONS);
+  if (!transactionsStore.indexNames.contains('byExample')) transactionsStore.createIndex('byExample', 'champ');
+}
+```
+
+Pour un store tout neuf, le `createIndex` reste dans le `if (!db.objectStoreNames.contains(...))` comme aujourd'hui. Ne pas utiliser `db.transaction()` dans `upgrade` (impossible pendant une mise à jour de version) : seule `e.target.transaction` est valide.
 
 
 ## 6. Journal des correctifs
@@ -4222,6 +4243,18 @@ change le jour ou corrige le montant, libérée (`revokeObjectURL`) à la fermet
 (452). **Non essayé avec le vrai appareil photo** d'un téléphone (l'environnement de test simule le choix de fichier).
 **Encore absent de la saisie guidée** (présent dans le formulaire classique) : virement entre portefeuilles, étiquettes, dépense « exceptionnelle », division en plusieurs catégories, lecture du montant sur la photo (OCR)
 
+### 24 novembre 2026 (suite 22) — Restauration : photo illisible ignorée ; sauvegarde automatique : erreur expliquée ; Échap ferme une seule fenêtre (`CACHE_VERSION` `v210`, non commité au moment d'écrire)
+
+Lots 3 et 4 de l'audit de la dette technique du 24 novembre (`rapports-session/AUDIT-DETTE-TECHNIQUE.md`, lecture seule, ignoré par git) : ceux qui n'attendaient aucune décision. Points 19, 20, 21 du §5 ; point 17 seulement documenté.
+**Point 19 — une photo corrompue ne bloque plus la restauration** (`backup.js`). `deserializeReceiptsForImport` isole chaque photo : si la reconversion échoue (base64 tronqué ou invalide) ou donne une image vide, la ligne perd son `receiptDataUrl`, **la transaction est gardée**, un compteur est incrémenté et **renvoyé** (avant : rien). Les trois appelants gardent leur signature : `importJsonBackup` et `importEncryptedBackup` renvoient maintenant `{ skippedReceipts }` (avant : rien), `pullBackupFromCloud` renvoie `{ missingPhotos, skippedReceipts }`. Messages : `importDoneMessage(result)` (`backup.js`, « Import réussi. N photo(s) de justificatifs illisible(s) ont été ignorées ; les transactions correspondantes sont conservées. ») pour Paramètres et l'écran de restauration du démarrage ; `restoreDoneMessage` (cloud) ajoute la même phrase, et `restoreHadPhotoIssues(result)` allonge l'affichage du toast (9 s). `runImportWithIntegrityCheck` (`settings.js`) renvoie désormais le résultat de l'import (au lieu de `true`) ; seule contrainte : il reste « vrai » quand l'import réussit.
+**Point 20 — la sauvegarde automatique dans un dossier dit pourquoi elle échoue** (`backup.js`, `settings.js`, `db.js`). Réglage `autoBackupLastError` (`{ message, at }`), **propre à l'appareil** (`DEVICE_LOCAL_SETTING_KEYS` : jamais exporté ni importable). `runAutoBackupIfConfigured({ userGesture })` mémorise la raison en cas d'échec — autorisation expirée, dossier introuvable (`NotFoundError`), stockage insuffisant, ou le message du navigateur — et **efface l'erreur dès qu'une sauvegarde réussit** (ou quand on choisit/retire un dossier). `ensureAutoBackupPermission` ne redemande plus l'autorisation sans geste (`requestPermission()` sans clic échouait sans bruit au démarrage) ; seul le nouveau bouton **« Réautoriser le dossier »** (`reauthorizeAutoBackupDirectory()`, appelée depuis un clic) la redemande, puis relance une sauvegarde. Affichage : **Paramètres → Sauvegarde** (pastille du dossier en rouge + bloc « La sauvegarde automatique n'a pas pu écrire : {raison} » avec la date et le bouton) et **fenêtre de rappel hebdomadaire** (même bloc au-dessus de « Plus tard / Exporter maintenant » ; `showBackupReminderModal(urgent, autoError)` est maintenant exportée). Le comportement existant est inchangé : après un échec, le rappel manuel s'affiche toujours.
+**Point 21 — Échap ferme une seule fenêtre** (`utils.js`). `openModal` tient une pile (`openModalStack`) et un seul écouteur `keydown` partagé ferme la fenêtre **du dessus** ; une fenêtre retirée du document sans passer par `close()` est refermée proprement (son `onClose` s'exécute) et ne « mange » pas l'Échap. `confirmDialog` résout bien `false` à la fermeture (testé). Le bouton Retour du téléphone (`back-navigation.js` → `closeTopModal` d'`app.js`) clique sur la croix de la fenêtre du dessus : inchangé, testé. **Reste** (lecture du code, non testé) : saisie express, recherche et rappel de sauvegarde n'utilisent pas `openModal` et gardent leur écouteur Échap propre.
+**Point 17** : `upgrade()` **non modifié** ; gabarit prêt à l'emploi ajouté au §5 (« Ajouter un index à un store existant »). **Point 18 (report d'enveloppe) volontairement non touché** : attend la décision a/b de l'auteur.
+Textes nouveaux (FR + EN dans `i18n.js`) : les deux messages de photos ignorées, « La sauvegarde automatique n'a pas pu écrire : {reason} », « Réautoriser le dossier », « Le dossier n'a pas pu être réautorisé. » et les trois raisons.
+Tests : **40 nouveaux** (`features.test.html` : 606 → **646/646**, port 8160, la page ne s'est pas arrêtée au premier chargement mais une exécution avec `?r=3` n'a jamais fini — rechargée avec `?r=4`, 646/646 ; `ledger.test.html` : 175/175). Couvrent : restauration JSON et chiffrée avec une photo invalide / vide (transaction gardée, bonne photo reconvertie, compte exact), messages de fin, erreur de sauvegarde auto avec un **vrai dossier du navigateur** (OPFS : écriture réussie, dossier supprimé, autorisation expirée sans/avec geste, refus puis acceptation), réglage absent des exports, bloc d'erreur et bouton de la fenêtre de rappel, pile de fenêtres (Échap #1/#2, fermeture par la croix, fenêtre retirée, confirmation sur une fiche, Retour). Premier passage 644/646 : deux attentes de test erronées (la pluralisation « photo(s) » de `t()` donne « photos »), corrigées.
+Vérifié à l'écran sur 375 px (Paramètres → Sauvegarde avec l'erreur et le bouton, fenêtre de rappel avec le bloc d'erreur ; aucun défilement horizontal).
+**Non vérifié** : la sauvegarde dans un dossier choisi avec le **vrai sélecteur** de Chrome/Edge sur ordinateur (l'environnement de test utilise le dossier privé du navigateur et simule les autorisations) ; la restauration d'une **vraie sauvegarde corrompue sur un téléphone** (le test fabrique les photos invalides) ; le message de fin de restauration depuis l'écran de démarrage et depuis le cloud en conditions réelles (testé par fonctions, pas par le parcours complet).
+
 ### 23 novembre 2026 (suite 21) — « Modifier » un prêt : corriger la note et la date de retour depuis l'accueil facile (`CACHE_VERSION` `v208`, non commité au moment d'écrire)
 
 Piste ouverte par les suites 17/18 (« pas de Corriger la note d'un prêt ») fermée. Dans la liste « On me doit » / « Je dois » (`easy-debts.js`), chaque prêt **simple** (`isSimpleDebt`) a un petit bouton **« Modifier »** (`.easy-edit`, `data-edit`, à côté de « Relancer », qui reste la colonne de droite) ; un prêt avec intérêts, participants, compte gardé… n'en a pas (il ouvre déjà la fenêtre complète). Le bouton ouvre `openEasyDebtFix(debt, kind, { onChange })` : deux gros boutons qui **montrent la valeur actuelle** — « Corriger la note » / « Ajouter une note » (même fenêtre « Quelle note ? » que pour une opération : champ + micro + « Effacer la note ») et « Corriger la date de retour » / « Ajouter une date de retour » (mêmes choix que la saisie d'un nouveau prêt : Pas de date, 1 semaine, 2 semaines, 1 mois, Autre jour ; **un toucher enregistre**, toucher le choix actuel ne change ni n'écrit rien).
@@ -4364,7 +4397,7 @@ reconnaissance vocale en wolof/bambara/dioula. Piste 8 = lot 1, fait, voir §6 d
     journal des codes ratés. Une vraie signature demanderait un secret conservé hors de l'appareil.
 11. **Capture automatique des SMS Mobile Money** (APK, avec permission) — la **file d'attente** des SMS partagés est faite (§6) ; la lecture automatique des SMS reste **à faire,
     seulement après validation avec de vrais SMS** d'Orange/Wave/MTN/Moov (les formats actuels sont inventés).
-12. **Assistant IA optionnel** — désactivé par défaut, seuls des agrégats anonymisés partiraient (jamais notes ni noms), consentement explicite ; bilan du mois en langage simple.
+12. ~~**Assistant IA optionnel**~~ — **commencé, voir §6** (21 novembre, suite 3) : `js/ai-assistant.js` et `js/ai-assistant-ui.js` (désactivé par défaut, consentement lié au niveau de données, aperçu de ce qui part, mode local sans réseau, clé personnelle propre à l'appareil). **Jamais essayé contre le vrai service Anthropic.** Limite connue (audit du 24 novembre) : `askAssistant` ne contrôle pas le rôle lui-même, seule l'interface force le mode local pour l'aidant (point G de l'audit, pas de chemin d'accès direct aujourd'hui).
 
 1. ~~**Rendre la sauvegarde vraiment robuste**~~ — **fait, voir §6** (sauvegarde cloud Google + rappel
    périodique dédié, entrées du 14 août 2026).
@@ -4380,17 +4413,20 @@ reconnaissance vocale en wolof/bambara/dioula. Piste 8 = lot 1, fait, voir §6 d
 5. **Digital Asset Links pour l'APK** (§9) — plein écran natif sans barre d'adresse Chrome. Nécessite
    d'héberger `.well-known/assetlinks.json` à la racine de `zaky04.github.io`, donc dans le dépôt
    `zaky04.github.io` (page utilisateur GitHub) — **pas ce dépôt-ci**, qui ne sert que `/geofinance/`.
-6. ~~**Audit accessibilité**~~ — **fait pour les boutons icône, voir §6** (14 août 2026). Reste ouvert,
-   **décision de design à prendre avec l'auteur** : contraste de `--text-faint` sous le seuil WCAG AA
-   dans les deux thèmes (détails §6) — corriger impliquerait de resserrer la hiérarchie visuelle à 2
-   niveaux de gris au lieu de 3.
+6. ~~**Audit accessibilité**~~ — **fait pour les boutons icône, voir §6** (14 août 2026). Le contraste de
+   `--text-faint` a depuis été corrigé : `#6a6872` en clair, `#868aa8` en sombre (`css/styles.css`), et le §6
+   (« Contrastes », 21 novembre) indique l'audit rejoué sur 12 vues à 0 texte sous 4,5:1. **Non remesuré le
+   24 novembre** (l'audit de ce jour n'a rien exécuté) : à reconfirmer avant de dire « résolu » pour tous les
+   écrans, y compris ceux ajoutés depuis.
 7. **Comportement à grande échelle** — *mesuré et partiellement corrigé le 14 août 2026, voir §6*
    (jeu de données synthétique de 14 600 transactions/5 ans ; `computeNetWorthHistory` était le point
-   noir isolé, corrigé, 1555ms → 473ms). Reste ouvert, non traité volontairement : `ctx()`
-   (`ledger.js`) charge un store entier en mémoire à chaque calcul (`dbGetAll()`, pas de requête
-   IndexedDB bornée par date/index) — sur ce même jeu de données, ~300-500ms résiduels par calcul en
-   viennent. Des requêtes indexées par date réduiraient ça, mais c'est un chantier plus large,
-   disproportionné tant qu'aucun utilisateur réel n'a signalé de lenteur perceptible.
+   noir isolé, corrigé, 1555ms → 473ms). **Atténué depuis** (§6, 21 novembre « usage à long terme ») :
+   `ctx()` (`ledger.js`) partage sa lecture tant qu'aucune écriture n'a eu lieu (`getDataVersion()` de
+   `db.js`, 3 s au plus) — tableau de bord mesuré à 1 440 → 399 ms. Reste ouvert, non traité
+   volontairement : `ctx()` charge toujours un store entier en mémoire (`dbGetAll()`, pas de requête
+   IndexedDB bornée par date/index), simplement plus à chaque calcul. **À remesurer avant de dire
+   « résolu »** (le rapport du 24 novembre n'a rien mesuré) ; chantier plus large, disproportionné tant
+   qu'aucun utilisateur réel n'a signalé de lenteur perceptible.
 
 ## 8. Comment reprendre le travail
 

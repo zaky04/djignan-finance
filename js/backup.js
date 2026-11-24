@@ -7,7 +7,7 @@
 import { STORES, dbGetAll, dbAdd, dbPut, dbBulkPut, exportAllData, importAllData, getSetting, setSetting, assertOwner } from './db.js';
 import { getEnrichedTransactions, guessCategoryId } from './ledger.js';
 import { ASSET_CLASSES, ENTRY_TYPE_LABELS } from './modules/investments.js';
-import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast, safeNumber, compressImageBlob, intlLocale } from './utils.js';
+import { uuid, todayISO, currentMonthKey, downloadFile, readFileAsText, showToast, safeNumber, compressImageBlob, intlLocale, escapeHtml } from './utils.js';
 import { notifyDataChanged } from './state.js';
 import { computeIntegrity, checkIntegrity } from './backup-integrity.js';
 // Aliasé en tr (pas t) : ce fichier utilise `t` comme nom de variable pour une transaction dans
@@ -106,7 +106,11 @@ async function externalizeReceipts(data, collected) {
   data.photosExternal = true;
 }
 
+/** Reconvertit les photos (data URL) en Blob avant l'import. Renvoie le NOMBRE de photos illisibles qui ont été laissées de côté
+    (0 dans le cas normal) : une photo abîmée (base64 tronqué, fichier coupé) ne doit jamais empêcher de restaurer tout le
+    reste. Pour cette ligne, `receiptDataUrl` est retiré, la transaction elle-même est gardée (sans sa photo). */
 export async function deserializeReceiptsForImport(data) {
+  let skipped = 0;
   for (const t of data.stores?.[STORES.TRANSACTIONS] || []) {
     // Un fichier de sauvegarde n'est pas une entrée fiable : un « receiptBlob » qui n'est pas un vrai Blob
     // (anciennes sauvegardes où il avait été sérialisé en {}, fichier forgé) ferait planter l'affichage du
@@ -115,11 +119,27 @@ export async function deserializeReceiptsForImport(data) {
     if (t.receiptBlob && !(t.receiptBlob instanceof Blob)) delete t.receiptBlob;
     if (t.receiptDataUrl) {
       if (typeof t.receiptDataUrl === 'string' && /^data:image\/[a-z0-9.+-]+;base64,/i.test(t.receiptDataUrl)) {
-        t.receiptBlob = await dataUrlToBlob(t.receiptDataUrl);
+        try {
+          const blob = await dataUrlToBlob(t.receiptDataUrl);
+          if (!blob || blob.size === 0) throw new Error('photo vide');
+          t.receiptBlob = blob;
+        } catch (err) {
+          console.warn('[backup] Justificatif illisible, ignoré (la transaction est conservée) :', err);
+          skipped++;
+        }
       }
       delete t.receiptDataUrl;
     }
   }
+  return skipped;
+}
+
+/** Message de fin d'un import local (JSON clair ou chiffré) : mentionne les photos ignorées, s'il y en a. */
+export function importDoneMessage(result) {
+  const n = result?.skippedReceipts || 0;
+  return n > 0
+    ? tr('Import réussi. {count} photo(s) de justificatifs illisible(s) ont été ignorées ; les transactions correspondantes sont conservées.', { count: n })
+    : tr('Import réussi.');
 }
 
 /** À appeler après toute sauvegarde réussie (export manuel, chiffré, ou auto) : marque
@@ -234,9 +254,10 @@ export async function importJsonBackup(file, { merge = false, ignoreIntegrity = 
   const data = JSON.parse(text);
   // Avant deserializeReceiptsForImport, qui transforme les photos : l'empreinte porte sur le contenu tel qu'exporté.
   if (!ignoreIntegrity && (await checkIntegrity(data)) === 'mismatch') throw new BackupIntegrityError();
-  await deserializeReceiptsForImport(data);
+  const skippedReceipts = await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
   notifyDataChanged('all');
+  return { skippedReceipts };
 }
 
 /* ---------- Export / import JSON chiffré (AES-GCM 256, PBKDF2) ----------
@@ -321,9 +342,10 @@ export async function importEncryptedBackup(file, passphrase, { merge = false, i
   const payload = JSON.parse(text);
   const data = await decryptPayload(payload, passphrase);
   if (!ignoreIntegrity && (await checkIntegrity(data)) === 'mismatch') throw new BackupIntegrityError();
-  await deserializeReceiptsForImport(data);
+  const skippedReceipts = await deserializeReceiptsForImport(data);
   await importAllData(data, { merge });
   notifyDataChanged('all');
+  return { skippedReceipts };
 }
 
 /* ---------- Import / export CSV des transactions ---------- */
@@ -639,6 +661,7 @@ export async function chooseAutoBackupDirectory() {
   if (!isFileSystemAccessSupported()) throw new Error(tr("Votre navigateur ne permet pas cette fonctionnalité (Chrome/Edge sur ordinateur uniquement)."));
   const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
   await setSetting('autoBackupDirHandle', handle);
+  await setSetting('autoBackupLastError', null); // nouveau dossier : l'ancienne erreur ne le concerne plus
   return handle;
 }
 
@@ -648,22 +671,51 @@ export async function getAutoBackupDirectory() {
 
 export async function clearAutoBackupDirectory() {
   await setSetting('autoBackupDirHandle', null);
+  await setSetting('autoBackupLastError', null);
 }
 
-async function ensureAutoBackupPermission(handle) {
+/** Erreur « permission » propre à ce fichier (distingue un refus d'autorisation d'une erreur d'écriture). */
+class AutoBackupPermissionError extends Error {}
+
+/** Vérifie l'autorisation d'écrire dans le dossier. `requestPermission()` n'est tentée QUE si l'appel vient d'un geste de
+    l'utilisateur (clic) : sans geste, le navigateur la refuse sans bruit — au démarrage on se contente de constater. */
+async function ensureAutoBackupPermission(handle, { userGesture = false } = {}) {
   const opts = { mode: 'readwrite' };
   if ((await handle.queryPermission(opts)) === 'granted') return true;
-  if ((await handle.requestPermission(opts)) === 'granted') return true;
+  if (userGesture && (await handle.requestPermission(opts)) === 'granted') return true;
   return false;
 }
 
+/** Dernière erreur de la sauvegarde automatique dans un dossier : { message, at } ou null. Réglage propre à l'appareil
+    (`autoBackupLastError`, DEVICE_LOCAL_SETTING_KEYS) : jamais exporté, et effacé dès qu'une sauvegarde réussit. */
+export async function getAutoBackupLastError() {
+  const e = await getSetting('autoBackupLastError', null);
+  return e && typeof e.message === 'string' ? e : null;
+}
+async function setAutoBackupLastError(message) {
+  await setSetting('autoBackupLastError', message ? { message, at: new Date().toISOString() } : null);
+}
+/** Raison lisible (traduite) d'un échec d'écriture dans le dossier. */
+function describeAutoBackupError(err) {
+  if (err instanceof AutoBackupPermissionError) return tr("l'autorisation d'écrire dans le dossier a expiré ou été retirée");
+  switch (err?.name) {
+    case 'NotFoundError': return tr('le dossier est introuvable (supprimé ou déplacé)');
+    case 'NotAllowedError':
+    case 'SecurityError': return tr("l'autorisation d'écrire dans le dossier a expiré ou été retirée");
+    case 'QuotaExceededError': return tr('espace de stockage insuffisant');
+    default: return err?.message || err?.name || tr('erreur inconnue');
+  }
+}
+
 /** Écrit un export JSON dans le dossier de sauvegarde automatique choisi, si configuré et
-    autorisé. Retourne true si l'écriture a réussi (auquel cas lastBackupAt est mis à jour). */
-export async function runAutoBackupIfConfigured() {
+    autorisé. Retourne true si l'écriture a réussi (auquel cas lastBackupAt est mis à jour et l'erreur mémorisée effacée).
+    En cas d'échec, la raison est mémorisée (getAutoBackupLastError) pour être affichée dans Paramètres et dans le rappel.
+    `userGesture: true` seulement depuis un clic (bouton « Réautoriser le dossier ») : seul cas où l'autorisation peut être redemandée. */
+export async function runAutoBackupIfConfigured({ userGesture = false } = {}) {
   const handle = await getAutoBackupDirectory();
   if (!handle) return false;
   try {
-    if (!(await ensureAutoBackupPermission(handle))) return false;
+    if (!(await ensureAutoBackupPermission(handle, { userGesture }))) throw new AutoBackupPermissionError();
     const data = await exportAllData();
     await serializeReceiptsForExport(data);
     const fileHandle = await handle.getFileHandle(`djignan-backup-${todayISO()}.json`, { create: true });
@@ -671,11 +723,19 @@ export async function runAutoBackupIfConfigured() {
     await writable.write(JSON.stringify(data, null, 2));
     await writable.close();
     await markBackupDone();
+    await setAutoBackupLastError(null);
     return true;
   } catch (err) {
     console.warn('[backup] Sauvegarde automatique échouée :', err);
+    try { await setAutoBackupLastError(describeAutoBackupError(err)); } catch { /* mémorisation impossible : on ne masque pas l'échec d'origine */ }
     return false;
   }
+}
+
+/** Bouton « Réautoriser le dossier » : à appeler directement depuis un clic. Redemande l'autorisation puis relance une sauvegarde
+    (ce qui prouve que le dossier fonctionne et efface l'erreur). Renvoie true si la sauvegarde a réussi. */
+export async function reauthorizeAutoBackupDirectory() {
+  return runAutoBackupIfConfigured({ userGesture: true });
 }
 
 /* ---------- Rappel hebdomadaire ----------
@@ -708,10 +768,10 @@ export async function checkWeeklyBackupReminder() {
 
   if (await runAutoBackupIfConfigured()) { showToast(tr('Sauvegarde automatique effectuée.')); return; }
 
-  showBackupReminderModal(urgent);
+  showBackupReminderModal(urgent, await getAutoBackupLastError());
 }
 
-function showBackupReminderModal(urgent = false) {
+export function showBackupReminderModal(urgent = false, autoError = null) {
   document.querySelectorAll('#modal-root .modal-backdrop[data-modal="backup-reminder"]').forEach((el) => el.remove());
   const tpl = document.getElementById('tpl-modal-backup-reminder');
   const root = document.getElementById('modal-root');
@@ -727,6 +787,33 @@ function showBackupReminderModal(urgent = false) {
     backdrop.querySelector('#backup-title').textContent = tr('Sauvegarde en retard');
     backdrop.querySelector('.modal-body > p').textContent = tr("Vous avez repoussé ce rappel plusieurs fois. Vos données ne vivent que sur cet appareil : sans export, un changement de téléphone, une réinstallation ou un nettoyage du cache les effacerait définitivement. Exportez-les maintenant.");
     backdrop.querySelector('#backup-later-btn').remove();
+  }
+
+  // Un dossier de sauvegarde automatique est configuré mais n'a pas pu être écrit : on le dit (avec la raison) au lieu de
+  // laisser croire qu'il protège encore l'utilisateur, et on propose de réautoriser (clic = geste exigé par le navigateur).
+  if (autoError?.message) {
+    const box = document.createElement('div');
+    box.id = 'backup-auto-error';
+    box.setAttribute('role', 'alert');
+    box.style.cssText = 'margin:0 0 12px;padding:10px 12px;border-radius:8px;border:1px solid var(--neg);';
+    box.innerHTML = `
+      <p class="fs-13 c-neg" style="margin:0 0 8px;">${escapeHtml(tr("La sauvegarde automatique n'a pas pu écrire : {reason}", { reason: autoError.message }))}</p>
+      <button type="button" class="btn btn-ghost" id="backup-auto-reauth-btn">${escapeHtml(tr('Réautoriser le dossier'))}</button>`;
+    backdrop.querySelector('.modal-body > p').insertAdjacentElement('afterend', box);
+    box.querySelector('#backup-auto-reauth-btn').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      let ok = false;
+      try { ok = await reauthorizeAutoBackupDirectory(); } catch { ok = false; }
+      if (ok) {
+        showToast(tr('Sauvegarde automatique effectuée.'));
+        close();
+      } else {
+        btn.disabled = false;
+        const again = await getAutoBackupLastError();
+        box.querySelector('p').textContent = tr("La sauvegarde automatique n'a pas pu écrire : {reason}", { reason: again?.message || tr('erreur inconnue') });
+      }
+    });
   }
 
   function close() { backdrop.remove(); document.removeEventListener('keydown', onKey); }
